@@ -1,0 +1,30 @@
+{
+  "name": "ash-alert-platform",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Real-time RSI synchronized multi-instrument trading alert platform",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "build": "npm run build -w server && npm run build -w client",
+    "start": "npm run start -w server",
+    "test": "npm run test -w server",
+    "typecheck": "npm run typecheck -w shared && npm run typecheck -w server",
+    "db:migrate": "npm run db:migrate -w server",
+    "db:seed": "npm run db:seed -w server",
+    "kite:login": "npm run kite:login -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
