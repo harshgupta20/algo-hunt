@@ -12,12 +12,34 @@ import clsx from 'clsx';
 import type { ChartWindow } from '@ash/shared';
 import { EmptyState, Spinner } from '../../components/ui';
 
+// Candle times are UTC epoch seconds; NSE trades in IST (UTC+5:30). Format the
+// axis + crosshair in IST so candles read as 09:15–15:30, not 03:45–10:00.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function toIst(time: unknown): Date {
+  return new Date((time as number) * 1000 + IST_OFFSET_MS);
+}
+function istHm(d: Date): string {
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+function istTick(time: unknown, tickMarkType: number): string {
+  const d = toIst(time);
+  // 0=Year, 1=Month, 2=DayOfMonth, 3=Time, 4=TimeWithSeconds
+  return tickMarkType <= 2 ? `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}` : istHm(d);
+}
+function istTimeFormatter(time: unknown): string {
+  const d = toIst(time);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${istHm(d)} IST`;
+}
+
 const DARK = {
   layout: { background: { type: ColorType.Solid, color: '#0e1420' }, textColor: '#94a3b8', fontSize: 11 },
   grid: { vertLines: { color: '#1a2233' }, horzLines: { color: '#1a2233' } },
   rightPriceScale: { borderColor: '#222c40' },
-  timeScale: { borderColor: '#222c40', timeVisible: true, secondsVisible: false },
+  timeScale: { borderColor: '#222c40', timeVisible: true, secondsVisible: false, tickMarkFormatter: istTick },
   crosshair: { mode: CrosshairMode.Normal },
+  localization: { timeFormatter: istTimeFormatter },
 };
 
 function syncTimeScales(a: IChartApi, b: IChartApi): void {

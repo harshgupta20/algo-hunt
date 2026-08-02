@@ -11,6 +11,8 @@ import type {
   ConfigRuntimeSnapshot,
   KiteAuthStatus,
   StrategyDef,
+  UnderlyingGroup,
+  UnderlyingGroupInput,
   StrategyDefInput,
   StrategyDefinition,
   StrategyStats,
@@ -86,6 +88,28 @@ export const api = {
   activateConfig: (id: string) => request<AlertConfiguration>(`/configs/${id}/activate`, { method: 'POST' }),
   deactivateConfig: (id: string) => request<AlertConfiguration>(`/configs/${id}/deactivate`, { method: 'POST' }),
   snapshots: () => request<ConfigRuntimeSnapshot[]>('/configs/snapshots'),
+
+  // Underlying groups
+  listGroups: () => request<UnderlyingGroup[]>('/groups'),
+  createGroup: (input: UnderlyingGroupInput) =>
+    request<UnderlyingGroup>('/groups', { method: 'POST', body: JSON.stringify(input) }),
+  deleteGroup: (id: string) => request<void>(`/groups/${id}`, { method: 'DELETE' }),
+
+  // Group monitors (one config per member)
+  createConfigGroup: (input: {
+    members: string[];
+    groupName?: string;
+    expiryType: string;
+    strikeSelection: string;
+    timeframe: string;
+    strategy: string;
+    params?: Record<string, number>;
+  }) => request<{ groupId: string; configs: AlertConfiguration[] }>('/config-groups', { method: 'POST', body: JSON.stringify(input) }),
+  activateConfigGroup: (groupId: string) =>
+    request<{ activated: number; total: number; errors: string[] }>(`/config-groups/${groupId}/activate`, { method: 'POST' }),
+  deactivateConfigGroup: (groupId: string) =>
+    request<{ deactivated: number }>(`/config-groups/${groupId}/deactivate`, { method: 'POST' }),
+  deleteConfigGroup: (groupId: string) => request<void>(`/config-groups/${groupId}`, { method: 'DELETE' }),
 
   // Alerts / analytics
   listAlerts: (filters: AlertHistoryFilters = {}) => request<Alert[]>(`/alerts${buildQuery(filters)}`),

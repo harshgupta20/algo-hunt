@@ -22,6 +22,9 @@ export type DateRangePreset =
 /** Filters chosen before running an analysis. */
 export interface AnalyzerParams {
   underlying: string;
+  /** Group mode: run the strategy across these members and merge results. */
+  underlyings?: string[];
+  groupName?: string;
   expiryType: ExpiryType;
   strikeSelection: StrikeSelection;
   customStrike?: number;

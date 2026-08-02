@@ -30,6 +30,7 @@ export function AlertItem({ alert }: { alert: Alert }) {
             <div className="text-sm font-semibold text-white">{alert.title}</div>
             <div className="text-xs text-slate-400">
               {alert.underlying} · {alert.strike} · {alert.timeframe} · exp {alert.expiry || '—'}
+              {alert.groupName ? ` · ${alert.groupName}` : ''}
             </div>
           </div>
         </div>

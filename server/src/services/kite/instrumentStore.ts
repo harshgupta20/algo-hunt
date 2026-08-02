@@ -172,4 +172,28 @@ export class InstrumentStore {
   instrument(token: number): Instrument | undefined {
     return this.instruments.find((i) => i.token === token);
   }
+
+  // ---- Helpers for dynamic ATM tracking (strike follows the future price) ----
+
+  strikeInterval(underlying: string): number {
+    return UNDERLYING_BY_SYMBOL[underlying]?.strikeInterval ?? 50;
+  }
+
+  /** Target strike for a given underlying price + selection (ATM, ATM±n, custom). */
+  strikeFromPrice(underlying: string, price: number, selection: StrikeSelection, customStrike?: number): number {
+    const interval = this.strikeInterval(underlying);
+    const atm = Math.round(price / interval) * interval;
+    if (selection === 'CUSTOM') return customStrike ?? atm;
+    return atm + STRIKE_OFFSETS[selection] * interval;
+  }
+
+  /** The monthly future to use for this option expiry (public wrapper of nearestFuture). */
+  resolveFuture(underlying: string, onOrAfter: string): Instrument | undefined {
+    return this.nearestFuture(underlying, onOrAfter);
+  }
+
+  /** The CE/PE instrument at a specific strike + expiry. */
+  option(underlying: string, expiry: string, strike: number, type: 'CE' | 'PE'): Instrument | undefined {
+    return this.find(underlying, expiry, type, strike);
+  }
 }

@@ -12,6 +12,7 @@ import { simulateController } from '../controllers/simulateController.js';
 import { analyzerController } from '../controllers/analyzerController.js';
 import { strategyBuilderController } from '../controllers/strategyBuilderController.js';
 import { kiteController } from '../controllers/kiteController.js';
+import { groupController } from '../controllers/groupController.js';
 
 export function createRouter(ctx: AppContext): Router {
   const r = Router();
@@ -29,6 +30,20 @@ export function createRouter(ctx: AppContext): Router {
   r.delete('/configs/:id', asyncHandler(cfg.remove));
   r.post('/configs/:id/activate', asyncHandler(cfg.activate));
   r.post('/configs/:id/deactivate', asyncHandler(cfg.deactivate));
+
+  // Group monitors (one config per member underlying)
+  r.post('/config-groups', asyncHandler(cfg.createGroup));
+  r.post('/config-groups/:groupId/activate', asyncHandler(cfg.activateGroup));
+  r.post('/config-groups/:groupId/deactivate', asyncHandler(cfg.deactivateGroup));
+  r.delete('/config-groups/:groupId', asyncHandler(cfg.removeGroup));
+
+  // Underlying groups (reusable named sets)
+  const grp = groupController(ctx);
+  r.get('/groups', asyncHandler(grp.list));
+  r.post('/groups', asyncHandler(grp.create));
+  r.get('/groups/:id', asyncHandler(grp.get));
+  r.put('/groups/:id', asyncHandler(grp.update));
+  r.delete('/groups/:id', asyncHandler(grp.remove));
 
   const alert = alertController(ctx);
   r.get('/alerts', asyncHandler(alert.list));

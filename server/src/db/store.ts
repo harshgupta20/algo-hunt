@@ -16,9 +16,11 @@ import type {
   StrategyStats,
   StrategyStatus,
   StrategyVersion,
+  UnderlyingGroup,
+  UnderlyingGroupInput,
   UserPreferences,
 } from '@ash/shared';
-import { DEFAULT_RSI_SYNC_PARAMS } from '@ash/shared';
+import { DEFAULT_RSI_SYNC_PARAMS, UNDERLYINGS } from '@ash/shared';
 import type { NewAlert, NewNotificationLog, NotificationLog } from './types.js';
 
 export interface AlertRepository {
@@ -61,6 +63,14 @@ export interface StrategyRepository {
   versions(id: string): Promise<StrategyVersion[]>;
 }
 
+export interface GroupRepository {
+  create(input: UnderlyingGroupInput): Promise<UnderlyingGroup>;
+  update(id: string, patch: Partial<UnderlyingGroupInput>): Promise<UnderlyingGroup | null>;
+  get(id: string): Promise<UnderlyingGroup | null>;
+  list(): Promise<UnderlyingGroup[]>;
+  delete(id: string): Promise<boolean>;
+}
+
 export interface DataStore {
   readonly kind: 'postgres' | 'memory';
   init(): Promise<void>;
@@ -70,6 +80,25 @@ export interface DataStore {
   readonly notifications: NotificationLogRepository;
   readonly preferences: PreferencesRepository;
   readonly strategies: StrategyRepository;
+  readonly groups: GroupRepository;
+}
+
+/** Read-only preset group of all index underlyings. */
+export const BUILTIN_INDICES_GROUP_ID = 'group-indices';
+export function indicesGroup(): UnderlyingGroup {
+  return {
+    id: BUILTIN_INDICES_GROUP_ID,
+    name: 'Indices',
+    members: UNDERLYINGS.filter((u) => u.kind === 'index').map((u) => u.symbol),
+    builtin: true,
+    createdAt: '1970-01-01T00:00:00.000Z',
+    updatedAt: '1970-01-01T00:00:00.000Z',
+  };
+}
+
+export function buildGroup(input: UnderlyingGroupInput): UnderlyingGroup {
+  const now = new Date().toISOString();
+  return { id: randomUUID(), name: input.name, members: input.members, builtin: false, createdAt: now, updatedAt: now };
 }
 
 /** Build a fresh custom strategy from builder input. */
@@ -148,6 +177,8 @@ export function buildConfiguration(input: AlertConfigurationInput): AlertConfigu
     strategy: input.strategy,
     params: { ...DEFAULT_RSI_SYNC_PARAMS, ...input.params },
     active: false,
+    groupId: input.groupId,
+    groupName: input.groupName,
     createdAt: now,
     updatedAt: now,
   };
@@ -217,6 +248,7 @@ export function applyAlertFilters(alerts: Alert[], f: AlertHistoryFilters): Aler
     if (f.timeframe && a.timeframe !== f.timeframe) return false;
     if (f.scenario && a.scenario !== f.scenario) return false;
     if (f.strategyId && a.strategyId !== f.strategyId) return false;
+    if (f.groupId && a.groupId !== f.groupId) return false;
     return true;
   });
   out = out.sort((a, b) => b.triggeredAt.localeCompare(a.triggeredAt)); // newest first

@@ -133,6 +133,10 @@ so historical and live results are guaranteed identical.
 
 - **Filters** — date-range presets (today … last year) or custom, underlying, expiry, strike, timeframe,
   strategy → **Analyze**.
+- **Dynamic ATM tracking** (built-in RSI strategy) — the ATM strike follows the **future's price at each
+  candle**, so every alert evaluates (and records) the Call/Put that were ATM at that moment. Each strike's
+  option has its own RSI, so crossings are real. (Custom strategies + live monitoring still use a strike
+  fixed at activation — a noted follow-up.)
 - **Summary cards** — total / Scenario 1 / Scenario 2 / avg-max-min per day / avg per week.
 - **Alert table** — sortable, searchable, paginated; row → detail drawer with the exact
   `59.98 → 60.02 · crossed above 60` per-leg explanation.

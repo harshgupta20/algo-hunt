@@ -11,7 +11,7 @@ import { childLogger } from '../../utils/logger.js';
 const log = childLogger('mock-provider');
 
 /** Seeded reference (spot/future) price per underlying. */
-const BASE_PRICE: Record<string, number> = {
+export const BASE_PRICE: Record<string, number> = {
   NIFTY: 24000,
   BANKNIFTY: 51000,
   FINNIFTY: 23000,
@@ -94,8 +94,9 @@ export class MockProvider extends BaseMarketDataProvider {
           price: base,
           volatility: 0.0006,
         });
-        // Option chain: ATM +/- 5 strikes
-        for (let k = -5; k <= 5; k++) {
+        // Option chain: ATM +/- 20 strikes (wide enough for the future's range
+        // so dynamic ATM tracking always resolves a listed strike).
+        for (let k = -20; k <= 20; k++) {
           const strike = atm + k * u.strikeInterval;
           const intrinsicCe = Math.max(base - strike, 0);
           const intrinsicPe = Math.max(strike - base, 0);

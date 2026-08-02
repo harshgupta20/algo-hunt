@@ -30,6 +30,22 @@ export const configInputSchema = z.object({
 
 export const configUpdateSchema = configInputSchema.partial();
 
+export const groupInputSchema = z.object({
+  name: z.string().min(1),
+  members: z.array(z.string().min(1)).min(1),
+});
+
+export const configGroupInputSchema = z.object({
+  members: z.array(z.string().min(1)).min(1),
+  groupName: z.string().optional(),
+  expiryType: expiryTypeSchema,
+  strikeSelection: strikeSelectionSchema,
+  customStrike: z.number().optional(),
+  timeframe: timeframeSchema,
+  strategy: z.string().min(1),
+  params: rsiParamsSchema.optional(),
+});
+
 export const simulateSchema = z.object({
   configId: z.string().min(1),
   scenario: z.union([z.literal(1), z.literal(2)]),
@@ -54,6 +70,8 @@ export const dateRangePresetSchema = z.enum([
 
 export const analyzerParamsSchema = z.object({
   underlying: z.string().min(1),
+  underlyings: z.array(z.string().min(1)).optional(),
+  groupName: z.string().optional(),
   expiryType: expiryTypeSchema,
   strikeSelection: strikeSelectionSchema,
   customStrike: z.number().optional(),

@@ -35,19 +35,55 @@ const MAX_DAYS: Record<Timeframe, number> = {
 };
 
 const DAY_MS = 86_400_000;
+// Kite historical API allows ~3 req/sec; space requests and retry on 429.
+const MIN_INTERVAL_MS = 350;
+const MAX_RETRIES = 4;
 
 function isoDate(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimit(err: unknown): boolean {
+  const msg = err && typeof err === 'object' && 'message' in err ? String((err as { message: unknown }).message) : String(err);
+  return /too many requests|rate limit|429/i.test(msg);
+}
+
 export class KiteHistoricalProvider implements HistoricalDataProvider {
   readonly name = 'kite';
   private kc: any;
+  private gate: Promise<unknown> = Promise.resolve();
+  private lastCallAt = 0;
 
   constructor(
     private readonly apiKey: string,
     private accessToken: string,
   ) {}
+
+  /** Serialize + space historical requests, retrying with backoff on 429. */
+  private async request(kc: any, token: number, interval: string, from: string, to: string): Promise<any[]> {
+    const call = this.gate.then(async () => {
+      for (let attempt = 0; ; attempt++) {
+        const wait = MIN_INTERVAL_MS - (Date.now() - this.lastCallAt);
+        if (wait > 0) await delay(wait);
+        this.lastCallAt = Date.now();
+        try {
+          return await kc.getHistoricalData(token, interval, from, to);
+        } catch (err) {
+          if (isRateLimit(err) && attempt < MAX_RETRIES) {
+            await delay(1000 * (attempt + 1));
+            continue;
+          }
+          throw err;
+        }
+      }
+    });
+    this.gate = call.catch(() => undefined); // keep the queue alive after failures
+    return call as Promise<any[]>;
+  }
 
   /** Push a fresh access token (after a new login). */
   setAccessToken(token: string): void {
@@ -77,7 +113,7 @@ export class KiteHistoricalProvider implements HistoricalDataProvider {
     for (let ws = start; ws <= end; ws += windowMs) {
       const we = Math.min(ws + windowMs - DAY_MS, end);
       const rows: Array<{ date: string | Date; open: number; high: number; low: number; close: number; volume: number }> =
-        await kc.getHistoricalData(q.token, interval, isoDate(ws), isoDate(we));
+        await this.request(kc, q.token, interval, isoDate(ws), isoDate(we));
       for (const c of rows) {
         const time = Math.floor(new Date(c.date).getTime() / 1000);
         if (seen.has(time)) continue;

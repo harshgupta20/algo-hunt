@@ -47,6 +47,9 @@ export interface Alert {
   variant?: string;
   /** Per-condition evaluation trace explaining why the strategy fired. */
   conditions?: ConditionTrace[];
+  /** Set when the monitor belongs to an underlying group. */
+  groupId?: string;
+  groupName?: string;
 }
 
 /** Filters accepted by the alert history endpoint. */
@@ -59,6 +62,8 @@ export interface AlertHistoryFilters {
   scenario?: ScenarioId;
   /** Filter to a specific custom strategy id. */
   strategyId?: string;
+  /** Filter to a specific underlying group. */
+  groupId?: string;
   limit?: number;
   offset?: number;
 }

@@ -9,6 +9,7 @@ import type { OHLCV } from '@ash/shared';
 import { TIMEFRAME_MS } from '@ash/shared';
 import type { HistoricalCandleQuery, HistoricalDataProvider } from './HistoricalDataProvider.js';
 import type { InstrumentStore } from './instrumentStore.js';
+import { BASE_PRICE } from './MockProvider.js';
 
 // NSE session 09:15–15:30 IST expressed in UTC minutes (IST = UTC+5:30).
 const SESSION_OPEN_UTC_MIN = 3 * 60 + 45; // 03:45 UTC
@@ -43,8 +44,11 @@ export class MockHistoricalProvider implements HistoricalDataProvider {
     const inst = this.store.instrument(q.token);
     const type = inst?.instrumentType ?? 'FUT';
     const sign = type === 'PE' ? -1 : 1; // Put moves against the market signal
-    const base = type === 'FUT' ? 1000 : 120;
-    const amp = type === 'FUT' ? 0.035 : 0.12; // options are more volatile (RSI is scale-invariant)
+    // Future rides the underlying's real price scale so the derived ATM strike
+    // lands on listed strikes; options use a premium-scale base (RSI is
+    // scale-invariant, so absolute levels don't affect crossings).
+    const base = type === 'FUT' ? (BASE_PRICE[inst?.underlying ?? ''] ?? 20000) : 120;
+    const amp = type === 'FUT' ? 0.03 : 0.12;
     const tfMs = TIMEFRAME_MS[q.timeframe];
 
     // Give the Future a slight phase lead so it sometimes crosses its level a

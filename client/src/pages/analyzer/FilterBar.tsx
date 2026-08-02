@@ -21,6 +21,7 @@ export function FilterBar({ onAnalyze, loading }: { onAnalyze: (p: AnalyzerParam
   const underlyings = useQuery({ queryKey: ['underlyings'], queryFn: api.underlyings });
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta });
   const strategies = useQuery({ queryKey: ['strategies-custom'], queryFn: api.listStrategies });
+  const groups = useQuery({ queryKey: ['groups'], queryFn: api.listGroups });
 
   const [underlying, setUnderlying] = useState('NIFTY');
   const [expiryType, setExpiryType] = useState<ExpiryType>('current-weekly');
@@ -32,8 +33,21 @@ export function FilterBar({ onAnalyze, loading }: { onAnalyze: (p: AnalyzerParam
   const [to, setTo] = useState(format(new Date(), 'yyyy-MM-dd'));
 
   const analyze = () => {
+    let single = underlying;
+    let underlyings: string[] | undefined;
+    let groupName: string | undefined;
+    if (underlying.startsWith('group:')) {
+      const g = groups.data?.find((x) => `group:${x.id}` === underlying);
+      if (g) {
+        underlyings = g.members;
+        groupName = g.name;
+        single = g.members[0] ?? underlying;
+      }
+    }
     onAnalyze({
-      underlying,
+      underlying: single,
+      underlyings,
+      groupName,
       expiryType,
       strikeSelection,
       timeframe,
@@ -58,13 +72,24 @@ export function FilterBar({ onAnalyze, loading }: { onAnalyze: (p: AnalyzerParam
           </select>
         </div>
         <div>
-          <label className="label">Underlying</label>
+          <label className="label">Underlying / Group</label>
           <select className="input w-full" value={underlying} onChange={(e) => setUnderlying(e.target.value)}>
-            {underlyings.data?.map((u) => (
-              <option key={u.symbol} value={u.symbol}>
-                {u.symbol}
-              </option>
-            ))}
+            <optgroup label="Underlyings">
+              {underlyings.data?.map((u) => (
+                <option key={u.symbol} value={u.symbol}>
+                  {u.symbol}
+                </option>
+              ))}
+            </optgroup>
+            {(groups.data?.length ?? 0) > 0 && (
+              <optgroup label="Groups">
+                {groups.data?.map((g) => (
+                  <option key={g.id} value={`group:${g.id}`}>
+                    {g.name} ({g.members.length})
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </div>
         <div>

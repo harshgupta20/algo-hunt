@@ -61,6 +61,8 @@ export class AlertService {
       },
       triggeredAt: new Date().toISOString(),
       title: `${config.underlying} Strategy Triggered`,
+      groupId: config.groupId,
+      groupName: config.groupName,
     };
 
     const saved = await this.store.alerts.insert(newAlert);
@@ -108,6 +110,8 @@ export class AlertService {
       strategyName: def.name,
       variant: match.variant,
       conditions: match.traces,
+      groupId: config.groupId,
+      groupName: config.groupName,
     });
     if (!saved) return null;
 

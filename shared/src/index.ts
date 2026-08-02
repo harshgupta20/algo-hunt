@@ -5,6 +5,7 @@ export * from './types/alert.js';
 export * from './types/analytics.js';
 export * from './types/analyzer.js';
 export * from './types/builder.js';
+export * from './types/group.js';
 export * from './types/kite.js';
 export * from './types/socket.js';
 export * from './constants.js';

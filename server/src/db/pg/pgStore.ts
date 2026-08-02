@@ -13,6 +13,8 @@ import type {
   StrategyDefInput,
   StrategyStatus,
   StrategyVersion,
+  UnderlyingGroup,
+  UnderlyingGroupInput,
   UserPreferences,
 } from '@ash/shared';
 import { DEFAULT_USER_PREFERENCES } from '@ash/shared';
@@ -22,11 +24,12 @@ import type {
   AlertRepository,
   ConfigRepository,
   DataStore,
+  GroupRepository,
   NotificationLogRepository,
   PreferencesRepository,
   StrategyRepository,
 } from '../store.js';
-import { buildConfiguration, buildStrategy, summarize } from '../store.js';
+import { BUILTIN_INDICES_GROUP_ID, buildConfiguration, buildGroup, buildStrategy, indicesGroup, summarize } from '../store.js';
 import type { NewAlert, NewNotificationLog, NotificationLog } from '../types.js';
 import { DEFAULT_USER_ID } from '../constants.js';
 
@@ -57,6 +60,8 @@ function mapAlert(r: any): Alert {
     strategyName: r.strategy_name ?? undefined,
     variant: r.variant ?? undefined,
     conditions: r.conditions ?? undefined,
+    groupId: r.group_id ?? undefined,
+    groupName: r.group_name ?? undefined,
   };
 }
 
@@ -72,6 +77,8 @@ function mapConfig(r: any): AlertConfiguration {
     strategy: r.strategy,
     params: r.params,
     active: r.active,
+    groupId: r.group_id ?? undefined,
+    groupName: r.group_name ?? undefined,
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
   };
@@ -85,8 +92,8 @@ class PgAlertRepository implements AlertRepository {
       `INSERT INTO alerts
         (config_id, underlying, expiry, strike, timeframe, strategy, scenario, bucket,
          future_rsi, call_rsi, put_rsi, future_prev_rsi, call_prev_rsi, put_prev_rsi, title, triggered_at,
-         strategy_id, strategy_name, variant, conditions)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+         strategy_id, strategy_name, variant, conditions, group_id, group_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
        ON CONFLICT (config_id, bucket, scenario) DO NOTHING
        RETURNING *`,
       [
@@ -110,6 +117,8 @@ class PgAlertRepository implements AlertRepository {
         a.strategyName ?? null,
         a.variant ?? null,
         a.conditions ? JSON.stringify(a.conditions) : null,
+        a.groupId ?? null,
+        a.groupName ?? null,
       ],
     );
     return res.rows[0] ? mapAlert(res.rows[0]) : null;
@@ -156,8 +165,8 @@ class PgConfigRepository implements ConfigRepository {
     await this.pool.query(
       `INSERT INTO alert_configurations
         (id, user_id, underlying, expiry_type, expiry_date, strike_selection, custom_strike,
-         timeframe, strategy, params, active, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+         timeframe, strategy, params, active, created_at, updated_at, group_id, group_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         cfg.id,
         DEFAULT_USER_ID,
@@ -172,6 +181,8 @@ class PgConfigRepository implements ConfigRepository {
         cfg.active,
         cfg.createdAt,
         cfg.updatedAt,
+        cfg.groupId ?? null,
+        cfg.groupName ?? null,
       ],
     );
     return cfg;
@@ -368,6 +379,60 @@ class PgStrategyRepository implements StrategyRepository {
   }
 }
 
+class PgGroupRepository implements GroupRepository {
+  constructor(private readonly pool: pg.Pool) {}
+
+  private map(r: any): UnderlyingGroup {
+    return {
+      id: r.id,
+      name: r.name,
+      members: r.members,
+      builtin: false,
+      createdAt: new Date(r.created_at).toISOString(),
+      updatedAt: new Date(r.updated_at).toISOString(),
+    };
+  }
+
+  async create(input: UnderlyingGroupInput): Promise<UnderlyingGroup> {
+    const g = buildGroup(input);
+    await this.pool.query(
+      `INSERT INTO underlying_groups (id, user_id, name, members, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [g.id, DEFAULT_USER_ID, g.name, JSON.stringify(g.members), g.createdAt, g.updatedAt],
+    );
+    return g;
+  }
+
+  async update(id: string, patch: Partial<UnderlyingGroupInput>): Promise<UnderlyingGroup | null> {
+    const cur = await this.get(id);
+    if (!cur || cur.builtin) return null;
+    const updated = { ...cur, ...patch, updatedAt: new Date().toISOString() };
+    await this.pool.query('UPDATE underlying_groups SET name=$2, members=$3, updated_at=$4 WHERE id=$1', [
+      id,
+      updated.name,
+      JSON.stringify(updated.members),
+      updated.updatedAt,
+    ]);
+    return updated;
+  }
+
+  async get(id: string): Promise<UnderlyingGroup | null> {
+    if (id === BUILTIN_INDICES_GROUP_ID) return indicesGroup();
+    const res = await this.pool.query('SELECT * FROM underlying_groups WHERE id = $1', [id]);
+    return res.rows[0] ? this.map(res.rows[0]) : null;
+  }
+
+  async list(): Promise<UnderlyingGroup[]> {
+    const res = await this.pool.query('SELECT * FROM underlying_groups ORDER BY name');
+    return [indicesGroup(), ...res.rows.map((r: any) => this.map(r))];
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const res = await this.pool.query('DELETE FROM underlying_groups WHERE id = $1', [id]);
+    return (res.rowCount ?? 0) > 0;
+  }
+}
+
 export class PgDataStore implements DataStore {
   readonly kind = 'postgres' as const;
   readonly alerts: AlertRepository;
@@ -375,6 +440,7 @@ export class PgDataStore implements DataStore {
   readonly notifications: NotificationLogRepository;
   readonly preferences: PreferencesRepository;
   readonly strategies: StrategyRepository;
+  readonly groups: GroupRepository;
 
   constructor(private readonly pool: pg.Pool = getPool()) {
     this.alerts = new PgAlertRepository(pool);
@@ -382,6 +448,7 @@ export class PgDataStore implements DataStore {
     this.notifications = new PgNotificationLogRepository(pool);
     this.preferences = new PgPreferencesRepository(pool);
     this.strategies = new PgStrategyRepository(pool);
+    this.groups = new PgGroupRepository(pool);
   }
 
   async init(): Promise<void> {

@@ -13,6 +13,8 @@ import type {
   StrategyDefInput,
   StrategyStatus,
   StrategyVersion,
+  UnderlyingGroup,
+  UnderlyingGroupInput,
   UserPreferences,
 } from '@ash/shared';
 import { DEFAULT_USER_PREFERENCES } from '@ash/shared';
@@ -20,11 +22,20 @@ import type {
   AlertRepository,
   ConfigRepository,
   DataStore,
+  GroupRepository,
   NotificationLogRepository,
   PreferencesRepository,
   StrategyRepository,
 } from '../store.js';
-import { applyAlertFilters, buildConfiguration, buildStrategy, summarize } from '../store.js';
+import {
+  BUILTIN_INDICES_GROUP_ID,
+  applyAlertFilters,
+  buildConfiguration,
+  buildGroup,
+  buildStrategy,
+  indicesGroup,
+  summarize,
+} from '../store.js';
 import type { NewAlert, NewNotificationLog, NotificationLog } from '../types.js';
 
 class MemoryAlertRepository implements AlertRepository {
@@ -199,6 +210,37 @@ class MemoryStrategyRepository implements StrategyRepository {
   }
 }
 
+class MemoryGroupRepository implements GroupRepository {
+  private readonly groups = new Map<string, UnderlyingGroup>();
+
+  async create(input: UnderlyingGroupInput): Promise<UnderlyingGroup> {
+    const g = buildGroup(input);
+    this.groups.set(g.id, g);
+    return g;
+  }
+
+  async update(id: string, patch: Partial<UnderlyingGroupInput>): Promise<UnderlyingGroup | null> {
+    const cur = this.groups.get(id);
+    if (!cur) return null;
+    const updated: UnderlyingGroup = { ...cur, ...patch, updatedAt: new Date().toISOString() };
+    this.groups.set(id, updated);
+    return updated;
+  }
+
+  async get(id: string): Promise<UnderlyingGroup | null> {
+    if (id === BUILTIN_INDICES_GROUP_ID) return indicesGroup();
+    return this.groups.get(id) ?? null;
+  }
+
+  async list(): Promise<UnderlyingGroup[]> {
+    return [indicesGroup(), ...[...this.groups.values()].sort((a, b) => a.name.localeCompare(b.name))];
+  }
+
+  async delete(id: string): Promise<boolean> {
+    return this.groups.delete(id);
+  }
+}
+
 export class MemoryDataStore implements DataStore {
   readonly kind = 'memory' as const;
   readonly alerts = new MemoryAlertRepository();
@@ -206,6 +248,7 @@ export class MemoryDataStore implements DataStore {
   readonly notifications = new MemoryNotificationLogRepository();
   readonly preferences = new MemoryPreferencesRepository();
   readonly strategies = new MemoryStrategyRepository();
+  readonly groups = new MemoryGroupRepository();
 
   async init(): Promise<void> {
     /* nothing to initialize */

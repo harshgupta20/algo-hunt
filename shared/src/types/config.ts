@@ -34,6 +34,9 @@ export interface AlertConfiguration {
   strategy: StrategyKey | string;
   params: RsiSyncParams;
   active: boolean;
+  /** Set when this monitor was created as part of an underlying group. */
+  groupId?: string;
+  groupName?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -47,6 +50,8 @@ export interface AlertConfigurationInput {
   timeframe: Timeframe;
   strategy: StrategyKey | string;
   params?: Partial<RsiSyncParams>;
+  groupId?: string;
+  groupName?: string;
 }
 
 /** User-level UI/notification preferences. */
