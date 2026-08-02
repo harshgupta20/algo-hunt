@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { api } from '../lib/api';
+
+// Module-level so a StrictMode remount (dev) doesn't exchange the token twice.
+const handledTokens = new Set<string>();
 
 /**
  * Kite OAuth redirect landing (the app's registered Redirect URL,
@@ -13,18 +16,16 @@ export function KiteRedirect() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const [message, setMessage] = useState('Connecting to Kite…');
-  const ran = useRef(false);
 
   useEffect(() => {
-    if (ran.current) return;
-    ran.current = true;
-
     const back = (q: string) => navigate(`/settings?${q}`, { replace: true });
     const status = params.get('status');
     const token = params.get('request_token');
 
     if (status && status !== 'success') return back('kite=error&message=' + encodeURIComponent('Login was cancelled'));
     if (!token) return back('kite=error&message=' + encodeURIComponent('Missing request_token in redirect'));
+    if (handledTokens.has(token)) return; // already exchanged (StrictMode remount)
+    handledTokens.add(token);
 
     api
       .kiteSubmitToken(token)

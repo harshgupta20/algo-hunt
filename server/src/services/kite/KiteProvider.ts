@@ -13,6 +13,17 @@ import { childLogger } from '../../utils/logger.js';
 
 const log = childLogger('kite-provider');
 
+// Kite quote endpoint is limited to ~1 request/second.
+const QUOTE_MIN_INTERVAL_MS = 1100;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function isRateLimit(err: unknown): boolean {
+  const msg = err && typeof err === 'object' && 'message' in err ? String((err as { message: unknown }).message) : String(err);
+  return /too many requests|rate limit|429/i.test(msg);
+}
+
 export interface KiteCredentials {
   apiKey: string;
   accessToken: string;
@@ -39,6 +50,8 @@ export class KiteProvider extends BaseMarketDataProvider {
   private instruments: Instrument[] = [];
   private readonly subscribed = new Set<number>();
   private authErrorHandler: ((reason: string) => void) | undefined;
+  private restGate: Promise<unknown> = Promise.resolve();
+  private lastQuoteAt = 0;
 
   constructor(private readonly apiKey: string, accessToken: string) {
     super();
@@ -71,6 +84,43 @@ export class KiteProvider extends BaseMarketDataProvider {
     }
     this.kc.setAccessToken(this.accessToken);
     return this.kc;
+  }
+
+  /** Serialize + space quote calls (Kite quote limit ~1/sec), retrying on 429. */
+  private async quote<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.restGate.then(async () => {
+      for (let attempt = 0; ; attempt++) {
+        const wait = QUOTE_MIN_INTERVAL_MS - (Date.now() - this.lastQuoteAt);
+        if (wait > 0) await delay(wait);
+        this.lastQuoteAt = Date.now();
+        try {
+          return await fn();
+        } catch (err) {
+          if (isRateLimit(err) && attempt < 3) {
+            await delay(1000 * (attempt + 1));
+            continue;
+          }
+          throw err;
+        }
+      }
+    });
+    this.restGate = run.catch(() => undefined);
+    return run as Promise<T>;
+  }
+
+  /** Retry a REST call on 429 with backoff (for non-throttled endpoints). */
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        if (isRateLimit(err) && attempt < 3) {
+          await delay(1000 * (attempt + 1));
+          continue;
+        }
+        throw err;
+      }
+    }
   }
 
   async connect(): Promise<void> {
@@ -146,7 +196,7 @@ export class KiteProvider extends BaseMarketDataProvider {
     const supported = new Set(Object.keys(UNDERLYING_BY_SYMBOL));
     const exchanges = ['NFO', 'BFO']; // NSE + BSE F&O
     const rows: KiteInstrumentRow[] = [];
-    for (const ex of exchanges) rows.push(...(await kc.getInstruments(ex)));
+    for (const ex of exchanges) rows.push(...(await this.withRetry<KiteInstrumentRow[]>(() => kc.getInstruments(ex))));
 
     this.instruments = rows
       .filter((r) => supported.has(r.name) && ['FUT', 'CE', 'PE'].includes(r.instrument_type))
@@ -173,7 +223,7 @@ export class KiteProvider extends BaseMarketDataProvider {
       .sort((a, b) => a.expiry.localeCompare(b.expiry))[0];
     if (!fut) throw new Error(`No future found for ${underlying} to derive reference price`);
     const key = `${fut.exchange}:${fut.tradingSymbol}`;
-    const ltp = await kc.getLTP([key]);
+    const ltp = await this.quote<Record<string, { last_price?: number }>>(() => kc.getLTP([key]));
     const price = ltp?.[key]?.last_price;
     if (typeof price !== 'number') throw new Error(`Could not fetch LTP for ${key}`);
     return price;

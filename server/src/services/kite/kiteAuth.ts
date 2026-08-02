@@ -31,6 +31,7 @@ export class KiteAuthManager {
   private lastError: string | undefined;
   private token: string | undefined;
   private kc: any;
+  private pending: { token: string; promise: Promise<void> } | undefined;
 
   constructor(private readonly deps: KiteAuthDeps) {}
 
@@ -78,8 +79,24 @@ export class KiteAuthManager {
     }
   }
 
-  /** Exchange a request_token (from the login redirect) for an access token. */
+  /**
+   * Exchange a request_token (from the login redirect) for an access token.
+   * De-duplicates concurrent/repeat submissions of the SAME request_token
+   * (e.g. a double-fired redirect) so generateSession runs once — Kite's session
+   * endpoint is rate-limited and a request_token is single-use.
+   */
   async completeLogin(requestToken: string): Promise<void> {
+    if (this.pending && this.pending.token === requestToken) return this.pending.promise;
+    const promise = this.exchange(requestToken);
+    this.pending = { token: requestToken, promise };
+    try {
+      await promise;
+    } finally {
+      this.pending = undefined;
+    }
+  }
+
+  private async exchange(requestToken: string): Promise<void> {
     this.state = 'connecting';
     try {
       const kc = await this.client();
