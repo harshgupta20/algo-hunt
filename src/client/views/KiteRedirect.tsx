@@ -10,7 +10,7 @@ const handledTokens = new Set<string>();
 
 /**
  * Kite OAuth redirect landing (the app's registered Redirect URL,
- * https://<your-domain>/zerodhaRedirection). Reads the request_token from the
+ * https://<your-domain>/zerodhaRedirection or /redirect/zerodha). Reads the request_token from the
  * query, exchanges it for an access token via the server, and returns to
  * Settings — fully automatic, no manual paste.
  */

@@ -100,6 +100,8 @@ At [developers.kite.trade/apps](https://developers.kite.trade/apps) create (or o
 https://<your-vercel-domain>/zerodhaRedirection
 ```
 
+(`https://<your-vercel-domain>/redirect/zerodha` works too.)
+
 (Kite Connect is a paid API; the historical-data add-on is required for candles.)
 
 ### 3. Vercel project

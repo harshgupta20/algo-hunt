@@ -153,8 +153,9 @@ export function KiteConnectionCard() {
 
       <p className="mt-3 pt-3 border-t border-ink-700/60 text-[11px] text-slate-500 leading-relaxed">
         Login is one click — you&apos;re sent to Kite, then returned here automatically. In your Kite Connect app
-        (developers.kite.trade) the <span className="text-slate-400">Redirect URL</span> must be exactly
-        <code className="text-accent-soft break-all"> {origin || 'https://<your-domain>'}/zerodhaRedirection</code>.
+        (developers.kite.trade) set the <span className="text-slate-400">Redirect URL</span> to
+        <code className="text-accent-soft break-all"> {origin || 'https://<your-domain>'}/zerodhaRedirection</code>
+        {' '}(or <code className="text-accent-soft break-all">{origin || 'https://<your-domain>'}/redirect/zerodha</code>).
       </p>
     </Card>
   );
