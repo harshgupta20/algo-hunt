@@ -1,0 +1,281 @@
+/**
+ * Persistence abstraction. The rest of the app depends on these repository
+ * interfaces, never on a concrete database. Production uses Neon Postgres
+ * (PgDataStore); the interfaces keep services testable in isolation.
+ */
+import { randomUUID } from 'node:crypto';
+import type {
+  Alert,
+  AlertConfiguration,
+  AlertConfigurationInput,
+  AlertHistoryFilters,
+  AnalyticsSummary,
+  StrategyDef,
+  StrategyDefInput,
+  StrategyStats,
+  StrategyStatus,
+  StrategyVersion,
+  UnderlyingGroup,
+  UnderlyingGroupInput,
+  Instrument,
+  UserPreferences,
+} from '@ash/shared';
+import { DEFAULT_RSI_SYNC_PARAMS, UNDERLYINGS } from '@ash/shared';
+import type { KiteSessionRecord, MonitorState, NewAlert, NewNotificationLog, NotificationLog } from './types';
+
+export interface AlertRepository {
+  /** Insert an alert. Returns null if an alert for the same
+   *  (config, bucket, scenario) already exists (dedupe). */
+  insert(alert: NewAlert): Promise<Alert | null>;
+  getById(id: string): Promise<Alert | null>;
+  list(filters: AlertHistoryFilters): Promise<Alert[]>;
+  analytics(): Promise<AnalyticsSummary>;
+}
+
+export interface ConfigRepository {
+  create(input: AlertConfigurationInput): Promise<AlertConfiguration>;
+  update(id: string, patch: Partial<AlertConfigurationInput>): Promise<AlertConfiguration | null>;
+  delete(id: string): Promise<boolean>;
+  getById(id: string): Promise<AlertConfiguration | null>;
+  list(): Promise<AlertConfiguration[]>;
+  listActive(): Promise<AlertConfiguration[]>;
+  setActive(id: string, active: boolean, expiryDate?: string): Promise<AlertConfiguration | null>;
+}
+
+export interface NotificationLogRepository {
+  insert(log: NewNotificationLog): Promise<NotificationLog>;
+  list(limit?: number): Promise<NotificationLog[]>;
+}
+
+export interface PreferencesRepository {
+  get(): Promise<UserPreferences>;
+  save(prefs: UserPreferences): Promise<UserPreferences>;
+}
+
+export interface StrategyRepository {
+  create(input: StrategyDefInput): Promise<StrategyDef>;
+  update(id: string, patch: Partial<StrategyDefInput>): Promise<StrategyDef | null>;
+  get(id: string): Promise<StrategyDef | null>;
+  list(): Promise<StrategyDef[]>;
+  delete(id: string): Promise<boolean>;
+  setStatus(id: string, status: StrategyStatus): Promise<StrategyDef | null>;
+  duplicate(id: string): Promise<StrategyDef | null>;
+  versions(id: string): Promise<StrategyVersion[]>;
+}
+
+export interface GroupRepository {
+  create(input: UnderlyingGroupInput): Promise<UnderlyingGroup>;
+  update(id: string, patch: Partial<UnderlyingGroupInput>): Promise<UnderlyingGroup | null>;
+  get(id: string): Promise<UnderlyingGroup | null>;
+  list(): Promise<UnderlyingGroup[]>;
+  delete(id: string): Promise<boolean>;
+}
+
+/** Live monitor state persisted between serverless evaluator runs. */
+export interface MonitorStateRepository {
+  get(configId: string): Promise<MonitorState | null>;
+  list(): Promise<MonitorState[]>;
+  /** Create/replace the state written at activation. */
+  upsert(state: MonitorState): Promise<void>;
+  /** Record an evaluator pass: last evaluated closed bucket, snapshot, error. */
+  recordRun(configId: string, patch: Pick<MonitorState, 'lastBucket' | 'snapshot' | 'lastError'>): Promise<void>;
+  delete(configId: string): Promise<void>;
+}
+
+export interface KiteSessionRepository {
+  get(): Promise<KiteSessionRecord | null>;
+  save(record: KiteSessionRecord): Promise<void>;
+  /** Flag the stored session as unusable (expired / revoked) without deleting the audit fields. */
+  markState(state: KiteSessionRecord['state'], lastError?: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
+export interface InstrumentRepository {
+  /** Replace the whole master atomically. */
+  replaceAll(instruments: Instrument[]): Promise<void>;
+  list(): Promise<Instrument[]>;
+  count(): Promise<number>;
+}
+
+export interface LockRepository {
+  /**
+   * Try to take a named lease for `leaseSeconds`. Fails if another holder's
+   * lease is live, or if the last completed run was under `minIntervalSeconds` ago.
+   */
+  acquire(name: string, leaseSeconds: number, minIntervalSeconds: number): Promise<boolean>;
+  release(name: string): Promise<void>;
+}
+
+export interface KvRepository {
+  get<T>(key: string): Promise<{ value: T; updatedAt: string } | null>;
+  set(key: string, value: unknown): Promise<void>;
+}
+
+export interface DataStore {
+  readonly alerts: AlertRepository;
+  readonly configs: ConfigRepository;
+  readonly notifications: NotificationLogRepository;
+  readonly preferences: PreferencesRepository;
+  readonly strategies: StrategyRepository;
+  readonly groups: GroupRepository;
+  readonly monitors: MonitorStateRepository;
+  readonly kite: KiteSessionRepository;
+  readonly instruments: InstrumentRepository;
+  readonly locks: LockRepository;
+  readonly kv: KvRepository;
+}
+
+/** Read-only preset group of all index underlyings. */
+export const BUILTIN_INDICES_GROUP_ID = 'group-indices';
+export function indicesGroup(): UnderlyingGroup {
+  return {
+    id: BUILTIN_INDICES_GROUP_ID,
+    name: 'Indices',
+    members: UNDERLYINGS.filter((u) => u.kind === 'index').map((u) => u.symbol),
+    builtin: true,
+    createdAt: '1970-01-01T00:00:00.000Z',
+    updatedAt: '1970-01-01T00:00:00.000Z',
+  };
+}
+
+export function buildGroup(input: UnderlyingGroupInput): UnderlyingGroup {
+  const now = new Date().toISOString();
+  return { id: randomUUID(), name: input.name, members: input.members, builtin: false, createdAt: now, updatedAt: now };
+}
+
+/** Build a fresh custom strategy from builder input. */
+export function buildStrategy(input: StrategyDefInput): StrategyDef {
+  const now = new Date().toISOString();
+  return {
+    id: randomUUID(),
+    name: input.name,
+    description: input.description,
+    category: input.category,
+    notes: input.notes,
+    status: input.status ?? 'draft',
+    version: 1,
+    builtin: false,
+    scope: input.scope,
+    underlying: input.underlying,
+    expiryType: input.expiryType,
+    strikeSelection: input.strikeSelection,
+    timeframe: input.timeframe,
+    root: input.root,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/** Per-strategy performance statistics from that strategy's alerts. */
+export function computeStrategyStats(alerts: Alert[], strategyId: string, nowMs = Date.now()): StrategyStats {
+  const todayStr = new Date(nowMs).toISOString().slice(0, 10);
+  const weekAgo = nowMs - 7 * 86_400_000;
+  const monthAgo = nowMs - 30 * 86_400_000;
+  const days = new Set<string>();
+  const weeks = new Set<string>();
+  const symbols = new Map<string, number>();
+  let today = 0;
+  let week = 0;
+  let month = 0;
+  let last: string | undefined;
+
+  for (const a of alerts) {
+    const t = Date.parse(a.triggeredAt);
+    if (a.triggeredAt.slice(0, 10) === todayStr) today++;
+    if (t >= weekAgo) week++;
+    if (t >= monthAgo) month++;
+    days.add(a.triggeredAt.slice(0, 10));
+    weeks.add(isoWeek(a.triggeredAt));
+    const sym = `${a.underlying} ${a.strike}`;
+    symbols.set(sym, (symbols.get(sym) ?? 0) + 1);
+    if (!last || a.triggeredAt > last) last = a.triggeredAt;
+  }
+  const mostActive = [...symbols.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+
+  return {
+    strategyId,
+    totalAlerts: alerts.length,
+    alertsToday: today,
+    alertsThisWeek: week,
+    alertsThisMonth: month,
+    avgPerDay: round2(alerts.length / Math.max(1, days.size)),
+    avgPerWeek: round2(alerts.length / Math.max(1, weeks.size)),
+    lastTriggered: last,
+    mostActiveSymbol: mostActive,
+  };
+}
+
+/** Build a fully-formed configuration from user input (shared by both stores). */
+export function buildConfiguration(input: AlertConfigurationInput): AlertConfiguration {
+  const now = new Date().toISOString();
+  return {
+    id: randomUUID(),
+    underlying: input.underlying,
+    expiryType: input.expiryType,
+    strikeSelection: input.strikeSelection,
+    customStrike: input.customStrike,
+    timeframe: input.timeframe,
+    strategy: input.strategy,
+    params: { ...DEFAULT_RSI_SYNC_PARAMS, ...input.params },
+    active: false,
+    groupId: input.groupId,
+    groupName: input.groupName,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/** Compute the analytics summary from an in-memory alert array. */
+export function summarize(alerts: Alert[]): AnalyticsSummary {
+  const byDay = new Map<string, number>();
+  const byWeek = new Map<string, number>();
+  const byUnderlying = new Map<string, number>();
+  const byExpiry = new Map<string, number>();
+  const bySymbol = new Map<string, number>();
+  let s1 = 0;
+  let s2 = 0;
+
+  for (const a of alerts) {
+    const day = a.triggeredAt.slice(0, 10);
+    byDay.set(day, (byDay.get(day) ?? 0) + 1);
+    byWeek.set(isoWeek(a.triggeredAt), (byWeek.get(isoWeek(a.triggeredAt)) ?? 0) + 1);
+    byUnderlying.set(a.underlying, (byUnderlying.get(a.underlying) ?? 0) + 1);
+    byExpiry.set(a.expiry, (byExpiry.get(a.expiry) ?? 0) + 1);
+    const sym = `${a.underlying} ${a.strike}`;
+    bySymbol.set(sym, (bySymbol.get(sym) ?? 0) + 1);
+    if (a.scenario === 1) s1++;
+    else if (a.scenario === 2) s2++;
+  }
+
+  const toBuckets = (m: Map<string, number>) =>
+    [...m.entries()].map(([key, count]) => ({ key, count })).sort((a, b) => a.key.localeCompare(b.key));
+
+  return {
+    totalAlerts: alerts.length,
+    scenario1Count: s1,
+    scenario2Count: s2,
+    alertsPerDay: toBuckets(byDay),
+    alertsPerWeek: toBuckets(byWeek),
+    alertsPerUnderlying: toBuckets(byUnderlying).sort((a, b) => b.count - a.count),
+    alertsPerExpiry: toBuckets(byExpiry),
+    mostActiveSymbols: toBuckets(bySymbol)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10),
+  };
+}
+
+/** ISO year-week label, e.g. "2026-W31". */
+export function isoWeek(iso: string): string {
+  const d = new Date(iso);
+  const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dayNum = (date.getUTCDay() + 6) % 7; // Mon=0
+  date.setUTCDate(date.getUTCDate() - dayNum + 3); // nearest Thursday
+  const firstThursday = new Date(Date.UTC(date.getUTCFullYear(), 0, 4));
+  const week =
+    1 +
+    Math.round(
+      ((date.getTime() - firstThursday.getTime()) / 86_400_000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7,
+    );
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}

@@ -1,16 +1,14 @@
-# ASH — Real-Time RSI Synchronized Trading Alert Platform
+# ASH — RSI Synchronized Trading Alert Platform
 
-A production-quality platform that continuously monitors **Futures, ATM Call, and ATM Put** for an
-underlying and fires **ONE combined alert** the moment their RSIs align on a closed candle. It is a
-professional **alerting** platform — it does not place trades.
+Continuously monitors **Futures, ATM Call and ATM Put** for an underlying and fires **ONE combined alert** the
+moment their RSIs align on a closed candle. It is an **alerting** platform — it never places trades.
 
-The core distinction the whole system is built around: an **RSI crossing** (RSI just moved across a
-level — even `59.99 → 60.01`) is *not* the same as an **RSI already above/below** a level. Both drive
-alerts, via two scenarios, but they are detected differently.
+Built with **Next.js 16** (App Router), **Neon Postgres** and **Zerodha Kite Connect**, and designed to deploy on
+**Vercel** as-is. Everything runs on real market data — there is no simulated feed.
 
-> Runs end-to-end with **zero credentials and no database** out of the box: a simulated market-data
-> feed and an in-memory store let you see alerts flow immediately. Real Zerodha Kite and Neon Postgres
-> plug in via environment variables.
+The core distinction the whole system is built around: an **RSI crossing** (RSI just moved across a level — even
+`59.99 → 60.01`) is *not* the same as an **RSI already above/below** a level. Both drive alerts, via two scenarios,
+but they are detected differently.
 
 ---
 
@@ -24,252 +22,225 @@ Evaluation happens **only on confirmed, closed candles** (no intra-candle repain
 | **1** | crossing **above** 60 | crossing **above** 60 | crossing **below** 40 | one combined alert |
 | **2** | **already** above 60 | crossing **above** 60 | crossing **below** 40 | one combined alert |
 
-The Future condition (cross vs already) is mutually exclusive, so at most one scenario fires per
-candle → exactly **one** `"<UNDERLYING> Strategy Triggered"` alert, never three per-leg alerts.
+The Future condition (cross vs already) is mutually exclusive, so at most one scenario fires per candle → exactly
+**one** `"<UNDERLYING> Strategy Triggered"` alert, never three per-leg alerts.
 
 ---
 
 ## Architecture
 
-npm workspaces monorepo:
-
 ```
-shared/   @ash/shared — types + constants shared by server & client
-server/   Express API + WebSocket + background market worker
-client/   React (Vite) dashboard
+src/
+  app/                 Next.js App Router — pages, API route handlers, layout
+    (dashboard)/       Dashboard, Live Alerts, Builder, Library, Analyzer, History, Analytics, Configuration, Settings
+    api/[...path]/     REST API (dispatches to src/server/api/routes.ts)
+    api/cron/tick/     Scheduled live evaluator (CRON_SECRET-protected)
+    api/auth/*         Password login / logout
+    zerodhaRedirection Kite OAuth redirect landing page
+    login/             Sign-in page
+  proxy.ts             Access control (password session cookie) for every page + API
+  client/              React UI — views, components, TanStack Query hooks
+  server/              Backend (Node runtime only)
+    api/               router, controllers, zod schemas, dependency container
+    services/
+      kite/            auth (encrypted session in DB), historical candles, instrument master sync
+      live/            MonitorService (candle-close evaluator) + liveTick (lease-guarded run)
+      indicator/       RSI (Wilder), EMA, SMA, VWAP, MACD, Bollinger, Supertrend, Volume, Price, OI
+      strategy/        crossing · rsiSyncStrategy · StrategyEngine · generic custom-strategy evaluator
+      analyzer/        backtest runner, stats, explanations
+      history/         alert persistence
+      notification/    server-side channels (Telegram)
+    db/                Postgres repositories behind one DataStore interface
+  shared/              types + constants shared by server and client (@ash/shared)
+db/migrations/         SQL migrations (applied by scripts/migrate.mjs)
+tests/                 vitest suite
 ```
 
-### Server (`server/src`)
+### How live monitoring works on serverless
 
-```
-config/         env loading (zod-validated)
-services/
-  kite/         MarketDataProvider interface, MockProvider, KiteProvider, InstrumentStore, factory
-  indicator/    rsi.ts (Wilder, incremental) · candleBuilder.ts (ticks → OHLC)
-  strategy/     crossing.ts · rsiSyncStrategy.ts · StrategyEngine (pluggable) · syntheticSeries
-  notification/ wsHub (socket.io) · NotificationService (pluggable channels)
-  history/      alertService (persist + dispatch + read-side)
-workers/        marketWorker.ts (the ONLY place live monitoring runs) · instrumentState.ts
-db/             pool · migrations/ · pg + in-memory repositories behind one DataStore interface
-api/            controllers/ · routes/ · schemas (thin — no business logic here)
-middleware/ utils/
-```
+Vercel functions don't stay running, so there is no WebSocket ticker. Instead:
 
-**Data flow:** `provider tick → CandleBuilder → (on close) RSI.update → bucket-keyed evaluation
-(all three legs present) → StrategyEngine → AlertService → persist + socket push + browser notify`.
+1. **Every minute** a scheduler calls `GET /api/cron/tick` (see [Scheduler](#4-scheduler-every-minute)).
+2. The tick takes a DB lease (so overlapping calls never double-run), then for each active monitor fetches the
+   Future/Call/Put candles from **Kite's historical API** — the same candles the Kite chart shows.
+3. Every **newly closed** candle is run through the same RSI + strategy engine the analyzer uses. Matches become
+   alerts in Neon; a unique index plus a per-monitor cursor guarantee each candle fires **at most once**.
+4. An RSI snapshot (closed + provisional incl. the forming candle) is stored for the dashboard gauges.
+5. The dashboard polls for new alerts every 10s and raises a browser notification + chime. Optional **Telegram**
+   delivery reaches you with no dashboard open.
 
-The market worker evaluates each config **once per candle bucket**, only when all three legs have a
-confirmed closed-candle RSI for that bucket. A DB unique index on `(config, bucket, scenario)` (and an
-in-memory guard) guarantees no duplicate alerts, even across restarts.
+While a dashboard tab is open during market hours it *also* triggers the tick every 30s (the lease makes this a
+no-op if the cron already ran) — so alerts keep flowing even before you set up a scheduler.
 
-### Client (`client/src`)
+Details that matter for correctness:
 
-React + React Router + TanStack Query + socket.io + Tailwind + Recharts + TradingView Lightweight
-Charts. Pages: **Dashboard, Live Alerts, Strategy Builder, Strategy Library, Strategy Analyzer, Alert
-History, Analytics, Configuration, Strategies, Settings**. New alerts arrive over WebSocket and raise a
-browser notification + chime.
+- Candles follow Kite's 09:15-aligned sessions; the last candle of the day is truncated at 15:30 IST.
+- A monitor locks its strike/contracts at activation (ATM from the live future LTP) and only alerts on candles that
+  close **after** activation. Expired contracts are rolled automatically on the next run.
+- Candles that closed more than 30 minutes ago (e.g. the scheduler was down) are not alerted on — a stale alert is
+  worse than none.
 
 ---
 
-## Quick start (mock mode — no setup)
+## Deploy to Vercel
 
-```bash
-npm install
-npm run dev
+### 1. Neon database
+
+Create a project at [neon.tech](https://neon.tech) in **AWS Asia Pacific (Singapore)** (`ap-southeast-1`), the
+closest Neon region to India. The Vercel functions are pinned next to it (`sin1`, set in `vercel.json`) because
+most requests are database round-trips; if you pick another Neon region, change `vercel.json` to match. Copy the
+**pooled** connection string.
+
+### 2. Zerodha Kite Connect app
+
+At [developers.kite.trade/apps](https://developers.kite.trade/apps) create (or open) your app and note the
+**API key** and **API secret**. Set the app's **Redirect URL** to exactly:
+
+```
+https://<your-vercel-domain>/zerodhaRedirection
 ```
 
-- API + WebSocket: http://localhost:4000
-- Dashboard: http://localhost:5173
+(Kite Connect is a paid API; the historical-data add-on is required for candles.)
 
-Then in the dashboard:
+### 3. Vercel project
 
-1. **Configuration** → pick an underlying (e.g. NIFTY), expiry, ATM, 15m → **Create Monitor** → **Activate**.
-2. Watch the **Dashboard** RSI gauges move (simulated feed).
-3. Click **Simulate S1** / **Simulate S2** on the active monitor → one combined alert appears in
-   **Live Alerts** with a browser notification, and lands in **Alert History** and **Analytics**.
+Import the repo in Vercel (framework preset: Next.js — no other settings needed) and add these environment
+variables (see [.env.example](.env.example)):
 
-The simulate action drives crafted price series through the **real** RSI + strategy engine — it is not
-a fake alert.
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `DATABASE_URL` | yes | Neon pooled connection string |
+| `KITE_API_KEY` | yes | Kite Connect app |
+| `KITE_API_SECRET` | yes | Kite Connect app — also encrypts the stored access token |
+| `APP_PASSWORD` | yes | Dashboard login password |
+| `CRON_SECRET` | yes | Random string, e.g. `openssl rand -hex 32` |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | no | Server-side alert delivery |
+
+Deploy. **Migrations run automatically during the build** (`npm run build` applies pending `db/migrations/*.sql`;
+they're idempotent). To run them by hand: `DATABASE_URL=… npm run db:migrate`.
+
+### 4. Scheduler (every minute)
+
+The evaluator must be called every minute during market hours (09:15–15:40 IST, Mon–Fri — calls outside that
+window return immediately).
+
+- **Vercel Pro:** add to `vercel.json` (Vercel sends the `CRON_SECRET` header automatically):
+
+  ```json
+  "crons": [{ "path": "/api/cron/tick", "schedule": "* 3-10 * * 1-5" }]
+  ```
+
+  (`3-10` UTC covers 08:30–16:29 IST.) Hobby plans only allow daily crons, so don't add this there — a
+  more frequent schedule fails the deployment.
+
+- **Any plan (free):** create a job at [cron-job.org](https://cron-job.org) (or any scheduler) that runs every
+  minute, Mon–Fri, calling `https://<your-domain>/api/cron/tick` with header
+  `Authorization: Bearer <CRON_SECRET>` (or append `?secret=<CRON_SECRET>`).
+
+### 5. Daily use
+
+Kite access tokens expire every morning (~06:00 IST). Each trading day, open the dashboard and click
+**Connect Kite** (top bar or **Settings → Broker Connection**): you log in on Kite and are sent back automatically.
+The login also refreshes the instrument master. If the token is rejected mid-day, the app flips to
+*Not connected* and shows the prompt again.
+
+Then **Configuration** → choose underlying, expiry, strike, timeframe, strategy → **Create Monitor** →
+**Activate**. Alerts appear in **Live Alerts** / **Alert History** / **Analytics** and on Telegram if enabled.
+
+---
+
+## Local development
+
+```bash
+cp .env.example .env.local     # fill in DATABASE_URL + Kite credentials (APP_PASSWORD optional locally)
+npm install
+npm run dev                    # http://localhost:3000 — applies pending migrations first
+```
+
+For local Kite login, add `http://localhost:3000/zerodhaRedirection` as the Redirect URL in the Kite app.
+With `APP_PASSWORD` unset the app is open in development (production refuses to serve without it).
+
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Apply pending migrations, then start the Next.js dev server |
+| `npm run build` / `npm start` | Migrate + production build / serve |
+| `npm test` | vitest suite |
+| `npm run typecheck` | TypeScript check |
+| `npm run db:migrate` | Apply pending migrations |
+
+To trigger an evaluation manually (e.g. outside market hours):
+`curl -H "Authorization: Bearer $CRON_SECRET" "https://<domain>/api/cron/tick?force=1"`.
 
 ---
 
 ## Strategy Builder (no-code strategy engine)
 
-The **Strategy Builder** lets users compose strategies from rules — **no code** — that run in *both* live
-alerts and the analyzer through one **generic evaluation engine**. Strategies are stored as structured
-**JSON** (never executable code), interpreted by the engine, and **versioned** on every save.
+Compose strategies from rules — **no code** — that run in *both* live monitoring and the analyzer through one
+**generic evaluation engine**. Strategies are stored as structured **JSON** (never executable code), interpreted by
+the engine, and **versioned** on every save.
 
-- **Indicators** (pluggable): RSI, EMA, SMA, VWAP, MACD, Bollinger Bands, Supertrend, Volume, Price
-  (O/H/L/C), OI. Adding one = a class + a registry line ([server/src/services/indicator/](server/src/services/indicator/)).
+- **Indicators**: RSI, EMA, SMA, VWAP, MACD, Bollinger Bands, Supertrend, Volume, Price (O/H/L/C), OI (open
+  interest from Kite). Adding one = a class + a registry line ([src/server/services/indicator/](src/server/services/indicator/)).
 - **Operators**: numeric (`> < ≥ ≤ = ≠`), cross (above/below), trend (rising/falling), state (above/below),
   range (between/outside), percentage (increased/decreased by %).
-- **Nested AND/OR groups**, multi-instrument conditions (Future/Call/Put), and compare-to-indicator RHS
-  (e.g. `EMA20 > EMA50`).
-- **Library** with edit / duplicate / publish / disable / delete / run-backtest and version history.
-- **Per-strategy dashboard**: live stats + a historical backtest (reusing the analyzer's charts, table,
-  timeline, heatmaps).
-- Every alert carries a **per-condition trace** (`Future RSI(14) · 59.98 → 60.02 · cross above 60 ✓`) shown
-  in live alerts and the analyzer.
+- **Nested AND/OR groups**, multi-instrument conditions (Future/Call/Put), and compare-to-indicator RHS.
+- **Library** with edit / duplicate / publish / disable / delete / backtest and version history; a strategy must be
+  **published** to be used by a monitor.
+- Every alert carries a **per-condition trace** (`Future RSI(14) · 59.98 → 60.02 · cross above 60 ✓`).
 
-**Single source of truth:** a custom strategy is evaluated by the same
-[customEvaluator.ts](server/src/services/strategy/customEvaluator.ts) in the live worker and the backtest
-runner — so live and historical results are identical. The built-in `rsi-sync` is kept on its proven
-class-based path (the two coexist by design); a JSON reproduction of it is provided as a builder
-**template** and proven equivalent by tests.
-
-Endpoints: `GET /api/builder/catalog`, `GET /api/builder/template`, and
-`GET/POST/PUT/DELETE /api/custom-strategies` (+ `/:id/duplicate|publish|disable|versions|stats`).
-A config or analysis references a strategy by id (`rsi-sync` = built-in, or a custom id).
-
----
+A custom strategy is evaluated by the same [customEvaluator.ts](src/server/services/strategy/customEvaluator.ts)
+in live monitoring and the backtest runner, so live and historical results are identical.
 
 ## Historical Strategy Analyzer (backtesting)
 
-The **Strategy Analyzer** page replays the strategy over historical data — the primary environment for
-validating and debugging strategies. Its defining property: it contains **no strategy logic**. It feeds
-historical candles through the *same* `RsiCalculator` and `StrategyEngine.evaluate` the live worker
-uses ([server/src/services/analyzer/backtestRunner.ts](server/src/services/analyzer/backtestRunner.ts)),
-so historical and live results are guaranteed identical.
+Replays a strategy over **Kite historical candles** through the *same* RSI and strategy engines as live
+monitoring ([backtestRunner.ts](src/server/services/analyzer/backtestRunner.ts)).
 
-- **Filters** — date-range presets (today … last year) or custom, underlying, expiry, strike, timeframe,
-  strategy → **Analyze**.
-- **Dynamic ATM tracking** (built-in RSI strategy) — the ATM strike follows the **future's price at each
-  candle**, so every alert evaluates (and records) the Call/Put that were ATM at that moment. Each strike's
-  option has its own RSI, so crossings are real. (Custom strategies + live monitoring still use a strike
-  fixed at activation — a noted follow-up.)
-- **Summary cards** — total / Scenario 1 / Scenario 2 / avg-max-min per day / avg per week.
-- **Alert table** — sortable, searchable, paginated; row → detail drawer with the exact
-  `59.98 → 60.02 · crossed above 60` per-leg explanation.
-- **Interactive chart** — TradingView Lightweight Charts: candlesticks + volume + a synced RSI pane
-  (Future/Call/Put with level lines) + alert markers; the chart window is **lazy-loaded** per selection.
-- **Timeline, heatmaps** (alerts by weekday / trading hour), **analytics**, and **CSV / JSON / Excel** export.
-
-Backtest results are **ephemeral** — computed on demand and never written to the live `alerts` table, so
-running analyses never pollutes live history/analytics. Historical data is deterministic mock by default
-and swaps to Kite `getHistoricalData` via `MARKET_PROVIDER=kite`.
-
-Endpoints: `POST /api/analyzer/run` (alerts + stats) and `POST /api/analyzer/chart` (windowed chart data).
-
----
-
-## Going live (Zerodha Kite + Neon) — runbook
-
-Kite Connect is a **paid** API whose access token is regenerated **each trading day** via a login flow.
-One-time setup, then a ~10-second daily token step.
-
-**One-time**
-
-1. In your Kite Connect app ([developers.kite.trade/apps](https://developers.kite.trade/apps)), note the
-   `API key` + `API secret`, and set the app's **Redirect URL** to **exactly**
-   `http://localhost:5173/zerodhaRedirection` (the client auto-handles the redirect and completes login).
-2. Fill `.env`:
-   ```
-   DATABASE_URL=postgres://…neon.tech/…?sslmode=require
-   KITE_API_KEY=xxxxxxxx
-   KITE_API_SECRET=xxxxxxxx
-   MARKET_PROVIDER=kite
-   ```
-3. Create the schema on Neon (idempotent):
-   ```bash
-   npm run db:migrate    # applies 001_init + 002_strategy_builder
-   npm run db:seed       # default user + strategy definitions
-   ```
-
-**Each trading day** — just click a button
-
-4. `npm run dev`, open the dashboard. Because there's no valid token yet, a **Connect Kite** prompt shows in
-   the top bar and on **Settings → Broker Connection**. Click it → you're redirected to Kite → log in → Kite
-   redirects back → the app exchanges the token, connects the live feed, and shows **Connected**. The token
-   is saved to `.env` so restarts within the day stay logged in.
-
-If the token later expires or the session drops, the app **detects it automatically**, flips to
-*Not connected*, and shows the **Connect Kite** prompt again — one click re-authenticates, no restart.
-
-Everything downstream (candles, RSI, indicators, strategies, alerts, analyzer, UI) is **identical** to mock
-mode — only the data source changes. Live ticks flow only during market hours; the historical adapter
-auto-chunks long ranges to respect Kite's per-request limits.
-
-> CLI alternative: `npm run kite:login` does the same token exchange from the terminal. Fully-automated
-> (TOTP) refresh is possible later but would store your Kite password/TOTP secret, so it's intentionally
-> not implemented.
-
----
-
-## Database (optional — Neon Postgres)
-
-Without `DATABASE_URL` the app uses an in-memory store (history/analytics reset on restart). To
-persist:
-
-```bash
-cp .env.example .env          # then set DATABASE_URL=postgres://...neon.tech/...?sslmode=require
-npm run db:migrate            # apply schema
-npm run db:seed               # default user + strategy definitions
-npm run dev
-```
-
-Tables: `users, devices, strategies, alert_configurations, alerts, notification_logs, user_preferences`.
-
----
-
-## Scripts
-
-| Command | Description |
-| --- | --- |
-| `npm run dev` | Run server + client together |
-| `npm test` | Run the server test suite (39 tests) |
-| `npm run typecheck` | Type-check shared + server |
-| `npm run build` | Build server (tsup) + client (vite) |
-| `npm run db:migrate` / `db:seed` | Postgres migrations / seed |
-
-### Tests
-
-The correctness-critical logic is unit- and integration-tested:
-
-- **RSI** — Wilder smoothing vs hand-verified + canonical reference values.
-- **Crossing** — the exact spec cases (`59.99→60.01`, `40.01→39.99`, `prev===level`, warmup, 0.01 moves).
-- **Candle builder** — bucketing, rollover close, OHLC, out-of-order ticks.
-- **Strategy** — Scenario 1 & 2 fire, 2-of-3 rejected, one match (never three).
-- **Worker (integration)** — synthetic ticks → candles → RSI → strategy → **exactly one** combined
-  alert; dedupe; replay simulation.
+- Date-range presets (today … last year) or custom; underlying/group, expiry, strike, timeframe, strategy.
+- **Dynamic ATM tracking** for the built-in strategy — the strike follows the future's price candle by candle.
+- Summary cards, sortable alert table with per-leg explanations, TradingView Lightweight Charts (candles, volume,
+  synced RSI pane, alert markers), timeline, heatmaps, and CSV / JSON / Excel export.
+- Results are ephemeral — never written to the live alerts table. Long ranges are chunked to respect Kite's
+  per-request limits (~3 req/s), so a year of 15m data across many strikes can take a while.
 
 ---
 
 ## Key API endpoints
 
+All under `/api`, authenticated by the session cookie (except `/api/health` and `/api/cron/*`).
+
 ```
-GET    /api/health
-GET    /api/instruments/underlyings | /:underlying/expiries | /:underlying/strikes | /instruments/meta
-GET    /api/configs · POST /api/configs · DELETE /api/configs/:id
-POST   /api/configs/:id/activate | /deactivate · GET /api/configs/snapshots
-GET    /api/alerts (filters: from,to,underlying,expiry,timeframe,scenario) · GET /api/alerts/:id
-GET    /api/analytics/summary
-GET    /api/strategies | /:key                          # built-in strategy definitions
-GET    /api/builder/catalog | /builder/template          # indicators/operators/instruments · starter JSON
-GET/POST/PUT/DELETE /api/custom-strategies[/:id]         # no-code strategies (JSON)
-POST   /api/custom-strategies/:id/duplicate|publish|disable
-GET    /api/custom-strategies/:id/versions | /stats
-GET/PUT /api/preferences
-POST   /api/simulate/trigger   { configId, scenario }   # dev/demo
-POST   /api/analyzer/run       { AnalyzerParams }        # backtest → alerts + stats
-POST   /api/analyzer/chart     { params, center, span }  # lazy windowed chart data
-WS     /live   → alert:new · rsi:update · status:provider
+GET    /health
+GET    /instruments/underlyings | /:underlying/expiries | /:underlying/strikes?expiry= | /instruments/meta
+GET    /configs · POST /configs · GET|PUT|DELETE /configs/:id
+POST   /configs/:id/activate | /deactivate · GET /configs/snapshots
+POST   /config-groups · POST /config-groups/:groupId/activate | /deactivate · DELETE /config-groups/:groupId
+GET    /groups · POST /groups · GET|PUT|DELETE /groups/:id
+GET    /alerts (from,to,underlying,expiry,timeframe,scenario,strategyId,groupId,configId,limit,offset) · GET /alerts/:id
+GET    /analytics/summary
+GET    /strategies | /strategies/:key
+GET    /builder/catalog | /builder/template
+GET|POST /custom-strategies · GET|PUT|DELETE /custom-strategies/:id
+POST   /custom-strategies/:id/duplicate | /publish | /disable · GET /custom-strategies/:id/versions | /stats
+GET|PUT /preferences
+POST   /analyzer/run · POST /analyzer/chart
+GET    /live/status · POST /live/tick
+GET    /kite/status | /kite/login | /kite/login-url | /kite/callback | /kite/instruments
+POST   /kite/session | /kite/logout | /kite/instruments/sync
+GET    /cron/tick            (Authorization: Bearer $CRON_SECRET)
 ```
 
----
+## Security notes
 
-## Design decisions
+- The whole app sits behind `APP_PASSWORD` (HMAC-signed, HttpOnly session cookie, 30 days). Changing the password
+  signs everyone out.
+- The Kite access token is stored AES-256-GCM encrypted with a key derived from `KITE_API_SECRET`, and is never
+  returned by any endpoint. The app only calls Kite's read-only data APIs.
+- `/api/cron/tick` requires `CRON_SECRET`.
 
-- **Evaluate on candle close** (not intra-candle) — stable, no repainting. Live gauges use a
-  provisional peeked RSI on the forming candle; strategy decisions never do.
-- **Provider abstraction** — `MockProvider` and `KiteProvider` behind one interface; the worker is
-  broker-agnostic.
-- **Pluggable strategy engine + notification channels** — new strategies/indicators/channels register
-  without touching the pipeline or routes.
-- **Optional DB & Kite** — in-memory + mock defaults make the platform demoable instantly; production
-  wires both via env.
-- **Candle boundaries** aligned to the clock; **ATM locked at activation** (re-ATM-on-drift is future).
+## Tests
 
-## Roadmap (not implemented)
-
-Multiple users · additional strategies · Firebase/Telegram/Email/WhatsApp channels · React Native app ·
-more indicators (EMA, VWAP, MACD, OI, Volume) · portfolio-specific alerts.
+`npm test` covers RSI (Wilder), crossings, indicators, the RSI-sync strategy, the generic custom evaluator
+(proven equivalent to the built-in strategy), the analyzer, and the live `MonitorService` end-to-end on fixed
+candle fixtures: one combined alert per scenario, no double-fire across runs, no decisions on forming candles,
+activation floor, stale-candle skip, custom strategies, and shared candle fetches.
