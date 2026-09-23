@@ -62,7 +62,7 @@ export interface UserPreferences {
 }
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
-  theme: 'dark',
+  theme: 'light',
   soundEnabled: true,
   browserNotifications: true,
 };

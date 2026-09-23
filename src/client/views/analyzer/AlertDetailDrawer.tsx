@@ -50,7 +50,7 @@ export function AlertDetailDrawer({ alert, onClose }: { alert: BacktestAlert | n
       <aside className="relative w-full max-w-md h-full bg-ink-900 border-l border-ink-700 shadow-2xl overflow-y-auto">
         <div className="sticky top-0 bg-ink-900/95 backdrop-blur border-b border-ink-700/60 p-4 flex items-center justify-between">
           <div>
-            <div className="text-white font-semibold">{alert.underlying} Strategy Triggered</div>
+            <div className="text-fg font-semibold">{alert.underlying} Strategy Triggered</div>
             <div className="text-xs text-slate-400">{format(parseISO(alert.timestamp), 'dd MMM yyyy · HH:mm:ss')}</div>
           </div>
           <button className="btn-ghost p-2" onClick={onClose}>

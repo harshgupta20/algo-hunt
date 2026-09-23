@@ -27,7 +27,7 @@ export function AlertItem({ alert }: { alert: Alert }) {
         <div className="flex items-center gap-2">
           <RuleBadge scenario={alert.scenario} variant={alert.variant} />
           <div>
-            <div className="text-sm font-semibold text-white">{alert.title}</div>
+            <div className="text-sm font-semibold text-fg">{alert.title}</div>
             <div className="text-xs text-slate-400">
               {alert.underlying} · {alert.strike} · {alert.timeframe} · exp {alert.expiry || '—'}
               {alert.groupName ? ` · ${alert.groupName}` : ''}

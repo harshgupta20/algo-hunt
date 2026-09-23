@@ -27,7 +27,7 @@ export function Strategies() {
                 </div>
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
-                    <h2 className="text-white font-semibold">{s.name}</h2>
+                    <h2 className="text-fg font-semibold">{s.name}</h2>
                     <Badge tone="accent">{s.key}</Badge>
                   </div>
                   <p className="text-sm text-slate-400 mt-1">{s.description}</p>
@@ -66,7 +66,7 @@ function Param({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-lg bg-ink-850 px-3 py-2">
       <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="text-lg font-semibold text-white tabular-nums">{value}</div>
+      <div className="text-lg font-semibold text-fg tabular-nums">{value}</div>
     </div>
   );
 }

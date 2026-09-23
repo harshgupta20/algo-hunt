@@ -66,7 +66,7 @@ export function StrategyLibrary() {
                 {strategies.data!.map((s) => (
                   <tr key={s.id} className="hover:bg-ink-850/60">
                     <td className="px-4 py-3">
-                      <button className="text-white font-medium hover:text-accent-soft" onClick={() => router.push(`/strategy/${s.id}`)}>
+                      <button className="text-fg font-medium hover:text-accent-soft" onClick={() => router.push(`/strategy/${s.id}`)}>
                         {s.name}
                       </button>
                       {s.description && <div className="text-xs text-slate-500">{s.description}</div>}

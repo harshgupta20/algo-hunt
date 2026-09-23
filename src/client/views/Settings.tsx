@@ -11,6 +11,7 @@ import { Badge, Card, PageHeader, Spinner } from '../components/ui';
 import { KiteConnectionCard } from '../components/KiteConnectionCard';
 import { playChime, requestNotificationPermission, showNotification } from '../lib/notify';
 import { useLive } from '../context/LiveContext';
+import { useThemePreference } from '../theme/useThemePreference';
 
 function Toggle({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -24,7 +25,7 @@ function Toggle({ label, hint, checked, onChange }: { label: string; hint?: stri
         onClick={() => onChange(!checked)}
         className={`relative w-11 h-6 rounded-full transition-colors ${checked ? 'bg-accent' : 'bg-ink-700'}`}
       >
-        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${checked ? 'translate-x-5' : ''}`} />
+        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : ''}`} />
       </button>
     </label>
   );
@@ -34,6 +35,7 @@ export function Settings() {
   const qc = useQueryClient();
   const prefsQuery = useQuery({ queryKey: ['preferences'], queryFn: api.getPreferences });
   const { status: live } = useLive();
+  const { theme, setTheme } = useThemePreference();
   const [prefs, setPrefs] = useState<UserPreferences>(DEFAULT_USER_PREFERENCES);
 
   useEffect(() => {
@@ -46,21 +48,22 @@ export function Settings() {
   });
 
   const update = (patch: Partial<UserPreferences>) => {
-    const next = { ...prefs, ...patch };
+    // The theme is owned by useThemePreference; always save the one on screen.
+    const next = { ...prefs, ...patch, theme };
     setPrefs(next);
     saveMut.mutate(next);
   };
 
   const testNotification = async () => {
     await requestNotificationPermission();
-    showNotification('ASH test notification', 'Browser notifications are working.');
+    showNotification('Algo Hunt test notification', 'Browser notifications are working.');
   };
 
   if (prefsQuery.isLoading) return <Spinner />;
 
   return (
     <div className="max-w-2xl">
-      <PageHeader title="Settings" subtitle="Broker connection, notifications and runtime information." />
+      <PageHeader title="Settings" subtitle="Broker connection, appearance, notifications and runtime information." />
 
       <KiteConnectionCard />
 
@@ -81,9 +84,9 @@ export function Settings() {
           />
           <Toggle
             label="Dark theme"
-            hint="Interface theme preference."
-            checked={prefs.theme === 'dark'}
-            onChange={(v) => update({ theme: v ? 'dark' : 'light' })}
+            hint="Light is the default. Also available from the sun/moon button in the top bar."
+            checked={theme === 'dark'}
+            onChange={(v) => setTheme(v ? 'dark' : 'light')}
           />
         </div>
         <div className="flex gap-2 mt-4">

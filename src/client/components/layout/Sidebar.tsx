@@ -40,7 +40,7 @@ export function Sidebar() {
           <Activity className="w-5 h-5 text-accent-soft" />
         </div>
         <div>
-          <div className="text-white font-semibold leading-tight">ASH</div>
+          <div className="text-fg font-semibold leading-tight">Algo Hunt</div>
           <div className="text-[10px] uppercase tracking-widest text-slate-500">Alert Platform</div>
         </div>
       </div>
@@ -51,7 +51,7 @@ export function Sidebar() {
             href={to}
             className={clsx(
               'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
-              isActive(to, end) ? 'bg-accent/15 text-white' : 'text-slate-400 hover:bg-ink-800 hover:text-slate-200',
+              isActive(to, end) ? 'bg-accent/15 text-fg' : 'text-slate-400 hover:bg-ink-800 hover:text-slate-200',
             )}
           >
             <Icon className="w-4 h-4" />

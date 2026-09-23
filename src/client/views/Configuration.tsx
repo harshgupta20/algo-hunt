@@ -272,7 +272,7 @@ export function Configuration() {
                     return (
                       <Card key={gid} className="flex flex-col gap-3 border-accent/20">
                         <div className="flex items-center gap-2">
-                          <span className="text-white font-semibold">{head.groupName ?? 'Group'}</span>
+                          <span className="text-fg font-semibold">{head.groupName ?? 'Group'}</span>
                           <Badge tone={activeCount > 0 ? 'bull' : 'default'}>{activeCount}/{members.length} active</Badge>
                           <Badge tone="accent">group</Badge>
                         </div>
@@ -319,7 +319,7 @@ export function Configuration() {
                         <div className="flex items-start justify-between">
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="text-white font-semibold">{c.underlying}</span>
+                              <span className="text-fg font-semibold">{c.underlying}</span>
                               {active ? <Badge tone="bull">Active</Badge> : <Badge>Idle</Badge>}
                             </div>
                             <div className="text-xs text-slate-400 mt-1">

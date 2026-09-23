@@ -34,7 +34,7 @@ export function AlertTimeline({
                   onClick={() => onSelect(a)}
                   className={clsx(
                     'w-full text-left rounded-lg px-3 py-2 text-sm transition-colors',
-                    selectedId === a.id ? 'bg-accent/15 text-white' : 'hover:bg-ink-850 text-slate-300',
+                    selectedId === a.id ? 'bg-accent/15 text-fg' : 'hover:bg-ink-850 text-slate-300',
                   )}
                 >
                   <div className="flex items-center justify-between">

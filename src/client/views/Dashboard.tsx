@@ -22,7 +22,7 @@ function ActiveConfigCard({ snap }: { snap: ConfigRuntimeSnapshot }) {
     <Card className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-white font-semibold">{snap.underlying}</div>
+          <div className="text-fg font-semibold">{snap.underlying}</div>
           <div className="text-xs text-slate-400">
             {snap.strike || '—'} · {snap.timeframe} · exp {snap.expiry || '—'}
           </div>

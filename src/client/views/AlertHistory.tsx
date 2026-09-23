@@ -163,7 +163,7 @@ export function AlertHistory() {
                 {alerts.data!.map((a) => (
                   <tr key={a.id} className="hover:bg-ink-850/60">
                     <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{fmtTime(a.triggeredAt)}</td>
-                    <td className="px-4 py-3 text-white font-medium">{a.underlying}</td>
+                    <td className="px-4 py-3 text-fg font-medium">{a.underlying}</td>
                     <td className="px-4 py-3 tabular-nums">{a.strike}</td>
                     <td className="px-4 py-3 text-slate-400">{a.expiry || '—'}</td>
                     <td className="px-4 py-3">{a.timeframe}</td>

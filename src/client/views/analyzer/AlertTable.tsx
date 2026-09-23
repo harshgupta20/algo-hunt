@@ -123,7 +123,7 @@ export function AlertTable({
                     <td className="px-3 py-2 whitespace-nowrap text-slate-300">
                       {format(parseISO(a.timestamp), 'dd MMM yy · HH:mm')}
                     </td>
-                    <td className="px-3 py-2 text-white font-medium">{a.underlying}</td>
+                    <td className="px-3 py-2 text-fg font-medium">{a.underlying}</td>
                     <td className="px-3 py-2 text-slate-400">{a.expiry}</td>
                     <td className="px-3 py-2 tabular-nums">{a.strike}</td>
                     <td className="px-3 py-2">

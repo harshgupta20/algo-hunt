@@ -10,7 +10,7 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
   return (
     <div className="flex items-start justify-between gap-4 mb-6">
       <div>
-        <h1 className="text-xl font-semibold text-white">{title}</h1>
+        <h1 className="text-xl font-semibold text-fg">{title}</h1>
         {subtitle && <p className="text-sm text-slate-400 mt-1">{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
@@ -19,7 +19,7 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
 }
 
 export function StatCard({ label, value, hint, tone }: { label: string; value: ReactNode; hint?: string; tone?: 'bull' | 'bear' | 'accent' }) {
-  const toneClass = tone === 'bull' ? 'text-bull' : tone === 'bear' ? 'text-bear' : tone === 'accent' ? 'text-accent-soft' : 'text-white';
+  const toneClass = tone === 'bull' ? 'text-bull' : tone === 'bear' ? 'text-bear' : tone === 'accent' ? 'text-accent-soft' : 'text-fg';
   return (
     <Card className="flex flex-col gap-1">
       <span className="text-xs uppercase tracking-wide text-slate-400">{label}</span>

@@ -3,11 +3,12 @@
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { formatDistanceToNowStrict } from 'date-fns';
-import { Bell, BellOff, Link2, LogOut, Wifi } from 'lucide-react';
+import { Bell, BellOff, Link2, LogOut, Moon, Sun, Wifi } from 'lucide-react';
 import { useLive, type LiveHealth } from '../../context/LiveContext';
 import { useKiteStatus } from '../../hooks/useKiteStatus';
 import { api } from '../../lib/api';
 import { canNotify, requestNotificationPermission } from '../../lib/notify';
+import { useThemePreference } from '../../theme/useThemePreference';
 
 const HEALTH_STYLE: Record<LiveHealth, { label: string; dot: string; text: string }> = {
   live: { label: 'Live', dot: 'bg-bull', text: 'text-bull' },
@@ -20,6 +21,7 @@ const HEALTH_STYLE: Record<LiveHealth, { label: string; dot: string; text: strin
 export function Topbar() {
   const { status, health } = useLive();
   const kite = useKiteStatus();
+  const { theme, setTheme } = useThemePreference();
   const [perm, setPerm] = useState<NotificationPermission>('default');
   const s = HEALTH_STYLE[health];
 
@@ -65,6 +67,14 @@ export function Topbar() {
           <BellOff className="w-4 h-4" /> Enable notifications
         </button>
       )}
+      <button
+        className="btn-ghost text-xs"
+        onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      >
+        {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+      </button>
       <button className="btn-ghost text-xs" onClick={signOut} title="Sign out">
         <LogOut className="w-4 h-4" />
       </button>

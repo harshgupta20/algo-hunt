@@ -1,11 +1,11 @@
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { BacktestStats, CountBucket } from '@ash/shared';
 import { Card, EmptyState } from '../../components/ui';
-
-const AXIS = { stroke: '#64748b', fontSize: 11 };
-const TOOLTIP = { background: '#131a28', border: '1px solid #2e3a52', borderRadius: 8, color: '#e2e8f0' };
+import { useChartPalette } from '../../lib/chartTheme';
 
 function Bars({ title, data, color }: { title: string; data: CountBucket[]; color: string }) {
+  const chart = useChartPalette();
+  const axis = { fill: chart.axis, fontSize: 11 };
   return (
     <Card>
       <h3 className="text-sm font-semibold text-slate-300 mb-3">{title}</h3>
@@ -15,9 +15,9 @@ function Bars({ title, data, color }: { title: string; data: CountBucket[]; colo
         <div style={{ height: 200 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={{ top: 8, right: 8, bottom: 8, left: -18 }}>
-              <XAxis dataKey="key" tick={AXIS} axisLine={{ stroke: '#2e3a52' }} tickLine={false} interval="preserveStartEnd" />
-              <YAxis allowDecimals={false} tick={AXIS} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={TOOLTIP} cursor={{ fill: '#1a223333' }} />
+              <XAxis dataKey="key" tick={axis} axisLine={{ stroke: chart.axisLine }} tickLine={false} interval="preserveStartEnd" />
+              <YAxis allowDecimals={false} tick={axis} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={chart.tooltip} cursor={{ fill: chart.cursor }} />
               <Bar dataKey="count" fill={color} radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>

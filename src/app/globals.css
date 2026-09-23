@@ -3,6 +3,58 @@
 @tailwind utilities;
 
 @layer base {
+  /* Light theme (default). Values are RGB channels consumed by tailwind.config.js. */
+  :root {
+    color-scheme: light;
+    --ink-950: 243 245 249;
+    --ink-900: 255 255 255;
+    --ink-850: 248 250 252;
+    --ink-800: 241 245 249;
+    --ink-700: 226 232 240;
+    --ink-600: 203 213 225;
+    --slate-100: 15 23 42;
+    --slate-200: 30 41 59;
+    --slate-300: 51 65 85;
+    --slate-400: 71 85 105;
+    --slate-500: 100 116 139;
+    --slate-600: 148 163 184;
+    --slate-700: 203 213 225;
+    --slate-800: 226 232 240;
+    --slate-900: 241 245 249;
+    --fg: 15 23 42;
+    /* Darker hues than the dark theme so colored text stays readable on white. */
+    --accent: 37 99 235;
+    --accent-soft: 29 78 216;
+    --bull: 21 128 61;
+    --bear: 220 38 38;
+    --warn: 180 83 9;
+  }
+
+  [data-theme='dark'] {
+    color-scheme: dark;
+    --ink-950: 10 14 23;
+    --ink-900: 14 20 32;
+    --ink-850: 19 26 40;
+    --ink-800: 26 34 51;
+    --ink-700: 34 44 64;
+    --ink-600: 46 58 82;
+    --slate-100: 241 245 249;
+    --slate-200: 226 232 240;
+    --slate-300: 203 213 225;
+    --slate-400: 148 163 184;
+    --slate-500: 100 116 139;
+    --slate-600: 71 85 105;
+    --slate-700: 51 65 85;
+    --slate-800: 30 41 59;
+    --slate-900: 15 23 42;
+    --fg: 255 255 255;
+    --accent: 59 130 246;
+    --accent-soft: 96 165 250;
+    --bull: 34 197 94;
+    --bear: 239 68 68;
+    --warn: 245 158 11;
+  }
+
   html,
   body,
   #__app {
@@ -17,7 +69,7 @@
     height: 10px;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-ink-700 rounded;
+    @apply bg-ink-600 rounded;
   }
   ::-webkit-scrollbar-track {
     @apply bg-ink-900;
@@ -26,7 +78,7 @@
 
 @layer components {
   .card {
-    @apply bg-ink-900 border border-ink-700/60 rounded-xl;
+    @apply bg-ink-900 border border-ink-700/60 rounded-xl shadow-sm dark:shadow-none;
   }
   .btn {
     @apply inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;

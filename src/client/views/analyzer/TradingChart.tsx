@@ -11,6 +11,7 @@ import { Eye, EyeOff } from 'lucide-react';
 import clsx from 'clsx';
 import type { ChartWindow } from '@ash/shared';
 import { EmptyState, Spinner } from '../../components/ui';
+import { useChartPalette, type ChartPalette } from '../../lib/chartTheme';
 
 // Candle times are UTC epoch seconds; NSE trades in IST (UTC+5:30). Format the
 // axis + crosshair in IST so candles read as 09:15–15:30, not 03:45–10:00.
@@ -33,14 +34,16 @@ function istTimeFormatter(time: unknown): string {
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${istHm(d)} IST`;
 }
 
-const DARK = {
-  layout: { background: { type: ColorType.Solid, color: '#0e1420' }, textColor: '#94a3b8', fontSize: 11 },
-  grid: { vertLines: { color: '#1a2233' }, horzLines: { color: '#1a2233' } },
-  rightPriceScale: { borderColor: '#222c40' },
-  timeScale: { borderColor: '#222c40', timeVisible: true, secondsVisible: false, tickMarkFormatter: istTick },
-  crosshair: { mode: CrosshairMode.Normal },
-  localization: { timeFormatter: istTimeFormatter },
-};
+function chartOptions(p: ChartPalette) {
+  return {
+    layout: { background: { type: ColorType.Solid, color: p.background }, textColor: p.text, fontSize: 11 },
+    grid: { vertLines: { color: p.grid }, horzLines: { color: p.grid } },
+    rightPriceScale: { borderColor: p.border },
+    timeScale: { borderColor: p.border, timeVisible: true, secondsVisible: false, tickMarkFormatter: istTick },
+    crosshair: { mode: CrosshairMode.Normal },
+    localization: { timeFormatter: istTimeFormatter },
+  };
+}
 
 function syncTimeScales(a: IChartApi, b: IChartApi): void {
   let guard = false;
@@ -60,12 +63,14 @@ export function TradingChart({ data, loading }: { data: ChartWindow | null; load
   const rsiRef = useRef<HTMLDivElement>(null);
   const [showRsi, setShowRsi] = useState(true);
   const [showVolume, setShowVolume] = useState(true);
+  const palette = useChartPalette();
 
   useEffect(() => {
     if (!data || !priceRef.current || data.candles.length === 0) return;
     const priceEl = priceRef.current;
+    const theme = chartOptions(palette);
 
-    const priceChart = createChart(priceEl, { ...DARK, width: priceEl.clientWidth, height: showRsi ? 320 : 440 });
+    const priceChart = createChart(priceEl, { ...theme, width: priceEl.clientWidth, height: showRsi ? 320 : 440 });
     const candle = priceChart.addCandlestickSeries({
       upColor: '#22c55e',
       downColor: '#ef4444',
@@ -102,7 +107,7 @@ export function TradingChart({ data, loading }: { data: ChartWindow | null; load
     let rsiChart: IChartApi | undefined;
     if (showRsi && rsiRef.current) {
       const rsiEl = rsiRef.current;
-      rsiChart = createChart(rsiEl, { ...DARK, width: rsiEl.clientWidth, height: 180 });
+      rsiChart = createChart(rsiEl, { ...theme, width: rsiEl.clientWidth, height: 180 });
       const mkLine = (color: string) =>
         rsiChart!.addLineSeries({ color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
       const f = mkLine('#3b82f6');
@@ -128,7 +133,7 @@ export function TradingChart({ data, loading }: { data: ChartWindow | null; load
       priceChart.remove();
       rsiChart?.remove();
     };
-  }, [data, showRsi, showVolume]);
+  }, [data, showRsi, showVolume, palette]);
 
   return (
     <div className="card p-0 overflow-hidden">

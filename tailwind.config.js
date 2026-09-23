@@ -1,25 +1,31 @@
+/**
+ * Theme colors are CSS variables (RGB channels) defined per theme in
+ * src/app/globals.css, so every utility — including opacity modifiers like
+ * `border-ink-700/60` — follows the active `data-theme` on <html>.
+ */
+const themed = (name) => `rgb(var(--${name}) / <alpha-value>)`;
+const scale = (prefix, steps) => Object.fromEntries(steps.map((s) => [s, themed(`${prefix}-${s}`)]));
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./src/**/*.{ts,tsx}'],
+  darkMode: ['selector', '[data-theme="dark"]'],
   theme: {
     extend: {
       colors: {
-        // Professional dark trading palette.
-        ink: {
-          950: '#0a0e17',
-          900: '#0e1420',
-          850: '#131a28',
-          800: '#1a2233',
-          700: '#222c40',
-          600: '#2e3a52',
-        },
+        // Surfaces: 950 = page, 900 = cards/sidebar, 850 = inputs, 800 = subtle fills, 700/600 = borders.
+        ink: scale('ink', [950, 900, 850, 800, 700, 600]),
+        // Text scale; light theme inverts it so `text-slate-200` stays "primary text" in both themes.
+        slate: scale('slate', [100, 200, 300, 400, 500, 600, 700, 800, 900]),
+        // Strongest foreground (headings): white on dark, near-black on light.
+        fg: themed('fg'),
         accent: {
-          DEFAULT: '#3b82f6',
-          soft: '#60a5fa',
+          DEFAULT: themed('accent'),
+          soft: themed('accent-soft'),
         },
-        bull: '#22c55e',
-        bear: '#ef4444',
-        warn: '#f59e0b',
+        bull: themed('bull'),
+        bear: themed('bear'),
+        warn: themed('warn'),
       },
       fontFamily: {
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],

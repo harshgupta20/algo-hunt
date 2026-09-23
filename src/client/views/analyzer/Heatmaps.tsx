@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import type { BacktestStats, CountBucket } from '@ash/shared';
 import { Card } from '../../components/ui';
 
@@ -12,7 +13,10 @@ function HeatRow({ title, data }: { title: string; data: CountBucket[] }) {
           return (
             <div key={d.key} className="flex-1 min-w-0">
               <div
-                className="h-14 rounded-md flex items-center justify-center text-sm font-semibold text-white tabular-nums border border-ink-700/40"
+                className={clsx(
+                  'h-14 rounded-md flex items-center justify-center text-sm font-semibold tabular-nums border border-ink-700/40',
+                  d.count > 0 && alpha >= 0.55 ? 'text-white' : 'text-fg', // white only on strong fills
+                )}
                 style={{ background: `rgba(59,130,246,${d.count === 0 ? 0.04 : alpha})` }}
                 title={`${d.key}: ${d.count}`}
               >

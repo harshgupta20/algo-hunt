@@ -40,7 +40,7 @@ export function LoginForm() {
             <Activity className="w-5 h-5 text-accent-soft" />
           </div>
           <div>
-            <div className="text-white font-semibold leading-tight">ASH</div>
+            <div className="text-fg font-semibold leading-tight">Algo Hunt</div>
             <div className="text-[10px] uppercase tracking-widest text-slate-500">Alert Platform</div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-# ASH — RSI Synchronized Trading Alert Platform
+# Algo Hunt — RSI Synchronized Trading Alert Platform
 
 Continuously monitors **Futures, ATM Call and ATM Put** for an underlying and fires **ONE combined alert** the
 moment their RSIs align on a closed candle. It is an **alerting** platform — it never places trades.

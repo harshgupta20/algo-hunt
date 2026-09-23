@@ -15,11 +15,11 @@ import {
 import type { CountBucket } from '@ash/shared';
 import { api } from '../lib/api';
 import { Card, EmptyState, PageHeader, Spinner, StatCard } from '../components/ui';
-
-const AXIS = { stroke: '#64748b', fontSize: 11 };
-const TOOLTIP_STYLE = { background: '#131a28', border: '1px solid #2e3a52', borderRadius: 8, color: '#e2e8f0' };
+import { useChartPalette } from '../lib/chartTheme';
 
 function BarPanel({ title, data, color }: { title: string; data: CountBucket[]; color: string }) {
+  const chart = useChartPalette();
+  const axis = { fill: chart.axis, fontSize: 11 };
   return (
     <Card>
       <h3 className="text-sm font-semibold text-slate-300 mb-3">{title}</h3>
@@ -29,9 +29,9 @@ function BarPanel({ title, data, color }: { title: string; data: CountBucket[]; 
         <div style={{ height: 240 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={{ top: 8, right: 8, bottom: 8, left: -16 }}>
-              <XAxis dataKey="key" tick={AXIS} axisLine={{ stroke: '#2e3a52' }} tickLine={false} />
-              <YAxis allowDecimals={false} tick={AXIS} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: '#1a223333' }} />
+              <XAxis dataKey="key" tick={axis} axisLine={{ stroke: chart.axisLine }} tickLine={false} />
+              <YAxis allowDecimals={false} tick={axis} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={chart.tooltip} cursor={{ fill: chart.cursor }} />
               <Bar dataKey="count" fill={color} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -43,6 +43,7 @@ function BarPanel({ title, data, color }: { title: string; data: CountBucket[]; 
 
 export function Analytics() {
   const analytics = useQuery({ queryKey: ['analytics'], queryFn: api.analytics });
+  const chart = useChartPalette();
 
   if (analytics.isLoading) return <Spinner />;
   const data = analytics.data;
@@ -83,7 +84,7 @@ export function Analytics() {
                       <Cell key={i} fill={scenarioColors[i]} />
                     ))}
                   </Pie>
-                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Tooltip contentStyle={chart.tooltip} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
