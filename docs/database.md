@@ -32,6 +32,12 @@ erDiagram
   custom_strategies ||--o{ strategy_versions : "strategy_id (cascade)"
   alert_configurations }o..o| custom_strategies : "strategy (text id, no FK)"
   alert_configurations }o..o| underlying_groups : "group_id is a config-group id, no FK"
+  mcx_strategies ||--o{ mcx_strategy_versions : "cascade"
+  mcx_strategies ||--o{ mcx_unit_state : "cascade"
+  mcx_strategies ||--o{ mcx_signals : "cascade"
+  mcx_signals ||--o{ mcx_alerts : "signal_id (cascade)"
+  mcx_alerts ||--o{ mcx_deliveries : "cascade"
+  mcx_scan_runs ||--o{ mcx_scan_errors : "cascade"
 ```
 
 Loose links (no foreign key): `alert_configurations.strategy` holds `'rsi-sync'` or a custom strategy UUID as text.
@@ -172,6 +178,28 @@ Created by `scripts/migrate.mjs`: `id` (file name) PK · `applied_at`.
 
 ---
 
+### MCX V2 tables (006)
+
+Owned by the isolated MCX V2 subsystem ([mcx-v2-architecture.md § 9](mcx-v2-architecture.md#9-persistence-model));
+accessed only through [PgMcxStore](../src/server/mcx/persistence/PgMcxStore.ts). Numeric prices are
+`DOUBLE PRECISION`; candle times are epoch seconds (`BIGINT`).
+
+| Table | Purpose |
+| --- | --- |
+| `mcx_instruments` | MCX futures + options of the 13 supported products, synced from Kite (`token` PK) |
+| `mcx_calendar` | Holidays and special sessions (`date` PK) |
+| `mcx_strategies` / `mcx_strategy_versions` | Strategy header (`enabled`, `enabled_at`, `current_version`) and immutable JSON definitions |
+| `mcx_unit_state` | Alert state machine per (strategy, target contract) + latest evaluation |
+| `mcx_signals` | Every signal with its outcome; `identity` UNIQUE is the dedupe |
+| `mcx_alerts` / `mcx_deliveries` | Alerts (with the evaluation behind them) and per-channel delivery results |
+| `mcx_scan_runs` / `mcx_scan_errors` | Scanner cycles and attributed errors (runs pruned after 3 days) |
+| `mcx_settings` | One JSON row (`key = 'settings'`): chat override, email recipients / sender, caps |
+
+Deleting an MCX V2 strategy cascades to its versions, unit states, signals and alerts. The scanner lease is a row in
+`app_locks` named `mcx-v2-scan`.
+
+---
+
 ## 4. Migrations
 
 | File | Adds |
@@ -181,6 +209,7 @@ Created by `scripts/migrate.mjs`: `id` (file name) PK · `applied_at`.
 | [003_underlying_groups.sql](../db/migrations/003_underlying_groups.sql) | underlying_groups; group columns on configs and alerts |
 | [004_serverless_runtime.sql](../db/migrations/004_serverless_runtime.sql) | Seeds the default user + preferences; kite_session, instruments, monitor_state, app_locks, app_kv; custom dedupe index |
 | [005_light_theme_default.sql](../db/migrations/005_light_theme_default.sql) | Switches the seeded `dark` theme preference to `light` |
+| [006_mcx_v2.sql](../db/migrations/006_mcx_v2.sql) | MCX V2 tables (all `mcx_`-prefixed, additive; no existing table changes) — see § 3 MCX V2 |
 
 How the runner works ([scripts/migrate.mjs](../scripts/migrate.mjs)):
 
@@ -192,7 +221,8 @@ How the runner works ([scripts/migrate.mjs](../scripts/migrate.mjs)):
 - There are **no down migrations**. All migrations so far are additive and idempotent (`IF NOT EXISTS`,
   `ON CONFLICT DO NOTHING`).
 
-**No migration was needed for MCX support:** exchange, expiry type and timeframe are text columns.
+**No migration was needed for MCX V1 support:** exchange, expiry type and timeframe are text columns. MCX V2 has its
+own tables (006).
 
 ---
 

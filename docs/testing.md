@@ -53,6 +53,14 @@ Postgres, Kite or the network.
 | [strategyMarket.test.ts](../tests/strategyMarket.test.ts) | 7 | Specific/universal profiles, legacy normalization, server enforcement for backtests and monitors |
 | [summary.test.ts](../tests/summary.test.ts) | 1 | Dashboard summary counts on IST days |
 | [syntheticSeries.test.ts](../tests/syntheticSeries.test.ts) | 3 | The RSI series generators used by other tests |
+| [mcx2/calendar.test.ts](../tests/mcx2/calendar.test.ts) | 7 | MCX V2 calendar: DST close, holidays, special sessions, candle boundaries (2h/4h truncation, weekly), trigger clock |
+| [mcx2/universe.test.ts](../tests/mcx2/universe.test.ts) | 6 | ATM ± N from the matching future, ITM/OTM for CE and PE, specific / missing expiries, no-LTP refusal, futures |
+| [mcx2/candles.test.ts](../tests/mcx2/candles.test.ts) | 5 | 2h/4h/weekly aggregation, completeness, Heikin Ashi, volume candles with daily restart |
+| [mcx2/evaluator.test.ts](../tests/mcx2/evaluator.test.ts) | 12 | Operators and cross edges, three-valued logic, completed vs live alignment, slower-series alignment, UNKNOWN reasons, SMA of volume + multiplier, data-readiness wait |
+| [mcx2/alertPolicy.test.ts](../tests/mcx2/alertPolicy.test.ts) | 7 | Transition vs while-true, cooldown, once per candle, acknowledge / re-arm, before-enable and stale suppression, signal identity |
+| [mcx2/validate.test.ts](../tests/mcx2/validate.test.ts) | 6 | Schema, unit mismatch, empty groups / params, synced products, cap, channels for enabling, summary text |
+| [mcx2/scanner.test.ts](../tests/mcx2/scanner.test.ts) | 10 | Both Definition-of-Done strategies end to end; no re-evaluation of a candle; identity dedupe; enable floor; series and channel failure isolation; request budget; skip reasons; explain and replay |
+| [mcx2/boundary.test.ts](../tests/mcx2/boundary.test.ts) | 4 | MCX V2 never imports V1 business modules; V1 imports V2 only at the wiring points |
 
 ### Helpers
 
@@ -62,6 +70,9 @@ Postgres, Kite or the network.
   - `FixtureHistorical` — candles per token, optionally per `token:timeframe`; records calls.
   - `fixtureStore()` — an in-memory `DataStore` with the same dedupe semantics as the Postgres unique indexes.
   - `sessionOpens()` / `toCandles()` — NSE-session-aligned candle times.
+- [tests/helpers/mcxFakes.ts](../tests/helpers/mcxFakes.ts) — MCX V2: `MemoryMcxStore` (same dedupe as Postgres),
+  `FixtureMcxProvider` (candles per token + interval, LTP, failure injection, call counts), `RecordingChannels`,
+  instrument / candle builders (`ist`, `timesEndingAt`, `candlesAt`) and expression builders (`cond`, `and`, `ind`…).
 - [tests/helpers/syntheticSeries.ts](../tests/helpers/syntheticSeries.ts) — close-price series that end exactly on
   a cross above/below, or already above, a level (`buildScenarioSeries`).
 

@@ -16,6 +16,7 @@ import { kiteController } from './controllers/kiteController';
 import { groupController } from './controllers/groupController';
 import { liveController } from './controllers/liveController';
 import { mcxController } from './controllers/mcxController';
+import { mcxV2Controller } from './controllers/mcxV2Controller';
 
 export function createRouter(ctx: AppContext): Router {
   const r = new Router();
@@ -69,6 +70,41 @@ export function createRouter(ctx: AppContext): Router {
   // MCX commodities tab
   const mcx = mcxController(ctx);
   r.get('/mcx/products', mcx.products);
+
+  // MCX V2 (beta) — isolated alerting subsystem
+  const m2 = mcxV2Controller(ctx);
+  r.get('/mcx/v2/status', m2.status);
+  r.get('/mcx/v2/products', m2.products);
+  r.get('/mcx/v2/instruments', m2.instruments);
+  r.post('/mcx/v2/instruments/sync', m2.syncInstruments);
+  r.post('/mcx/v2/universe/preview', m2.previewUniverse);
+  r.post('/mcx/v2/validate', m2.validate);
+  r.post('/mcx/v2/explain', m2.explainDraft);
+  r.post('/mcx/v2/replay', m2.replay);
+  r.get('/mcx/v2/strategies', m2.listStrategies);
+  r.post('/mcx/v2/strategies', m2.createStrategy);
+  r.get('/mcx/v2/strategies/:id', m2.getStrategy);
+  r.put('/mcx/v2/strategies/:id', m2.updateStrategy);
+  r.delete('/mcx/v2/strategies/:id', m2.removeStrategy);
+  r.post('/mcx/v2/strategies/:id/duplicate', m2.duplicateStrategy);
+  r.post('/mcx/v2/strategies/:id/enable', m2.enable);
+  r.post('/mcx/v2/strategies/:id/disable', m2.disable);
+  r.get('/mcx/v2/strategies/:id/versions', m2.versions);
+  r.get('/mcx/v2/strategies/:id/units', m2.units);
+  r.post('/mcx/v2/strategies/:id/explain', m2.explainStrategy);
+  r.get('/mcx/v2/alerts', m2.alerts);
+  r.get('/mcx/v2/alerts/:id', m2.alert);
+  r.post('/mcx/v2/alerts/:id/acknowledge', m2.acknowledge);
+  r.get('/mcx/v2/signals', m2.signals);
+  r.post('/mcx/v2/scan', m2.scan);
+  r.get('/mcx/v2/scan-runs', m2.scanRuns);
+  r.get('/mcx/v2/scan-runs/:id', m2.scanRun);
+  r.get('/mcx/v2/settings', m2.settings);
+  r.put('/mcx/v2/settings', m2.saveSettings);
+  r.get('/mcx/v2/calendar', m2.calendar);
+  r.put('/mcx/v2/calendar', m2.saveCalendar);
+  r.get('/mcx/v2/channels', m2.channels);
+  r.post('/mcx/v2/channels/test', m2.testChannel);
 
   const prefs = preferencesController(ctx);
   r.get('/preferences', prefs.get);

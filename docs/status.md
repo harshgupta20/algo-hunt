@@ -1,6 +1,6 @@
 # Project status — known issues, limitations and pending work
 
-Snapshot as of **2026-09-25** (commit `45cfd4d`). Use this page as the working list of what still needs updating or
+Snapshot as of **2026-09-25** (commit `51aec1d` + uncommitted MCX V2 work). Use this page as the working list of what still needs updating or
 correcting. Each item says where the behaviour lives in the code.
 
 > Related: [domain.md](domain.md) · [code-notes.md](code-notes.md) · [troubleshooting.md](troubleshooting.md)
@@ -25,6 +25,7 @@ correcting. Each item says where the behaviour lives in the code.
 | Alerts: Telegram (optional), browser notification + chime, history with filters incl. Market | Done |
 | Per-market status in the top bar (open/closed and whether monitors are running) | Done |
 | Builder: adaptive comparison, price-level warning | Done |
+| **MCX V2 (beta)** at `/mcx-v2`: isolated subsystem — explicit universes (expiry, CE/PE, ATM ± N / ITM / OTM), per-operand timeframe + candle type (incl. volume candles, 2h/4h/weekly), AND/OR/NOT, Telegram + Email (Resend), cooldown / once-per-candle / acknowledge, explain, replay, scanner runs ([mcx-v2-architecture.md](mcx-v2-architecture.md)) | Built and tested (fixtures) — **migration 006 not yet run on production; not yet verified against live Kite or real Telegram/Resend sends** |
 
 ---
 
@@ -87,8 +88,10 @@ Severity: **High** = can cause missed alerts or wrong data · **Medium** = misle
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Email alerts | **Deferred** by the owner | Channel name `email` already reserved; implement a `NotificationChannel` ([development.md](development.md#add-a-notification-channel)) |
-| Volume candles | **Deferred** by the owner | Meaning to be agreed (volume-based bars vs volume-colored candles) |
+| Email alerts | **MCX V2 only** (Resend) | V1 / NSE alerts still Telegram + browser only |
+| Volume candles | **MCX V2 only** | Volume-based bars from the series' candles, restarting daily; V1 has none |
+| MCX V2 go-live | Pending | Run migration 006, sync MCX V2 instruments with Kite, configure Telegram/Resend, enter holidays, run side by side with V1 ([mcx-v2-architecture.md § C3](mcx-v2-architecture.md#c3-before-relying-on-it)) |
+| MCX V2 → V1 migration (Phase 10) | Not started | V2 replaces `/mcx` only after a side-by-side validation |
 | Full MCX list (~26 products incl. Cardamom, Mentha Oil, Cotton, Rubber, Crude Palm Oil, Castor Seed, Black Pepper; indices Bulldex/Metldex) | Not started | Agri products need per-product session hours |
 | "Swap sides" button in the condition editor | Offered, not built | See M6 |
 | Scanner across all strikes/expiries | **Not planned** — the owner chose to keep one strike relative to ATM | |
@@ -110,6 +113,7 @@ Severity: **High** = can cause missed alerts or wrong data · **Medium** = misle
 | 2026-09-25 | Color-rich redesign rejected and reverted; the existing look is the baseline |
 | 2026-09-25 | Top bar shows NSE/BSE and MCX separately with open/closed and monitor activity |
 | 2026-09-25 | Bollinger %B / Bandwidth added; the builder adapts comparisons and warns on price-vs-small-number |
+| 2026-09-25 | MCX V2 built as an isolated subsystem next to V1 (decisions D1–D9 accepted: Resend email, volume candles from base candles, spec cross semantics, ≤ 40 targets / ≤ 150 requests per cycle, same cron with its own lease, manual holiday calendar, 1-minute live mode, `/mcx-v2` beta page, Telegram env with MCX chat override) |
 
 ---
 
@@ -117,7 +121,9 @@ Severity: **High** = can cause missed alerts or wrong data · **Medium** = misle
 
 | Claim | How verified |
 | --- | --- |
-| Engines, MCX rules, sessions, multi-timeframe, patterns, ADX/DMI, Bollinger outputs | Automated tests (127 passing) |
+| Engines, MCX rules, sessions, multi-timeframe, patterns, ADX/DMI, Bollinger outputs | Automated tests (184 passing, 57 of them MCX V2) |
+| MCX V2 engine, alert policy, both Definition-of-Done strategies end to end, module boundaries | Automated tests (`tests/mcx2/`) |
+| MCX V2 UI (all tabs, light + dark), create / validate / enable flows, scan without Kite | Manually, local production build + throwaway database (Kite disconnected) |
 | UI pages, MCX tab, top-bar market states, builder behaviour | Manually, in a local production build against a throwaway database with synthetic instruments and snapshots (Kite disconnected) |
 | Live Kite behaviour for MCX (sync, candles, LTP) | **Not verified** |
 | Top-bar "Live" (green) state with Kite connected | **Not visually verified** |

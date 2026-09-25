@@ -126,6 +126,7 @@ variables (see [.env.example](.env.example)):
 | `APP_PASSWORD` | yes | Dashboard login password |
 | `CRON_SECRET` | yes | Random string, e.g. `openssl rand -hex 32` |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | no | Server-side alert delivery |
+| `RESEND_API_KEY` | no | MCX V2 email alerts (recipients and sender in MCX V2 → Settings) |
 
 Deploy. **Migrations run automatically during the build** (`npm run build` applies pending `db/migrations/*.sql`;
 they're idempotent). To run them by hand: `DATABASE_URL=… npm run db:migrate`.

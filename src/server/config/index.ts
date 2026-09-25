@@ -22,6 +22,9 @@ const EnvSchema = z.object({
   /** Optional Telegram delivery so alerts reach you with the dashboard closed. */
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
+
+  /** Optional email delivery for MCX V2 alerts (Resend API key). */
+  RESEND_API_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -49,6 +52,10 @@ function load() {
       env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID
         ? { botToken: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID }
         : undefined,
+    // MCX V2 reads these separately: its chat id can come from MCX settings instead of the env.
+    telegramBotToken: env.TELEGRAM_BOT_TOKEN,
+    telegramChatId: env.TELEGRAM_CHAT_ID,
+    resendApiKey: env.RESEND_API_KEY,
   } as const;
 }
 

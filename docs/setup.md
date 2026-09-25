@@ -44,7 +44,8 @@ noted otherwise.
 | `KITE_API_SECRET` | **Yes** for market data | Kite Connect app secret; also derives the key that encrypts the stored access token. Rotating it invalidates the stored session |
 | `APP_PASSWORD` | **Yes in production** | Dashboard password. Unset → open in development, 503 in production |
 | `CRON_SECRET` | **Yes in production** | Secret for `/api/cron/tick` (`Authorization: Bearer …` or `?secret=`). Unset → allowed only outside production |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | No | Both set → alerts are also sent to that Telegram chat |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | No | Both set → alerts are also sent to that Telegram chat. MCX V2 needs only the token when a chat id is set in MCX V2 → Settings |
+| `RESEND_API_KEY` | No | MCX V2 email alerts via [Resend](https://resend.com); recipients and sender are set in MCX V2 → Settings |
 | `LOG_LEVEL` | No | `error` · `warn` · `info` (default) · `debug`; JSON log lines ([logger.ts](../src/server/utils/logger.ts)) |
 | `KITE_API_ROOT` | No | Overrides the Kite API base URL (for proxies / integration testing). Read directly in [kiteClient.ts](../src/server/services/kite/kiteClient.ts); **not listed in `.env.example`** |
 | `NODE_ENV` | Set by Next.js | Production enables the password/secret requirements and `Secure` cookies |

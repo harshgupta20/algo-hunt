@@ -27,6 +27,7 @@ combined alert when the strategy's rules turn true. It never places trades.
 | [troubleshooting.md](troubleshooting.md) | Problems and exact error messages, with fixes |
 | [code-notes.md](code-notes.md) | The complex parts of the code and recommended inline documentation |
 | [status.md](status.md) | **Current state:** open issues to correct, limitations, deferred work, decisions log, verification status |
+| [mcx-v2-architecture.md](mcx-v2-architecture.md) | MCX V2 (beta, `/mcx-v2`): discovery report, isolated-module architecture, evaluation semantics, alert policy, scanner, persistence, UI, accepted decisions, as-built notes and go-live steps |
 
 ## Quick start
 

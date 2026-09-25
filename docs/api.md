@@ -270,3 +270,43 @@ curl -s -b cookies.txt -H 'Content-Type: application/json' -X POST http://localh
 | --- | --- | --- | --- |
 | GET | `/api/preferences` | — | `{ theme: 'light'\|'dark', soundEnabled, browserNotifications }` |
 | PUT | `/api/preferences` | Full object (all three fields) | Saved object |
+
+### 4.12 MCX V2 (beta)
+
+The independent MCX alerting subsystem ([mcx-v2-architecture.md](mcx-v2-architecture.md)). Served by
+[mcxV2Controller.ts](../src/server/api/controllers/mcxV2Controller.ts); types in
+[src/shared/mcx/types.ts](../src/shared/mcx/types.ts). Validation failures return `400` with
+`{ error, issues: [{ path, message, severity }] }`.
+
+| Method | Path | Params / body | Response |
+| --- | --- | --- | --- |
+| GET | `/api/mcx/v2/status` | — | `{ now, market: { open, today, sessionStart, sessionEnd }, kiteConnected, instruments: { count, syncedAt }, strategies: { total, enabled }, lastRun, channels }` |
+| GET | `/api/mcx/v2/products` | — | Products with `futures[]` and `optionExpiries[{ expiry, strikes }]` from `mcx_instruments` |
+| GET | `/api/mcx/v2/instruments` | `underlying`, `expiry`, `type` (`MCX_FUTURE`\|`CE`\|`PE`), `search`, `limit` (≤ 2000) | `{ total, items: McxInstrument[] }` |
+| POST | `/api/mcx/v2/instruments/sync` | — | `{ count, syncedAt }` (needs Kite) |
+| POST | `/api/mcx/v2/universe/preview` | `{ universe }` | Resolution (`units`, `references` with LTP, `expiries`, `errors`, `notes`) + `cap` + `quotes` |
+| POST | `/api/mcx/v2/validate` | `{ definition, forEnable?, resolve? }` | `{ issues, valid, summary, resolvedTargets? }` |
+| GET | `/api/mcx/v2/strategies` | — | `McxStrategy[]` |
+| POST | `/api/mcx/v2/strategies` | `{ definition }` | `201` `McxStrategy` (disabled, v1) |
+| GET / PUT / DELETE | `/api/mcx/v2/strategies/:id` | PUT `{ definition }` → new version, unit states reset | `McxStrategy` · `204` |
+| POST | `/api/mcx/v2/strategies/:id/duplicate` | — | `201` copy (disabled) |
+| POST | `/api/mcx/v2/strategies/:id/enable` · `/disable` | — | `McxStrategy`; enable validates first (channels configured, universe within the cap) |
+| GET | `/api/mcx/v2/strategies/:id/versions` | — | `McxStrategyVersion[]`, newest first |
+| GET | `/api/mcx/v2/strategies/:id/units` | — | `UnitState[]` with each unit's latest evaluation |
+| POST | `/api/mcx/v2/strategies/:id/explain` | `{ targetId? }` | Explain result (per contract: evaluation trace, previous result, what the policy would do). Nothing saved |
+| POST | `/api/mcx/v2/explain` | `{ definition, targetId? }` | Same for an unsaved draft |
+| POST | `/api/mcx/v2/replay` | `{ strategyId? \| definition?, from, to, targetIds? (≤ 10) }` | Per contract, one row per trigger candle (result, outcome, failing conditions, trace on signals). Span limited per timeframe (e.g. 15 days of 15m) |
+| GET | `/api/mcx/v2/alerts` | `active=1`, `strategyId`, `limit` | `McxAlert[]` with deliveries |
+| GET | `/api/mcx/v2/alerts/:id` | — | `McxAlert` |
+| POST | `/api/mcx/v2/alerts/:id/acknowledge` | — | `McxAlert`; the unit goes quiet until the strategy turns false |
+| GET | `/api/mcx/v2/signals` | `strategyId`, `limit` (≤ 500) | `McxSignal[]` including suppressed ones |
+| POST | `/api/mcx/v2/scan` | `{ force? }` | `{ run: McxScanRun, skipped? }` — same lease as the cron job |
+| GET | `/api/mcx/v2/scan-runs` · `/scan-runs/:id` | `limit` | `McxScanRun[]` / one run |
+| GET / PUT | `/api/mcx/v2/settings` | `{ telegramChatId?, emailRecipients, emailFrom, universeCap, requestBudget }` | `McxSettings` |
+| GET / PUT | `/api/mcx/v2/calendar` | `{ entries: [{ date, kind: 'HOLIDAY'\|'SPECIAL_SESSION', openMin?, closeMin?, note? }] }` | `CalendarEntry[]` |
+| GET | `/api/mcx/v2/channels` | — | `{ telegram: { configured, detail }, email: { configured, detail } }` |
+| POST | `/api/mcx/v2/channels/test` | `{ channel: 'telegram'\|'email' }` | `{ ok: true }` · 400 with the reason |
+
+The cron route `/api/cron/tick` also runs the MCX V2 scan after the V1 evaluation (its own lease and error
+handling) and adds `mcxV2: { status, skipped?, units, alerts, errors }` to its response.
+

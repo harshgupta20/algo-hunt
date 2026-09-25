@@ -59,6 +59,7 @@ are the main reason. The live-tick lease is 280 s, so it's shorter than that lim
 | `APP_PASSWORD` | yes | Without it every request returns 503 in production |
 | `CRON_SECRET` | yes | e.g. `openssl rand -hex 32`; Vercel Cron sends it automatically as a Bearer token |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | no | Server-side alert delivery |
+| `RESEND_API_KEY` | no | MCX V2 email alerts (recipients and sender in MCX V2 → Settings) |
 | `LOG_LEVEL` | no | Default `info` |
 | `KITE_API_ROOT` | no | Kite API base URL override; normally unset |
 

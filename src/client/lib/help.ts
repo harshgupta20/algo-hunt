@@ -57,6 +57,11 @@ export const HELP = {
       body: 'Gold, Silver, Crude Oil, Natural Gas and base metals on MCX: product list, commodity monitors and backtests, in their own session (09:00–23:30/23:55 IST).',
       note: 'Uses the same strategies, indicators and alerts as NSE — only the market is different.',
     },
+    mcxV2: {
+      title: 'MCX V2 (beta)',
+      body: 'The new, independent MCX alerting system: explicit contracts (expiry, CE/PE, ATM ± N / ITM / OTM), per-condition timeframe and candle type, AND/OR/NOT logic, Telegram + Email alerts with cooldowns, and “why did it fire” explanations.',
+      note: 'Runs alongside the MCX tab — nothing there changes.',
+    },
     settings: { title: 'Settings', body: 'Zerodha Kite connection, notifications, theme and evaluator status.' },
   },
 
