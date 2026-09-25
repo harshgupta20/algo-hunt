@@ -9,8 +9,8 @@ import { useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Download, LayoutGrid, List, Radio } from 'lucide-react';
-import type { Alert, AlertHistoryFilters, ScenarioId, Timeframe } from '@ash/shared';
-import { BUILTIN_STRATEGY_NAME, TIMEFRAMES } from '@ash/shared';
+import type { Alert, AlertHistoryFilters, ScenarioId, Segment, Timeframe } from '@ash/shared';
+import { BUILTIN_STRATEGY_NAME, TIMEFRAMES, segmentOf } from '@ash/shared';
 import { api } from '../lib/api';
 import { useLive, type LiveHealth } from '../context/LiveContext';
 import { Badge, Card, EmptyState, Help, PageHeader, RuleBadge, Spinner, Tabs } from '../components/ui';
@@ -64,6 +64,11 @@ export function Alerts() {
   const setView = (v: View) => router.replace(v === 'table' ? `${pathname}?view=table` : pathname);
 
   const { health } = useLive();
+  // Market filter; the MCX tab links here with ?segment=MCX.
+  const [segment, setSegment] = useState<'' | Segment>(() => {
+    const p = params.get('segment');
+    return p === 'MCX' || p === 'NSE' ? p : '';
+  });
   const [underlying, setUnderlying] = useState('');
   const [strategy, setStrategy] = useState('');
   const [timeframe, setTimeframe] = useState('');
@@ -71,12 +76,18 @@ export function Alerts() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
 
-  const underlyings = useQuery({ queryKey: ['underlyings'], queryFn: api.underlyings });
+  const nseUnderlyings = useQuery({ queryKey: ['underlyings', 'NSE'], queryFn: () => api.underlyings('NSE') });
+  const mcxUnderlyings = useQuery({ queryKey: ['underlyings', 'MCX'], queryFn: () => api.underlyings('MCX') });
+  const underlyingOptions = [
+    ...(segment !== 'MCX' ? (nseUnderlyings.data ?? []) : []),
+    ...(segment !== 'NSE' ? (mcxUnderlyings.data ?? []) : []),
+  ];
   const strategies = useQuery({ queryKey: ['strategies-custom'], queryFn: api.listStrategies });
   const scenarioApplies = strategy === '' || strategy === 'rsi-sync';
 
   const filters: AlertHistoryFilters = useMemo(
     () => ({
+      segment: segment || undefined,
       underlying: underlying || undefined,
       strategy: strategy || undefined,
       timeframe: (timeframe || undefined) as Timeframe | undefined,
@@ -85,11 +96,11 @@ export function Alerts() {
       to: to ? `${to}T23:59:59.999Z` : undefined,
       limit: 500,
     }),
-    [underlying, strategy, timeframe, scenario, scenarioApplies, from, to],
+    [segment, underlying, strategy, timeframe, scenario, scenarioApplies, from, to],
   );
   const alerts = useQuery({ queryKey: ['alerts', filters], queryFn: () => api.listAlerts(filters) });
   const list = alerts.data ?? [];
-  const filtered = Boolean(underlying || strategy || timeframe || scenario || from || to);
+  const filtered = Boolean(segment || underlying || strategy || timeframe || scenario || from || to);
 
   const download = () => {
     const blob = new Blob([toCsv(list)], { type: 'text/csv' });
@@ -102,6 +113,7 @@ export function Alerts() {
   };
 
   const reset = () => {
+    setSegment('');
     setUnderlying('');
     setStrategy('');
     setTimeframe('');
@@ -132,12 +144,28 @@ export function Alerts() {
       />
 
       <Card className="mb-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 items-end">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 items-end">
+          <div>
+            <FieldLabel help={HELP.alertsPage.market}>Market</FieldLabel>
+            <select
+              className="input w-full"
+              value={segment}
+              onChange={(e) => {
+                const next = e.target.value as '' | Segment;
+                setSegment(next);
+                if (next && underlying && segmentOf(underlying) !== next) setUnderlying('');
+              }}
+            >
+              <option value="">All</option>
+              <option value="NSE">NSE/BSE</option>
+              <option value="MCX">MCX</option>
+            </select>
+          </div>
           <div>
             <FieldLabel help={HELP.field.underlying}>Underlying</FieldLabel>
             <select className="input w-full" value={underlying} onChange={(e) => setUnderlying(e.target.value)}>
               <option value="">All</option>
-              {underlyings.data?.map((u) => (
+              {underlyingOptions.map((u) => (
                 <option key={u.symbol} value={u.symbol}>
                   {u.symbol}
                 </option>
@@ -254,7 +282,15 @@ export function Alerts() {
                   <tr key={a.id} className="hover:bg-ink-850/60">
                     <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{fmtTime(a.triggeredAt)}</td>
                     <td className="px-4 py-3 text-fg font-medium">{a.underlying}</td>
-                    <td className="px-4 py-3 tabular-nums">{a.strike}</td>
+                    <td className="px-4 py-3 tabular-nums">
+                      {a.strike ? (
+                        a.strike
+                      ) : (
+                        <Tooltip content={HELP.alertsPage.noStrike}>
+                          <span tabIndex={0} className="text-slate-500 cursor-help">—</span>
+                        </Tooltip>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-slate-400">{a.expiry || '—'}</td>
                     <td className="px-4 py-3">{a.timeframe}</td>
                     <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{a.strategyName ?? BUILTIN_STRATEGY_NAME}</td>

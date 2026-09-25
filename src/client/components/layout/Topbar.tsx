@@ -43,6 +43,9 @@ export function Topbar() {
   const enable = async () => setPerm(await requestNotificationPermission());
   const needsKiteLogin = kite.data?.enabled && kite.data.needsLogin;
   const lastRun = status?.lastRunAt ? `last run ${formatDistanceToNowStrict(new Date(status.lastRunAt))} ago` : 'no runs yet';
+  const openMarkets = status?.sessions
+    ? [status.sessions.NSE.open && 'NSE/BSE', status.sessions.MCX.open && 'MCX'].filter(Boolean).join(' + ')
+    : '';
 
   const signOut = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -63,12 +66,24 @@ export function Topbar() {
           </button>
         </Tooltip>
       )}
-      <Tooltip content={{ ...HEALTH_HELP[health], note: status?.activeMonitors ? `Active monitors: ${status.activeMonitors} · ${lastRun}.` : HEALTH_HELP[health].note }} side="bottom">
+      <Tooltip
+        content={{
+          ...HEALTH_HELP[health],
+          note: [
+            openMarkets && `Open now: ${openMarkets}.`,
+            status?.activeMonitors ? `Active monitors: ${status.activeMonitors} · ${lastRun}.` : HEALTH_HELP[health].note,
+          ]
+            .filter(Boolean)
+            .join(' '),
+        }}
+        side="bottom"
+      >
         <div className="flex items-center gap-2 text-xs cursor-help" tabIndex={0}>
           <Wifi className="w-4 h-4 text-slate-500" />
           <span className={clsx('flex items-center gap-1.5 font-medium', s.text)}>
             <span className={clsx('w-2 h-2 rounded-full', s.dot)} />
             {s.label}
+            {health === 'live' && openMarkets === 'MCX' && <span className="text-slate-500 font-normal">· MCX</span>}
           </span>
           {status && status.activeMonitors > 0 && <span className="text-slate-500 hidden md:inline">· {lastRun}</span>}
         </div>

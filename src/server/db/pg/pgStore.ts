@@ -15,11 +15,13 @@ import type {
   StrategyVersion,
   UnderlyingGroup,
   UnderlyingGroupInput,
+  Exchange,
   Instrument,
   InstrumentType,
+  Segment,
   UserPreferences,
 } from '@ash/shared';
-import { DEFAULT_USER_PREFERENCES } from '@ash/shared';
+import { DEFAULT_USER_PREFERENCES, MCX_PRODUCTS } from '@ash/shared';
 import type pg from 'pg';
 import { getPool } from '../pool';
 import type {
@@ -91,6 +93,8 @@ function mapConfig(r: any): AlertConfiguration {
   };
 }
 
+const MCX_SYMBOLS = MCX_PRODUCTS.map((p) => p.symbol);
+
 class PgAlertRepository implements AlertRepository {
   constructor(private readonly pool: pg.Pool) {}
 
@@ -153,6 +157,9 @@ class PgAlertRepository implements AlertRepository {
     if (f.strategy) add('strategy = ?', f.strategy);
     if (f.groupId) add('group_id = ?', f.groupId);
     if (f.configId) add('config_id = ?', f.configId);
+    // Segment is derived from the underlying (MCX products vs everything else).
+    if (f.segment === 'MCX') add('underlying = ANY(?::text[])', MCX_SYMBOLS);
+    if (f.segment === 'NSE') add('NOT (underlying = ANY(?::text[]))', MCX_SYMBOLS);
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     vals.push(f.limit ?? 100, f.offset ?? 0);
     const res = await this.pool.query(
@@ -162,8 +169,13 @@ class PgAlertRepository implements AlertRepository {
     return res.rows.map(mapAlert);
   }
 
-  async analytics(): Promise<AnalyticsSummary> {
-    const res = await this.pool.query('SELECT * FROM alerts ORDER BY triggered_at DESC LIMIT 5000');
+  async analytics(segment?: Segment): Promise<AnalyticsSummary> {
+    const res =
+      segment === 'MCX'
+        ? await this.pool.query('SELECT * FROM alerts WHERE underlying = ANY($1::text[]) ORDER BY triggered_at DESC LIMIT 5000', [MCX_SYMBOLS])
+        : segment === 'NSE'
+          ? await this.pool.query('SELECT * FROM alerts WHERE NOT (underlying = ANY($1::text[])) ORDER BY triggered_at DESC LIMIT 5000', [MCX_SYMBOLS])
+          : await this.pool.query('SELECT * FROM alerts ORDER BY triggered_at DESC LIMIT 5000');
     return summarize(res.rows.map(mapAlert));
   }
 }
@@ -564,11 +576,11 @@ class PgKiteSessionRepository implements KiteSessionRepository {
 class PgInstrumentRepository implements InstrumentRepository {
   constructor(private readonly pool: pg.Pool) {}
 
-  async replaceAll(instruments: Instrument[]): Promise<void> {
+  async replaceExchanges(exchanges: Exchange[], instruments: Instrument[]): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('DELETE FROM instruments');
+      await client.query('DELETE FROM instruments WHERE exchange = ANY($1::text[])', [exchanges]);
       const CHUNK = 5000;
       for (let i = 0; i < instruments.length; i += CHUNK) {
         const rows = instruments.slice(i, i + CHUNK);
@@ -613,8 +625,10 @@ class PgInstrumentRepository implements InstrumentRepository {
     }));
   }
 
-  async count(): Promise<number> {
-    const res = await this.pool.query('SELECT count(*)::int AS n FROM instruments');
+  async count(exchanges?: Exchange[]): Promise<number> {
+    const res = exchanges
+      ? await this.pool.query('SELECT count(*)::int AS n FROM instruments WHERE exchange = ANY($1::text[])', [exchanges])
+      : await this.pool.query('SELECT count(*)::int AS n FROM instruments');
     return res.rows[0]?.n ?? 0;
   }
 }

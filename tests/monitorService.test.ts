@@ -48,8 +48,8 @@ describe('MonitorService (cron evaluator: Kite candles → RSI → strategy → 
     expect(activated.active).toBe(true);
     const state = await store.monitors.get(config.id);
     expect(state?.strike).toBe(22000);
-    expect(state?.triplet.call.instrumentType).toBe('CE');
-    expect(state?.triplet.put.strike).toBe(22000);
+    expect(state?.triplet.call?.instrumentType).toBe('CE');
+    expect(state?.triplet.put?.strike).toBe(22000);
   });
 
   it('fires exactly ONE combined alert for Scenario 1 when the candle closes', async () => {

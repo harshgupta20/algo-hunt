@@ -4,6 +4,7 @@
  */
 import type { IndicatorRef, IndicatorSpec } from '@ash/shared';
 import { INDICATOR_CLASSES } from './library';
+import { PATTERNS, PATTERN_BY_ID } from './patterns';
 import type { Indicator } from './types';
 
 export function createIndicator(ref: IndicatorRef): Indicator {
@@ -23,8 +24,9 @@ export function indicatorSignature(ref: IndicatorRef): string {
   return `${ref.kind}|${params}|${ref.field ?? ''}`;
 }
 
-/** Short human label for an indicator ref, e.g. "RSI(14)" or "MACD hist". */
+/** Short human label for an indicator ref, e.g. "RSI(14)", "MACD hist" or "Hammer". */
 export function indicatorLabel(ref: IndicatorRef): string {
+  if (ref.kind === 'PATTERN') return PATTERN_BY_ID[ref.field ?? '']?.label ?? 'Pattern';
   const p = ref.params ? Object.values(ref.params).join(',') : '';
   const base = p ? `${ref.kind}(${p})` : ref.kind;
   return ref.field ? `${base} ${ref.field}` : base;
@@ -140,5 +142,41 @@ export const INDICATOR_SPECS: IndicatorSpec[] = [
     description: 'Outstanding contracts at the candle close (from Kite). Rising OI with rising price suggests fresh longs.',
     example: 'Future OI increased by 5% over 3 bars',
     params: [],
+  },
+  {
+    kind: 'ADX',
+    label: 'ADX',
+    numeric: true,
+    description:
+      'Average Directional Index (0–100): how STRONG the trend is, not its direction (Wilder, same as Kite / TradingView). Above 25 = trending, below 20 = ranging.',
+    example: 'Future ADX(14,14) > 25',
+    params: [
+      { name: 'period', label: 'DI Length', default: 14, min: 2, max: 100, help: 'Candles used for +DI / −DI (the directional movement).' },
+      { name: 'smoothing', label: 'ADX Smoothing', default: 14, min: 2, max: 100, help: 'Candles used to smooth DX into ADX.' },
+    ],
+  },
+  {
+    kind: 'DMI',
+    label: 'DMI (+DI / −DI)',
+    numeric: true,
+    description:
+      'Directional Movement Index: +DI measures upward pressure, −DI downward pressure (0–100). +DI crossing above −DI is a bullish signal; ADX tells you whether the trend is strong.',
+    example: 'Future DMI +DI cross above Future DMI −DI',
+    params: [{ name: 'period', label: 'DI Length', default: 14, min: 2, max: 100, help: 'Candles in the Wilder smoothing of +DM, −DM and true range.' }],
+    fields: [
+      { value: 'plus', label: '+DI', description: 'Upward directional pressure.' },
+      { value: 'minus', label: '−DI', description: 'Downward directional pressure.' },
+    ],
+  },
+  {
+    kind: 'PATTERN',
+    label: 'Candle Pattern',
+    numeric: false,
+    boolean: true,
+    description:
+      'Candlestick pattern detection on closed candles: hammer, engulfing, doji, stars, soldiers/crows and more. Tested with “Is Detected” — true on the candle that completes the pattern.',
+    example: 'Future Bullish Engulfing is detected',
+    params: [],
+    fields: PATTERNS.map((p) => ({ value: p.value, label: p.label, description: p.description, group: p.group })),
   },
 ];

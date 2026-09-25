@@ -19,14 +19,16 @@ import type {
   RsiPoint,
   StrategyDef,
 } from '@ash/shared';
-import { DEFAULT_RSI_SYNC_PARAMS, TIMEFRAME_MS } from '@ash/shared';
+import { BUILTIN_STRATEGY_NAME, DEFAULT_RSI_SYNC_PARAMS, TIMEFRAME_MS, segmentOf } from '@ash/shared';
 import { RsiCalculator, computeRsiSeries } from '../indicator/rsi';
 import type { Bar } from '../indicator/types';
 import type { StrategyEngine } from '../strategy/StrategyEngine';
-import { CustomStrategyEvaluator } from '../strategy/customEvaluator';
+import { CustomStrategyEvaluator, type StrategyMatchResult } from '../strategy/customEvaluator';
 import type { InstrumentStore } from '../kite/instrumentStore';
 import type { HistoricalDataProvider } from '../kite/HistoricalDataProvider';
 import type { DataStore } from '../../db/store';
+import { lookbackDays } from '../live/monitorService';
+import { sessionFor } from '../../utils/marketTime';
 import { resolveDateRange } from './dateRange';
 import { computeStats } from './stats';
 import { explainMatch } from './explain';
@@ -36,6 +38,9 @@ function isoDate(ms: number): string {
 }
 
 const LEGS: Leg[] = ['future', 'call', 'put'];
+const DAY_MS = 86_400_000;
+
+type Triplet = Awaited<ReturnType<BacktestRunner['resolve']>>['triplet'];
 
 interface LegSeries {
   future: OHLCV[];
@@ -44,8 +49,13 @@ interface LegSeries {
   futMap: Map<number, number>;
   /** OHLCV bar per leg keyed by candle time (for indicator-based custom strategies). */
   bars: Record<Leg, Map<number, OHLCV>>;
-  /** Candle times (epoch seconds) present in all three legs, ascending. */
+  /** Candle times (epoch seconds) present in every available leg, ascending. */
   times: number[];
+}
+
+/** Daily / weekly futures history is fetched continuous (expired contracts stitched in). */
+function continuousFor(leg: Leg, tf: AnalyzerParams['timeframe']): boolean {
+  return leg === 'future' && (tf === '1d' || tf === '1w');
 }
 
 export class BacktestRunner {
@@ -68,17 +78,13 @@ export class BacktestRunner {
     return { expiry, triplet };
   }
 
-  private async fetchLegs(
-    triplet: Awaited<ReturnType<BacktestRunner['resolve']>>['triplet'],
-    timeframe: AnalyzerParams['timeframe'],
-    from: string,
-    to: string,
-  ): Promise<LegSeries> {
-    const [future, call, put] = await Promise.all([
-      this.historical.getCandles({ token: triplet.future.token, timeframe, from, to }),
-      this.historical.getCandles({ token: triplet.call.token, timeframe, from, to }),
-      this.historical.getCandles({ token: triplet.put.token, timeframe, from, to }),
-    ]);
+  private async fetchLegs(triplet: Triplet, timeframe: AnalyzerParams['timeframe'], from: string, to: string): Promise<LegSeries> {
+    const get = (leg: Leg) => {
+      const inst = triplet[leg];
+      if (!inst) return Promise.resolve([] as OHLCV[]);
+      return this.historical.getCandles({ token: inst.token, timeframe, from, to, ...(continuousFor(leg, timeframe) && { continuous: true }) });
+    };
+    const [future, call, put] = await Promise.all([get('future'), get('call'), get('put')]);
     const futMap = new Map(future.map((c) => [c.time, c.close]));
     const callMap = new Map(call.map((c) => [c.time, c.close]));
     const putMap = new Map(put.map((c) => [c.time, c.close]));
@@ -87,11 +93,65 @@ export class BacktestRunner {
       call: new Map(call.map((c) => [c.time, c])),
       put: new Map(put.map((c) => [c.time, c])),
     };
+    const hasOptions = Boolean(triplet.call && triplet.put);
     const times = future
       .map((c) => c.time)
-      .filter((t) => callMap.has(t) && putMap.has(t))
+      .filter((t) => !hasOptions || (callMap.has(t) && putMap.has(t)))
       .sort((a, b) => a - b);
     return { future, futMap, callMap, putMap, bars, times };
+  }
+
+  /** The built-in strategy needs ATM Call + Put; futures-only products can't run it. */
+  private requireOptions(underlying: string): void {
+    if (!this.instrumentStore.hasOptions(underlying)) {
+      throw new Error(`${BUILTIN_STRATEGY_NAME} needs the ATM Call and Put, but ${underlying} has no listed options — use a strategy that only reads the Future.`);
+    }
+  }
+
+  /**
+   * Replay a custom strategy over the legs, candle by candle, through the
+   * generic evaluator. Timeframes other than the run's are fetched with
+   * warm-up history before `from`.
+   */
+  private async replayCustom(
+    params: AnalyzerParams,
+    def: StrategyDef,
+    triplet: Triplet,
+    legs: LegSeries,
+    from: string,
+    to: string,
+  ): Promise<Array<{ t: number; match: StrategyMatchResult }>> {
+    const session = sessionFor(params.underlying);
+    const evaluator = new CustomStrategyEvaluator(def, { baseTimeframe: params.timeframe, session });
+    const instruments = evaluator.instruments().filter((i): i is Leg => (LEGS as string[]).includes(i));
+    const missing = instruments.filter((l) => !triplet[l]);
+    if (missing.length) {
+      throw new Error(`"${def.name}" reads the ${missing.join(' and ')} leg, but ${params.underlying} has no listed options — only the Future can be tested.`);
+    }
+    for (const req of evaluator.requirements()) {
+      const inst = triplet[req.instrument as Leg];
+      if (!inst) continue;
+      const warmFrom = isoDate(Date.parse(`${from}T00:00:00Z`) - lookbackDays(req.timeframe, session) * DAY_MS);
+      const candles = await this.historical.getCandles({
+        token: inst.token,
+        timeframe: req.timeframe,
+        from: warmFrom,
+        to,
+        ...(continuousFor(req.instrument as Leg, req.timeframe) && { continuous: true }),
+      });
+      evaluator.seed(req.instrument, req.timeframe, candles);
+    }
+
+    const out: Array<{ t: number; match: StrategyMatchResult }> = [];
+    for (const t of legs.times) {
+      for (const inst of instruments) {
+        const bar = legs.bars[inst].get(t);
+        if (bar) evaluator.update(inst, bar as Bar);
+      }
+      const match = evaluator.evaluate();
+      if (match) out.push({ t, match });
+    }
+    return out;
   }
 
   /** Dispatch to the built-in RSI engine or the generic engine for a custom strategy. */
@@ -121,6 +181,7 @@ export class BacktestRunner {
     const to = results[0]?.meta.to ?? '';
     const expiry = results[0]?.meta.expiry ?? '';
     const label = params.groupName ?? `${members.length} underlyings`;
+    const segment = segmentOf(members[0]!);
     return {
       meta: {
         underlying: label,
@@ -134,7 +195,7 @@ export class BacktestRunner {
         tokens: results[0]?.meta.tokens ?? { future: 0, call: 0, put: 0 },
       },
       alerts,
-      stats: computeStats(alerts, { from, to, underlying: label, expiry, timeframe: params.timeframe }),
+      stats: computeStats(alerts, { from, to, underlying: label, expiry, timeframe: params.timeframe, segment }),
     };
   }
 
@@ -169,6 +230,7 @@ export class BacktestRunner {
    * strike follow the future's price candle-by-candle.
    */
   private async atmData(params: AnalyzerParams, from: string, to: string) {
+    this.requireOptions(params.underlying);
     const eff = { ...DEFAULT_RSI_SYNC_PARAMS, ...params.params };
     const expiry = this.instrumentStore.resolveExpiryDate(params.underlying, params.expiryType);
     if (!expiry) throw new Error(`No expiry available for ${params.underlying}`);
@@ -176,13 +238,19 @@ export class BacktestRunner {
     if (!future) throw new Error(`No future contract found for ${params.underlying}`);
 
     const futureCandles = (
-      await this.historical.getCandles({ token: future.token, timeframe: params.timeframe, from, to })
+      await this.historical.getCandles({
+        token: future.token,
+        timeframe: params.timeframe,
+        from,
+        to,
+        ...(continuousFor('future', params.timeframe) && { continuous: true }),
+      })
     ).sort((a, b) => a.time - b.time);
 
     const strikeAt = new Map<number, number>();
     const neededStrikes = new Set<number>();
     for (const c of futureCandles) {
-      const strike = this.instrumentStore.strikeFromPrice(params.underlying, c.close, params.strikeSelection, params.customStrike);
+      const strike = this.instrumentStore.strikeFromPrice(params.underlying, c.close, params.strikeSelection, params.customStrike, expiry);
       strikeAt.set(c.time, strike);
       neededStrikes.add(strike);
     }
@@ -240,7 +308,7 @@ export class BacktestRunner {
       }
     }
 
-    const stats = computeStats(alerts, { from, to, underlying: params.underlying, expiry: d.expiry, timeframe: params.timeframe });
+    const stats = computeStats(alerts, { from, to, underlying: params.underlying, expiry: d.expiry, timeframe: params.timeframe, segment: segmentOf(params.underlying) });
     const lastStrike = times.length ? d.strikeAt.get(times[times.length - 1]!) ?? 0 : 0;
     return {
       meta: {
@@ -264,35 +332,25 @@ export class BacktestRunner {
     const { from, to } = resolveDateRange(params.preset, params.from, params.to);
     const { expiry, triplet } = await this.resolve(params);
     const legs = await this.fetchLegs(triplet, params.timeframe, from, to);
-
-    const evaluator = new CustomStrategyEvaluator(def);
-    const instruments = evaluator.instruments().filter((i): i is Leg => (LEGS as string[]).includes(i));
     const alerts: BacktestAlert[] = [];
 
-    for (const t of legs.times) {
-      for (const inst of instruments) {
-        const bar = legs.bars[inst].get(t);
-        if (bar) evaluator.update(inst, bar as Bar);
-      }
-      const match = evaluator.evaluate();
-      if (match) {
-        const bucket = t * 1000;
-        alerts.push({
-          id: randomUUID(),
-          bucket,
-          timestamp: new Date(bucket).toISOString(),
-          underlying: params.underlying,
-          expiry,
-          strike: triplet.strike,
-          timeframe: params.timeframe,
-          strategy: def.id,
-          variant: match.variant,
-          conditions: match.traces,
-        });
-      }
+    for (const { t, match } of await this.replayCustom(params, def, triplet, legs, from, to)) {
+      const bucket = t * 1000;
+      alerts.push({
+        id: randomUUID(),
+        bucket,
+        timestamp: new Date(bucket).toISOString(),
+        underlying: params.underlying,
+        expiry,
+        strike: triplet.strike,
+        timeframe: params.timeframe,
+        strategy: def.id,
+        variant: match.variant,
+        conditions: match.traces,
+      });
     }
 
-    const stats = computeStats(alerts, { from, to, underlying: params.underlying, expiry, timeframe: params.timeframe });
+    const stats = computeStats(alerts, { from, to, underlying: params.underlying, expiry, timeframe: params.timeframe, segment: segmentOf(params.underlying) });
     return {
       meta: {
         underlying: params.underlying,
@@ -303,7 +361,7 @@ export class BacktestRunner {
         to,
         candlesAnalyzed: legs.times.length,
         provider: this.historical.name,
-        tokens: { future: triplet.future.token, call: triplet.call.token, put: triplet.put.token },
+        tokens: { future: triplet.future.token, call: triplet.call?.token ?? 0, put: triplet.put?.token ?? 0 },
       },
       alerts,
       stats,
@@ -399,8 +457,9 @@ export class BacktestRunner {
       const ms = t * 1000;
       const inWin = ms >= displayStart && ms <= displayEnd;
       const f = rsiF.update(legs.futMap.get(t)!);
-      const c = rsiC.update(legs.callMap.get(t)!);
-      const p = rsiP.update(legs.putMap.get(t)!);
+      // Futures-only products have no option legs to chart.
+      const c = legs.callMap.has(t) ? rsiC.update(legs.callMap.get(t)!) : undefined;
+      const p = legs.putMap.has(t) ? rsiP.update(legs.putMap.get(t)!) : undefined;
       if (inWin) {
         if (f !== undefined) futureRsi.push({ time: t, value: round2(f) });
         if (c !== undefined) callRsi.push({ time: t, value: round2(c) });
@@ -410,15 +469,8 @@ export class BacktestRunner {
 
     const def = await this.store.strategies.get(params.strategy);
     if (def) {
-      const ev = new CustomStrategyEvaluator(def);
-      const insts = ev.instruments().filter((i): i is Leg => (LEGS as string[]).includes(i));
-      for (const t of legs.times) {
-        for (const inst of insts) {
-          const bar = legs.bars[inst].get(t);
-          if (bar) ev.update(inst, bar as Bar);
-        }
-        const m = ev.evaluate();
-        if (m && t * 1000 >= displayStart && t * 1000 <= displayEnd) markers.push({ time: t, scenario: 1 });
+      for (const { t } of await this.replayCustom(params, def, triplet, legs, from, to)) {
+        if (t * 1000 >= displayStart && t * 1000 <= displayEnd) markers.push({ time: t, scenario: 1 });
       }
     }
 

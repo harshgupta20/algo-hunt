@@ -9,8 +9,11 @@ import type {
   BuilderCatalog,
   ChartWindow,
   ConfigRuntimeSnapshot,
+  ExpiryType,
   KiteAuthStatus,
   LiveStatus,
+  McxProductInfo,
+  Segment,
   StrategyDef,
   UnderlyingGroup,
   UnderlyingGroupInput,
@@ -55,7 +58,7 @@ export interface HealthInfo {
 }
 
 export interface ExpiryOption {
-  type: 'current-weekly' | 'next-weekly' | 'monthly';
+  type: ExpiryType;
   date: string;
   label: string;
 }
@@ -63,8 +66,17 @@ export interface ExpiryOption {
 export interface ConfigMeta {
   timeframes: TimeframeDef[];
   strikeSelections: string[];
-  expiryTypes: Array<{ type: string; label: string }>;
+  expiryTypes: Array<{ type: ExpiryType; label: string }>;
 }
+
+export interface InstrumentStatus {
+  count: number;
+  syncedAt?: string;
+  segments?: Record<Segment, { count: number; syncedAt?: string }>;
+}
+
+/** `?segment=MCX` for the MCX market; NSE/BSE is the default. */
+const seg = (segment?: Segment) => (segment === 'MCX' ? '?segment=MCX' : '');
 
 function buildQuery(filters: AlertHistoryFilters): string {
   const params = new URLSearchParams();
@@ -79,11 +91,12 @@ export const api = {
   health: () => request<HealthInfo>('/health'),
 
   // Instruments / metadata
-  underlyings: () => request<UnderlyingDef[]>('/instruments/underlyings'),
+  underlyings: (segment?: Segment) => request<UnderlyingDef[]>(`/instruments/underlyings${seg(segment)}`),
   expiries: (underlying: string) => request<ExpiryOption[]>(`/instruments/${underlying}/expiries`),
   strikes: (underlying: string, expiry: string) =>
     request<number[]>(`/instruments/${underlying}/strikes?expiry=${encodeURIComponent(expiry)}`),
-  meta: () => request<ConfigMeta>('/instruments/meta'),
+  meta: (segment?: Segment) => request<ConfigMeta>(`/instruments/meta${seg(segment)}`),
+  mcxProducts: () => request<McxProductInfo[]>('/mcx/products'),
 
   // Configs
   listConfigs: () => request<AlertConfiguration[]>('/configs'),
@@ -118,7 +131,7 @@ export const api = {
 
   // Alerts / analytics
   listAlerts: (filters: AlertHistoryFilters = {}) => request<Alert[]>(`/alerts${buildQuery(filters)}`),
-  analytics: () => request<AnalyticsSummary>('/analytics/summary'),
+  analytics: (segment?: Segment) => request<AnalyticsSummary>(`/analytics/summary${segment ? `?segment=${segment}` : ''}`),
 
   // Strategies
   strategies: () => request<StrategyDefinition[]>('/strategies'),
@@ -168,6 +181,6 @@ export const api = {
     request<{ ok: boolean }>('/kite/session', { method: 'POST', body: JSON.stringify({ token }) }),
   /** Full-page redirect into Kite login; Kite returns to /zerodhaRedirection (or /api/kite/callback). */
   kiteLoginUrl: '/api/kite/login',
-  kiteInstruments: () => request<{ count: number; syncedAt?: string }>('/kite/instruments'),
+  kiteInstruments: () => request<InstrumentStatus>('/kite/instruments'),
   kiteSyncInstruments: () => request<{ count: number; syncedAt: string }>('/kite/instruments/sync', { method: 'POST' }),
 };

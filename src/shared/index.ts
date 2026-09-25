@@ -8,5 +8,6 @@ export * from './types/builder';
 export * from './types/group';
 export * from './types/kite';
 export * from './types/live';
+export * from './types/mcx';
 export * from './constants';
 export * from './strategyMarket';

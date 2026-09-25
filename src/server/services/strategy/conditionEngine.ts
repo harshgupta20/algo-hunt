@@ -3,10 +3,17 @@
  * indicator values through a `resolve` closure (supplied by the runtime) and
  * produces a per-condition trace used for the "why it fired" explanation.
  */
-import type { Condition, ConditionTrace, Group, IndicatorRef, Operator } from '@ash/shared';
+import type { CandleType, Condition, ConditionTrace, Group, IndicatorRef, Operator, Timeframe } from '@ash/shared';
+import { timeframeShort } from '@ash/shared';
 import { indicatorLabel } from '../indicator/registry';
 
-export type Resolve = (instrument: string, ref: IndicatorRef, back: number) => number | undefined;
+/** Which candle series an operand reads. Omitted fields = the run timeframe / normal candles. */
+export interface SeriesSel {
+  timeframe?: Timeframe;
+  candle?: CandleType;
+}
+
+export type Resolve = (instrument: string, ref: IndicatorRef, back: number, series?: SeriesSel) => number | undefined;
 
 const OP_PHRASE: Record<Operator, string> = {
   gt: '>',
@@ -25,6 +32,7 @@ const OP_PHRASE: Record<Operator, string> = {
   outside: 'outside',
   increasedByPct: 'increased by',
   decreasedByPct: 'decreased by',
+  detected: 'detected',
 };
 
 const TREND_OPS = new Set<Operator>(['rising', 'falling', 'increasedByPct', 'decreasedByPct']);
@@ -90,6 +98,8 @@ function applyOp(
       return lookN !== undefined && lookN !== 0 && cond.value !== undefined && ((curr - lookN) / Math.abs(lookN)) * 100 >= cond.value;
     case 'decreasedByPct':
       return lookN !== undefined && lookN !== 0 && cond.value !== undefined && ((lookN - curr) / Math.abs(lookN)) * 100 >= cond.value;
+    case 'detected':
+      return curr !== 0;
     default:
       return false;
   }
@@ -98,6 +108,7 @@ function applyOp(
 function buildText(cond: Condition, curr: number | undefined, prev1: number | undefined, lookN: number | undefined, rhs: number | undefined, passed: boolean): string {
   const phrase = OP_PHRASE[cond.operator];
   const mark = passed ? '✓' : '✗';
+  if (cond.operator === 'detected') return `${passed ? 'detected' : 'not detected'} ${mark}`;
   if (CROSS_OPS.has(cond.operator)) return `${fmt(prev1)} → ${fmt(curr)} · ${phrase} ${fmt(rhs)} ${mark}`;
   if (cond.operator === 'rising' || cond.operator === 'falling') return `${fmt(lookN)} → ${fmt(curr)} · ${phrase} ${mark}`;
   if (cond.operator === 'between' || cond.operator === 'outside')
@@ -107,18 +118,35 @@ function buildText(cond: Condition, curr: number | undefined, prev1: number | un
   return `${fmt(curr)} ${phrase} ${fmt(rhs)} ${mark}`;
 }
 
+/** The candle series each side of a condition reads. */
+export function conditionSeries(cond: Condition): { lhs: SeriesSel; rhs: SeriesSel } {
+  return {
+    lhs: { timeframe: cond.timeframe, candle: cond.candle },
+    rhs: { timeframe: cond.compareTimeframe ?? cond.timeframe, candle: cond.candle },
+  };
+}
+
+/** "Daily HA " style prefix for a condition's series (empty for the run timeframe on normal candles). */
+function seriesPrefix(sel: SeriesSel): string {
+  const parts: string[] = [];
+  if (sel.timeframe) parts.push(timeframeShort(sel.timeframe));
+  if (sel.candle === 'heikinAshi') parts.push('HA');
+  return parts.length ? `${parts.join(' ')} ` : '';
+}
+
 export function evaluateCondition(cond: Condition, resolve: Resolve): ConditionTrace {
-  const curr = resolve(cond.instrument, cond.indicator, 0);
-  const prev1 = resolve(cond.instrument, cond.indicator, 1);
-  const lookN = resolve(cond.instrument, cond.indicator, cond.lookback ?? 1);
+  const { lhs, rhs: rhsSel } = conditionSeries(cond);
+  const curr = resolve(cond.instrument, cond.indicator, 0, lhs);
+  const prev1 = resolve(cond.instrument, cond.indicator, 1, lhs);
+  const lookN = resolve(cond.instrument, cond.indicator, cond.lookback ?? 1, lhs);
   const rhsInstrument = cond.compareInstrument ?? cond.instrument;
-  const rhs = cond.compareTo ? resolve(rhsInstrument, cond.compareTo, 0) : cond.value;
-  const rhsPrev = cond.compareTo ? resolve(rhsInstrument, cond.compareTo, 1) : cond.value;
+  const rhs = cond.compareTo ? resolve(rhsInstrument, cond.compareTo, 0, rhsSel) : cond.value;
+  const rhsPrev = cond.compareTo ? resolve(rhsInstrument, cond.compareTo, 1, rhsSel) : cond.value;
 
   const passed = curr !== undefined && applyOp(cond, curr, prev1, lookN, rhs, rhsPrev);
 
   return {
-    label: `${legLabel(cond.instrument)} ${indicatorLabel(cond.indicator)}`,
+    label: `${legLabel(cond.instrument)} ${seriesPrefix(lhs)}${indicatorLabel(cond.indicator)}`,
     instrument: cond.instrument,
     operator: cond.operator,
     prev: TREND_OPS.has(cond.operator) ? lookN : prev1,

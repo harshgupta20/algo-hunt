@@ -41,6 +41,7 @@ export function KiteConnectionCard() {
       setNotice({ kind: 'ok', msg: `Instrument master refreshed (${r.count.toLocaleString()} contracts).` });
       void qc.invalidateQueries({ queryKey: ['kite-instruments'] });
       void qc.invalidateQueries({ queryKey: ['underlyings'] });
+      void qc.invalidateQueries({ queryKey: ['mcx-products'] });
     },
     onError: (e: Error) => setNotice({ kind: 'error', msg: e.message }),
   });
@@ -148,7 +149,9 @@ export function KiteConnectionCard() {
             <Database className="w-3.5 h-3.5 text-slate-500" />
             <InfoTip content={HELP.settings.instruments} /> Instrument master:{' '}
             {instruments.data
-              ? `${instruments.data.count.toLocaleString()} contracts${instruments.data.syncedAt ? ` · synced ${fmtTime(instruments.data.syncedAt)}` : ''}`
+              ? instruments.data.segments
+                ? `NSE/BSE ${instruments.data.segments.NSE.count.toLocaleString()} · MCX ${instruments.data.segments.MCX.count.toLocaleString()} contracts${instruments.data.syncedAt ? ` · synced ${fmtTime(instruments.data.syncedAt)}` : ''}`
+                : `${instruments.data.count.toLocaleString()} contracts${instruments.data.syncedAt ? ` · synced ${fmtTime(instruments.data.syncedAt)}` : ''}`
               : '…'}
           </span>
           <Help content={HELP.settings.refresh}>

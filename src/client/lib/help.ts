@@ -11,12 +11,12 @@ const field = {
   underlying: {
     title: 'Underlying',
     body: 'The index whose Future, ATM Call and ATM Put are watched.',
-    note: 'Only underlyings present in the synced Kite instrument master are listed.',
+    note: 'Only underlyings present in the synced Kite instrument master are listed. MCX commodities live in the MCX tab.',
   },
   expiry: {
     title: 'Expiry',
     body: 'Which option expiry to use. Current Weekly = nearest expiry, Next Weekly = the one after, Monthly = last expiry of the month.',
-    note: 'The future always uses the front-month contract, since futures only have monthly expiries.',
+    note: 'The future always uses the front-month contract, since futures only have monthly expiries. On MCX (monthly only) weekly choices map to Near / Next month.',
   },
   strike: {
     title: 'Strike',
@@ -27,6 +27,7 @@ const field = {
     title: 'Timeframe',
     body: 'Candle size. Rules are evaluated once, when each candle of this size closes — never on a half-formed candle.',
     example: '15m → checks at 09:30, 09:45, 10:00 …',
+    note: 'Daily fires once at the session close; Weekly at Friday’s close.',
   },
   strategy: {
     title: 'Strategy',
@@ -50,7 +51,12 @@ export const HELP = {
       title: 'Strategies',
       body: 'Library, Builder and Backtest in one place: browse strategies, create or edit rules, and replay them on history.',
     },
-    configuration: { title: 'Configuration', body: 'Create monitors (what to watch, which strategy) and switch them on or off.' },
+    configuration: { title: 'Configuration', body: 'Create NSE/BSE index monitors (what to watch, which strategy) and switch them on or off.' },
+    mcx: {
+      title: 'MCX Commodities',
+      body: 'Gold, Silver, Crude Oil, Natural Gas and base metals on MCX: product list, commodity monitors and backtests, in their own session (09:00–23:30/23:55 IST).',
+      note: 'Uses the same strategies, indicators and alerts as NSE — only the market is different.',
+    },
     settings: { title: 'Settings', body: 'Zerodha Kite connection, notifications, theme and evaluator status.' },
   },
 
@@ -61,7 +67,11 @@ export const HELP = {
       body: 'The market is open but no evaluation ran recently.',
       note: 'Check the per-minute scheduler calling /api/cron/tick. Keeping this dashboard open also triggers evaluations.',
     },
-    marketClosed: { title: 'Market closed', body: 'Outside 09:15–15:30 IST on weekdays. Nothing is evaluated until the next session.' },
+    marketClosed: {
+      title: 'Market closed',
+      body: 'Both markets are closed: NSE/BSE trades 09:15–15:30 IST, MCX 09:00–23:30 IST (23:55 while the US is on standard time), weekdays only.',
+      note: 'Nothing is evaluated until the next session opens.',
+    },
     kiteOffline: { title: 'Kite offline', body: 'No valid Zerodha Kite session, so no market data. Click Connect Kite to log in.' },
     connecting: { title: 'Connecting', body: 'Loading the evaluator status…' },
     connectKite: {
@@ -201,6 +211,22 @@ export const HELP = {
       title: 'Basket',
       body: 'The strategy runs on each of these underlyings. A backtest merges all of them; creating a monitor adds one per underlying.',
     },
+    mcxProducts: {
+      title: 'MCX products',
+      body: 'Fix the strategy to commodity products instead of indices. A strategy is either NSE/BSE or MCX — a basket can’t mix the two (different sessions and expiry cycles).',
+    },
+    mcxPinned: {
+      title: 'MCX strategy',
+      body: 'Fixed to MCX commodity products (or an MCX month expiry), so it runs from the MCX tab only.',
+    },
+    nsePinned: {
+      title: 'NSE/BSE strategy',
+      body: 'Fixed to NSE/BSE index underlyings, so it runs from Configuration only — not in the MCX tab.',
+    },
+    mappedExpiry: {
+      title: 'Expiry on MCX',
+      body: 'MCX lists monthly contracts only, so this strategy’s weekly expiry runs as the matching month: Current weekly / Monthly → Near month, Next weekly → Next month.',
+    },
     customStrike: {
       title: 'Strike price',
       body: 'The exact strike to watch when Strike is CUSTOM. Listed strikes come from the Kite instrument master for this expiry.',
@@ -208,6 +234,26 @@ export const HELP = {
   },
 
   builder: {
+    conditionTimeframe: {
+      title: 'Timeframe',
+      body: 'Candle size this condition reads. “Run timeframe” = the monitor / backtest timeframe. Pick Daily, Weekly, 1h… to mix timeframes, Chartink-style — all conditions in an AND group must hold on the same evaluated candle.',
+      example: '15m run: Future RSI(14) cross above 60 AND Future Daily RSI(14) > 50',
+      note: 'A larger timeframe uses its still-forming candle as of each evaluated candle’s close (today’s Daily RSI at 11:15) — never a future value. Option legs only trade for weeks, so long Daily / Weekly indicators may lack history there; futures use continuous data.',
+    },
+    candle: {
+      title: 'Candles',
+      body: 'Normal = OHLC candles as Kite reports them. Heikin Ashi = smoothed candles (close = average of O/H/L/C, open = midpoint of the previous HA candle) — trends show as long runs of one color. The indicator (and the comparison, if any) reads these candles.',
+    },
+    compareTimeframe: {
+      title: 'Compare timeframe',
+      body: 'Candle size of the comparison indicator. “Same” uses this condition’s timeframe; pick another to compare across timeframes.',
+      example: 'Future Close cross above Future Daily SMA(20)',
+    },
+    pattern: {
+      title: 'Candle pattern',
+      body: 'Which candlestick pattern to look for. The condition is true on the closed candle that completes it.',
+      note: 'Hammer / Hanging Man and Inverted Hammer / Shooting Star share a shape; the trend over the previous 5 candles decides which it is.',
+    },
     back: { title: 'Back to Library', body: 'Leave the builder. Unsaved changes are discarded.' },
     template: {
       title: 'RSI template',
@@ -231,7 +277,11 @@ export const HELP = {
     addGroup: { title: 'Add group', body: 'Add a nested group with its own AND / OR — for rules like “A and (B or C)”.' },
     removeGroup: { title: 'Remove group', body: 'Delete this group and every condition inside it.' },
     removeCondition: { title: 'Remove condition', body: 'Delete this rule from the group.' },
-    instrument: { title: 'Instrument', body: 'Which leg the indicator is calculated on: Future, ATM Call or ATM Put.' },
+    instrument: {
+      title: 'Instrument',
+      body: 'Which leg the indicator is calculated on: Future, ATM Call or ATM Put.',
+      note: 'MCX products without listed options (e.g. Aluminium, Nickel, the minis) can only run strategies that read the Future.',
+    },
     indicator: { title: 'Indicator', body: 'What to measure on that instrument’s candles.' },
     field: { title: 'Output', body: 'Which line of a multi-line indicator to use (e.g. MACD Histogram, Bollinger Upper).' },
     operator: { title: 'Condition', body: 'How the value is tested.' },
@@ -306,6 +356,11 @@ export const HELP = {
     table: { title: 'Table', body: 'Compact rows — best for reviewing and comparing many alerts.' },
     fresh: { title: 'New', body: 'Fired in the last 10 minutes.' },
     strategy: { title: 'Strategy', body: 'Show alerts from one strategy only — the built-in RSI Multi Confirmation or one of yours.' },
+    market: {
+      title: 'Market',
+      body: 'Show alerts from one market: NSE/BSE index F&O or MCX commodities.',
+    },
+    noStrike: { title: 'No strike', body: 'A futures-only monitor (MCX product without listed options) — alerts carry no option strike.' },
     count: { title: 'Matching alerts', body: 'Alerts matching the filters (newest first, up to 500 shown). Narrow the dates to see older ones.' },
   },
 
@@ -356,6 +411,54 @@ export const HELP = {
     groupBadge: { title: 'Group monitor', body: 'One monitor per underlying, created from a group; each fires its own alerts.' },
   },
 
+  mcx: {
+    overview: { title: 'Overview', body: 'MCX session, the commodity products with their live contracts, your active MCX monitors and the latest MCX alerts.' },
+    monitors: { title: 'Monitors', body: 'Create commodity monitors (product, strategy, contract month) and switch them on or off.' },
+    backtest: { title: 'Backtest', body: 'Replay a strategy on MCX historical candles with the same engine as live alerts.' },
+    session: {
+      title: 'MCX session',
+      body: 'MCX trades 09:00 IST until 23:30 while the US observes daylight saving (mid-March to early November), otherwise until 23:55 — weekdays.',
+      note: 'MCX monitors are evaluated only during this session; NSE/BSE monitors keep their own 09:15–15:30 session.',
+    },
+    products: {
+      title: 'MCX products',
+      body: 'Commodities available for monitoring. Futures cover every listed monthly contract; options are used where MCX lists them.',
+      note: 'Options trade actively mainly on Gold, Silver, Crude Oil, Copper, Zinc and Natural Gas.',
+    },
+    optionsLiquid: { title: 'Options', body: 'MCX lists options on this product and they trade actively, so option-leg strategies (Call / Put) work here.' },
+    optionsListed: { title: 'Options (thin)', body: 'MCX lists options on this product but they trade lightly — option-leg readings may be sparse. Futures are the safer leg.' },
+    futuresOnly: { title: 'Futures only', body: 'No options are listed on this product. Monitors and backtests run with the Future leg only, so the strategy must read just the Future.' },
+    notSynced: {
+      title: 'Not in the instrument master',
+      body: 'No contracts for this product are synced yet. Connect Kite (Settings) and refresh instruments — MCX syncs separately from NSE/BSE.',
+    },
+    futures: { title: 'Futures', body: 'Live monthly futures contracts, nearest first. The nearest is usually the most traded.' },
+    optionExpiries: { title: 'Option expiries', body: 'Upcoming option expiries. MCX options expire a few days before the future of the same series and devolve into it.' },
+    strikeGap: { title: 'Strike gap', body: 'Distance between listed strikes, read from the instrument master. ATM snaps to the listed strike nearest the future price.' },
+    product: { title: 'Product', body: 'Pick one product for a single monitor, or several to create one monitor per product (a group you switch on and off together).' },
+    expiry: {
+      title: 'Contract month',
+      body: 'Near month = nearest contract, Next = the one after, Far = the third. With options listed this is the option expiry and the future is the contract the option devolves into; without options it is the futures expiry.',
+    },
+    strike: {
+      title: 'Strike',
+      body: 'ATM = the listed strike nearest the future price; ATM±1 / ±2 move along the listed strikes. Only used when the product has options.',
+    },
+    contract: { title: 'Contracts', body: 'The exact contracts this monitor locked when it was activated. They roll to the next month automatically after expiry.' },
+    create: { title: 'Create monitor', body: 'Save the monitor(s). They start idle — click Activate to begin watching.' },
+    groupName: { title: 'Group name', body: 'Name for the group of monitors created when several products are selected.' },
+    toNse: { title: 'NSE/BSE monitors', body: 'Index monitors are managed on the Configuration page.' },
+    dashboardStrip: {
+      title: 'MCX commodities',
+      body: 'Commodity monitors run in the MCX tab with their own session. This dashboard shows NSE/BSE monitors and alerts.',
+    },
+    toMcx: { title: 'Open MCX', body: 'Go to the MCX tab: products, commodity monitors and backtests.' },
+    strategyNotHere: {
+      title: 'Strategy pinned to NSE/BSE',
+      body: 'Strategies fixed to NSE/BSE underlyings aren’t listed here. Universal strategies and MCX-pinned ones are.',
+    },
+  },
+
   groups: {
     title: { title: 'Underlying groups', body: 'Named sets of underlyings. Use them to create one monitor per member, or to backtest them together.' },
     preset: { title: 'Preset group', body: 'Built in and read-only.' },
@@ -373,15 +476,22 @@ export const HELP = {
     },
     refresh: {
       title: 'Refresh instruments',
-      body: 'Download the latest F&O instrument list from Kite now. It also refreshes automatically after login and daily.',
+      body: 'Download the latest F&O instrument lists from Kite now — NSE/BSE (NFO + BFO) and MCX. They also refresh automatically after login and daily.',
     },
-    instruments: { title: 'Instrument master', body: 'Futures and options contracts known to the app, used to find expiries and ATM strikes.' },
+    instruments: {
+      title: 'Instrument master',
+      body: 'Futures and options contracts known to the app, used to find expiries and ATM strikes. NSE/BSE and MCX sync separately, so one market’s refresh never affects the other.',
+    },
     browserNotifications: { title: 'Browser notifications', body: 'Show a desktop notification for each new alert while the app is open.' },
     sound: { title: 'Sound alert', body: 'Play a short chime for each new alert.' },
     darkTheme: { title: 'Dark theme', body: 'Light is the default. The choice is saved to your account.' },
     testNotification: { title: 'Test notification', body: 'Send a sample desktop notification to check permissions.' },
     testSound: { title: 'Test sound', body: 'Play the alert chime.' },
-    marketSession: { title: 'Market session', body: 'Open 09:15–15:30 IST on weekdays. Monitors are evaluated only while it’s open.' },
+    marketSession: { title: 'NSE/BSE session', body: 'Open 09:15–15:30 IST on weekdays. NSE/BSE monitors are evaluated only while it’s open.' },
+    mcxSession: {
+      title: 'MCX session',
+      body: 'Open 09:00 IST on weekdays until 23:30 while the US observes daylight saving (mid-March to early November), otherwise until 23:55. MCX monitors are evaluated only while it’s open.',
+    },
     lastRun: { title: 'Last evaluator run', body: 'When monitors were last evaluated, and what that run found.' },
     telegram: {
       title: 'Telegram',

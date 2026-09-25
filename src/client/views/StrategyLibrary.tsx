@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, LineChart, Lock, Pencil, Plus, Power, Sparkles, Trash2 } from 'lucide-react';
-import type { StrategyDef } from '@ash/shared';
+import type { Segment, StrategyDef } from '@ash/shared';
+import { marketSegment } from '@ash/shared';
 import { api } from '../lib/api';
 import { Badge, Card, EmptyState, Help, IconButton, ScenarioBadge, Spinner, StrategyStatusBadge } from '../components/ui';
 import { InfoTip } from '../components/Tooltip';
@@ -14,7 +15,8 @@ import { fmtRelative } from '../lib/format';
 export interface LibraryActions {
   onNew: () => void;
   onEdit: (id: string) => void;
-  onBacktest: (strategy: string) => void;
+  /** Backtest a strategy; MCX-pinned strategies open the MCX tab's backtest. */
+  onBacktest: (strategy: string, segment?: Segment) => void;
   /** Open the builder pre-filled with the built-in strategy as a starting point. */
   onCustomizeBuiltin: () => void;
 }
@@ -161,7 +163,7 @@ export function StrategyLibrary({ onNew, onEdit, onBacktest, onCustomizeBuiltin 
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1.5">
                           <Help content={HELP.strategies.runBacktest}>
-                            <button className="btn-ghost py-1 px-2 text-xs" onClick={() => onBacktest(s.id)}>
+                            <button className="btn-ghost py-1 px-2 text-xs" onClick={() => onBacktest(s.id, marketSegment(s.market))}>
                               <LineChart className="w-3.5 h-3.5" /> Backtest
                             </button>
                           </Help>

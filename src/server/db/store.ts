@@ -17,7 +17,9 @@ import type {
   StrategyVersion,
   UnderlyingGroup,
   UnderlyingGroupInput,
+  Exchange,
   Instrument,
+  Segment,
   UserPreferences,
 } from '@ash/shared';
 import { DEFAULT_RSI_SYNC_PARAMS, UNDERLYINGS } from '@ash/shared';
@@ -30,7 +32,8 @@ export interface AlertRepository {
   insert(alert: NewAlert): Promise<Alert | null>;
   getById(id: string): Promise<Alert | null>;
   list(filters: AlertHistoryFilters): Promise<Alert[]>;
-  analytics(): Promise<AnalyticsSummary>;
+  /** Summary over stored alerts, optionally for one market. */
+  analytics(segment?: Segment): Promise<AnalyticsSummary>;
 }
 
 export interface ConfigRepository {
@@ -92,10 +95,11 @@ export interface KiteSessionRepository {
 }
 
 export interface InstrumentRepository {
-  /** Replace the whole master atomically. */
-  replaceAll(instruments: Instrument[]): Promise<void>;
+  /** Atomically replace every row of the given exchanges (other exchanges' rows are untouched). */
+  replaceExchanges(exchanges: Exchange[], instruments: Instrument[]): Promise<void>;
   list(): Promise<Instrument[]>;
-  count(): Promise<number>;
+  /** Row count, optionally limited to some exchanges. */
+  count(exchanges?: Exchange[]): Promise<number>;
 }
 
 export interface LockRepository {
@@ -176,6 +180,11 @@ export function buildStrategy(input: StrategyDefInput): StrategyDef {
   };
 }
 
+/** "NIFTY 25000" — or just the underlying for futures-only (MCX) alerts, which carry no strike. */
+function symbolKey(a: Alert): string {
+  return a.strike ? `${a.underlying} ${a.strike}` : a.underlying;
+}
+
 /** Per-strategy performance statistics from that strategy's alerts. */
 export function computeStrategyStats(alerts: Alert[], strategyId: string, nowMs = Date.now()): StrategyStats {
   const todayStr = new Date(nowMs).toISOString().slice(0, 10);
@@ -196,7 +205,7 @@ export function computeStrategyStats(alerts: Alert[], strategyId: string, nowMs 
     if (t >= monthAgo) month++;
     days.add(a.triggeredAt.slice(0, 10));
     weeks.add(isoWeek(a.triggeredAt));
-    const sym = `${a.underlying} ${a.strike}`;
+    const sym = symbolKey(a);
     symbols.set(sym, (symbols.get(sym) ?? 0) + 1);
     if (!last || a.triggeredAt > last) last = a.triggeredAt;
   }
@@ -261,7 +270,7 @@ export function summarize(alerts: Alert[], nowMs = Date.now()): AnalyticsSummary
     if (week === thisWeek) weekCount++;
     byUnderlying.set(a.underlying, (byUnderlying.get(a.underlying) ?? 0) + 1);
     byExpiry.set(a.expiry, (byExpiry.get(a.expiry) ?? 0) + 1);
-    const sym = `${a.underlying} ${a.strike}`;
+    const sym = symbolKey(a);
     bySymbol.set(sym, (bySymbol.get(sym) ?? 0) + 1);
     if (a.scenario === 1) s1++;
     else if (a.scenario === 2) s2++;

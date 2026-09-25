@@ -21,6 +21,7 @@ function parseFilters(q: URLSearchParams): AlertHistoryFilters {
     strategy: str('strategy'),
     groupId: str('groupId'),
     configId: str('configId'),
+    segment: q.get('segment') === 'MCX' ? 'MCX' : q.get('segment') === 'NSE' ? 'NSE' : undefined,
     limit: Math.min(num('limit') ?? 100, 1000),
     offset: num('offset'),
   };

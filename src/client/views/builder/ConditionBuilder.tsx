@@ -28,13 +28,17 @@ export function newGroup(logic: 'AND' | 'OR' = 'AND'): Group {
   return { type: 'group', id: crypto.randomUUID(), logic, children: [] };
 }
 
-type Scale = 'price' | 'oscillator' | 'macd' | 'direction' | 'volume' | 'oi';
+type Scale = 'price' | 'oscillator' | 'macd' | 'direction' | 'volume' | 'oi' | 'boolean';
 
 /** What unit an indicator output is in — comparing different units rarely makes sense. */
 function scaleOf(ref: IndicatorRef): Scale {
   switch (ref.kind) {
     case 'RSI':
+    case 'ADX':
+    case 'DMI':
       return 'oscillator';
+    case 'PATTERN':
+      return 'boolean';
     case 'MACD':
       return 'macd';
     case 'SUPERTREND':
@@ -55,6 +59,7 @@ const SCALE_LABEL: Record<Scale, string> = {
   direction: 'a direction (+1 / −1)',
   volume: 'a volume',
   oi: 'an open-interest count',
+  boolean: 'a yes/no pattern',
 };
 
 const NEXT_LEG: Record<string, Condition['instrument']> = { future: 'call', call: 'put', put: 'call' };
@@ -89,6 +94,11 @@ function indicatorHelp(spec: IndicatorSpec | undefined, title = 'Indicator'): To
   };
 }
 
+/** Operators that make sense for an indicator: “Is Detected” for patterns, levels / crosses for everything else. */
+function operatorsFor(catalog: BuilderCatalog, spec: IndicatorSpec | undefined): BuilderCatalog['operators'] {
+  return catalog.operators.filter((o) => (spec?.boolean ? o.arity === 'flag' : o.arity !== 'flag'));
+}
+
 /** Parameter + output inputs for an indicator (used for both sides of a comparison). */
 function IndicatorInputs({
   spec,
@@ -114,7 +124,29 @@ function IndicatorInputs({
           />
         </Cell>
       ))}
-      {spec?.fields && (
+      {spec?.fields && spec.boolean && (
+        <Cell
+          label="Pattern"
+          help={{
+            ...HELP.builder.pattern,
+            title: `Pattern — ${spec.fields.find((f) => f.value === value.field)?.label ?? ''}`,
+            body: spec.fields.find((f) => f.value === value.field)?.description ?? HELP.builder.pattern.body,
+          }}
+        >
+          <select className="input py-1 text-xs" value={value.field} onChange={(e) => onChange({ ...value, field: e.target.value })}>
+            {Object.entries(groupFields(spec.fields)).map(([group, fields]) => (
+              <optgroup key={group} label={group}>
+                {fields.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </Cell>
+      )}
+      {spec?.fields && !spec.boolean && (
         <Cell label="Output" help={{ ...HELP.builder.field, note: `${spec.label} outputs: ${spec.fields.map((f) => f.label).join(' · ')}` }}>
           <select className="input py-1 text-xs" value={value.field} onChange={(e) => onChange({ ...value, field: e.target.value })}>
             {spec.fields.map((f) => (
@@ -144,7 +176,21 @@ function ConditionEditor({
   const indSpec = catalog.indicators.find((i) => i.kind === cond.indicator.kind);
   const opSpec = catalog.operators.find((o) => o.value === cond.operator);
   const instSpec = catalog.instruments.find((i) => i.value === cond.instrument);
-  const grouped = groupByGroup(catalog.operators);
+  const grouped = groupByGroup(operatorsFor(catalog, indSpec));
+  const candleSpec = catalog.candles.find((c) => c.value === (cond.candle ?? 'normal'));
+
+  /** Switching between a pattern and a numeric indicator also switches to an operator that fits it. */
+  const changeIndicator = (kind: string) => {
+    const indicator = newIndicatorRef(catalog, kind);
+    const spec = catalog.indicators.find((i) => i.kind === indicator.kind);
+    if (spec?.boolean) {
+      set({ indicator, operator: 'detected', value: undefined, value2: undefined, compareTo: undefined, compareInstrument: undefined, compareTimeframe: undefined });
+    } else if (opSpec?.arity === 'flag') {
+      set({ indicator, operator: 'crossAbove', value: 60 });
+    } else {
+      set({ indicator });
+    }
+  };
   const isTrend = cond.operator === 'rising' || cond.operator === 'falling' || cond.operator.includes('Pct');
   const compareSpec = cond.compareTo ? catalog.indicators.find((i) => i.kind === cond.compareTo!.kind) : undefined;
   const compareInstSpec = catalog.instruments.find((i) => i.value === (cond.compareInstrument ?? cond.instrument));
@@ -170,8 +216,39 @@ function ConditionEditor({
           </select>
         </Cell>
 
+        <Cell label="Timeframe" help={HELP.builder.conditionTimeframe}>
+          <select
+            className="input py-1 text-xs"
+            aria-label="Condition timeframe"
+            value={cond.timeframe ?? ''}
+            onChange={(e) => set({ timeframe: (e.target.value || undefined) as Condition['timeframe'] })}
+          >
+            <option value="">Run timeframe</option>
+            {catalog.timeframes.map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </Cell>
+
+        <Cell label="Candles" help={{ ...HELP.builder.candle, note: candleSpec ? `${candleSpec.label}: ${candleSpec.description}` : undefined }}>
+          <select
+            className="input py-1 text-xs"
+            aria-label="Candle type"
+            value={cond.candle ?? 'normal'}
+            onChange={(e) => set({ candle: e.target.value === 'normal' ? undefined : (e.target.value as Condition['candle']) })}
+          >
+            {catalog.candles.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </Cell>
+
         <Cell label="Indicator" help={indicatorHelp(indSpec)}>
-          <select className="input py-1 text-xs" value={cond.indicator.kind} onChange={(e) => set({ indicator: newIndicatorRef(catalog, e.target.value) })}>
+          <select className="input py-1 text-xs" value={cond.indicator.kind} onChange={(e) => changeIndicator(e.target.value)}>
             {catalog.indicators.map((i) => (
               <option key={i.kind} value={i.kind}>
                 {i.label}
@@ -259,13 +336,30 @@ function ConditionEditor({
                   ))}
               </select>
             </Cell>
-            <Cell label="Compare indicator" help={indicatorHelp(compareSpec, 'Compare indicator')}>
-              <select className="input py-1 text-xs" value={cond.compareTo.kind} onChange={(e) => set({ compareTo: newIndicatorRef(catalog, e.target.value) })}>
-                {catalog.indicators.map((i) => (
-                  <option key={i.kind} value={i.kind}>
-                    {i.label}
+            <Cell label="Compare timeframe" help={HELP.builder.compareTimeframe}>
+              <select
+                className="input py-1 text-xs"
+                aria-label="Compare timeframe"
+                value={cond.compareTimeframe ?? ''}
+                onChange={(e) => set({ compareTimeframe: (e.target.value || undefined) as Condition['compareTimeframe'] })}
+              >
+                <option value="">Same</option>
+                {catalog.timeframes.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.label}
                   </option>
                 ))}
+              </select>
+            </Cell>
+            <Cell label="Compare indicator" help={indicatorHelp(compareSpec, 'Compare indicator')}>
+              <select className="input py-1 text-xs" value={cond.compareTo.kind} onChange={(e) => set({ compareTo: newIndicatorRef(catalog, e.target.value) })}>
+                {catalog.indicators
+                  .filter((i) => !i.boolean)
+                  .map((i) => (
+                    <option key={i.kind} value={i.kind}>
+                      {i.label}
+                    </option>
+                  ))}
               </select>
             </Cell>
             <IndicatorInputs spec={compareSpec} value={cond.compareTo} onChange={(compareTo) => set({ compareTo })} />
@@ -393,6 +487,12 @@ function GroupEditor({
 
 export function RuleTreeEditor({ root, catalog, onChange }: { root: Group; catalog: BuilderCatalog; onChange: (g: Group) => void }) {
   return <GroupEditor group={root} catalog={catalog} onChange={onChange} depth={0} />;
+}
+
+function groupFields(fields: NonNullable<IndicatorSpec['fields']>): Record<string, NonNullable<IndicatorSpec['fields']>> {
+  const out: Record<string, NonNullable<IndicatorSpec['fields']>> = {};
+  for (const f of fields) (out[f.group ?? 'Patterns'] ??= []).push(f);
+  return out;
 }
 
 function groupByGroup(operators: BuilderCatalog['operators']): Record<string, BuilderCatalog['operators']> {

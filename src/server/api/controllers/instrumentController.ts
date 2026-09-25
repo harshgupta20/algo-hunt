@@ -1,14 +1,20 @@
-import { TIMEFRAMES, UNDERLYINGS } from '@ash/shared';
+import type { Segment } from '@ash/shared';
+import { EXPIRY_TYPES, TIMEFRAMES, underlyingsOf } from '@ash/shared';
 import type { AppContext } from '../context';
 import { HttpError, type Handler } from '../http';
 
 const STRIKE_SELECTIONS = ['ATM', 'ATM+1', 'ATM-1', 'ATM+2', 'ATM-2', 'CUSTOM'];
 
+/** `?segment=MCX` selects the MCX market; anything else is NSE/BSE (the default). */
+function segmentParam(q: URLSearchParams): Segment {
+  return q.get('segment') === 'MCX' ? 'MCX' : 'NSE';
+}
+
 export function instrumentController(ctx: AppContext) {
-  const underlyings: Handler = async () => {
+  const underlyings: Handler = async (req) => {
     await ctx.instrumentStore.load();
     const available = new Set(ctx.instrumentStore.underlyings());
-    return UNDERLYINGS.filter((u) => available.has(u.symbol));
+    return underlyingsOf(segmentParam(req.query)).filter((u) => available.has(u.symbol));
   };
 
   const expiries: Handler = async (req) => {
@@ -25,15 +31,11 @@ export function instrumentController(ctx: AppContext) {
     return ctx.instrumentStore.strikes(req.params.underlying!, expiry);
   };
 
-  /** Static option lists for the configuration form. */
-  const meta: Handler = () => ({
+  /** Static option lists for the configuration form (expiry choices differ per market). */
+  const meta: Handler = (req) => ({
     timeframes: TIMEFRAMES,
     strikeSelections: STRIKE_SELECTIONS,
-    expiryTypes: [
-      { type: 'current-weekly', label: 'Current Weekly' },
-      { type: 'next-weekly', label: 'Next Weekly' },
-      { type: 'monthly', label: 'Monthly' },
-    ],
+    expiryTypes: EXPIRY_TYPES[segmentParam(req.query)],
   });
 
   return { underlyings, expiries, strikes, meta };

@@ -5,9 +5,9 @@
 import { z } from 'zod';
 import { HttpError } from './http';
 
-export const timeframeSchema = z.enum(['1m', '3m', '5m', '10m', '15m', '30m', '1h']);
+export const timeframeSchema = z.enum(['1m', '3m', '5m', '10m', '15m', '30m', '1h', '1d', '1w']);
 export const strikeSelectionSchema = z.enum(['ATM', 'ATM+1', 'ATM-1', 'ATM+2', 'ATM-2', 'CUSTOM']);
-export const expiryTypeSchema = z.enum(['current-weekly', 'next-weekly', 'monthly']);
+export const expiryTypeSchema = z.enum(['current-weekly', 'next-weekly', 'monthly', 'near-month', 'next-month', 'far-month']);
 
 export const rsiParamsSchema = z
   .object({
@@ -87,7 +87,7 @@ export const analyzerChartSchema = z.object({
 
 // ---- Strategy Builder ----
 
-const indicatorKindSchema = z.enum(['RSI', 'EMA', 'SMA', 'VWAP', 'MACD', 'BBANDS', 'SUPERTREND', 'VOLUME', 'PRICE', 'OI']);
+const indicatorKindSchema = z.enum(['RSI', 'EMA', 'SMA', 'VWAP', 'MACD', 'BBANDS', 'SUPERTREND', 'VOLUME', 'PRICE', 'OI', 'ADX', 'DMI', 'PATTERN']);
 const instrumentSchema = z.enum(['future', 'call', 'put', 'spot', 'index', 'vix']);
 const operatorSchema = z.enum([
   'gt', 'lt', 'gte', 'lte', 'eq', 'neq',
@@ -96,6 +96,7 @@ const operatorSchema = z.enum([
   'above', 'below',
   'between', 'outside',
   'increasedByPct', 'decreasedByPct',
+  'detected',
 ]);
 
 const indicatorRefSchema = z.object({
@@ -116,6 +117,8 @@ const conditionSchema = z.object({
   compareInstrument: instrumentSchema.optional(),
   lookback: z.number().int().positive().optional(),
   timeframe: timeframeSchema.optional(),
+  compareTimeframe: timeframeSchema.optional(),
+  candle: z.enum(['normal', 'heikinAshi']).optional(),
 });
 
 // Recursive group schema.

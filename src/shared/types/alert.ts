@@ -1,7 +1,7 @@
 /**
  * Alert types — the ONE combined alert the platform emits, plus its snapshot.
  */
-import type { Timeframe } from './market';
+import type { Segment, Timeframe } from './market';
 import type { ScenarioId, StrategyKey } from './strategy';
 import type { ConditionTrace } from './builder';
 
@@ -68,6 +68,8 @@ export interface AlertHistoryFilters {
   groupId?: string;
   /** Filter to a specific monitor (configuration). */
   configId?: string;
+  /** Filter to one market: NSE/BSE index F&O or MCX commodities. */
+  segment?: Segment;
   limit?: number;
   offset?: number;
 }

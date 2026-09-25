@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { FileJson, FileSpreadsheet, FileText, Pencil } from 'lucide-react';
-import type { BacktestAlert, StrategyDef } from '@ash/shared';
+import type { BacktestAlert, Segment, StrategyDef } from '@ash/shared';
 import { api } from '../lib/api';
 import { exportCsv, exportJson, exportXlsx } from '../lib/export';
 import { fmtRelative } from '../lib/format';
@@ -70,9 +70,11 @@ export interface StrategyAnalyzerProps {
   /** Strategy opened from the library ("rsi-sync" or a custom id): pre-fill and run. */
   strategyId?: string;
   onEdit: (id: string) => void;
+  /** Market to backtest on: NSE/BSE indices (default) or MCX commodities. */
+  segment?: Segment;
 }
 
-export function StrategyAnalyzer({ strategyId, onEdit }: StrategyAnalyzerProps) {
+export function StrategyAnalyzer({ strategyId, onEdit, segment }: StrategyAnalyzerProps) {
   const [params, setParams] = useState<BacktestRequest | null>(null);
   const [active, setActive] = useState<BacktestAlert | null>(null);
   const [drawerAlert, setDrawerAlert] = useState<BacktestAlert | null>(null);
@@ -114,7 +116,7 @@ export function StrategyAnalyzer({ strategyId, onEdit }: StrategyAnalyzerProps) 
 
   return (
     <div>
-      <FilterBar onAnalyze={analyze} loading={runMut.isPending} initialStrategy={strategyId} autoRun={Boolean(strategyId)} />
+      <FilterBar onAnalyze={analyze} loading={runMut.isPending} initialStrategy={strategyId} autoRun={Boolean(strategyId)} segment={segment} />
 
       {ranDef.data && <StrategyInsight def={ranDef.data} onEdit={onEdit} />}
 

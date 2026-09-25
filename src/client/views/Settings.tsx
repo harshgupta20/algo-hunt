@@ -132,9 +132,19 @@ export function Settings() {
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div className="flex justify-between">
             <span className="flex items-center gap-1 text-slate-400">
-              Market session <InfoTip content={HELP.settings.marketSession} />
+              NSE/BSE session <InfoTip content={HELP.settings.marketSession} />
             </span>
             <Badge tone={live?.marketOpen ? 'bull' : 'default'}>{live ? (live.marketOpen ? 'open' : 'closed') : '—'}</Badge>
+          </div>
+          <div className="flex justify-between">
+            <span className="flex items-center gap-1 text-slate-400">
+              MCX session <InfoTip content={HELP.settings.mcxSession} />
+            </span>
+            <Badge tone={live?.sessions?.MCX.open ? 'bull' : 'default'}>
+              {live?.sessions
+                ? `${live.sessions.MCX.open ? 'open' : 'closed'} · until ${new Date(live.sessions.MCX.closesAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false })}`
+                : '—'}
+            </Badge>
           </div>
           <div className="flex justify-between">
             <span className="flex items-center gap-1 text-slate-400">

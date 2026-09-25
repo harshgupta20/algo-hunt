@@ -46,7 +46,7 @@ export function StrategiesHub() {
         <StrategyLibrary
           onNew={() => go('builder')}
           onEdit={(sid) => go('builder', { id: sid })}
-          onBacktest={(sid) => go('backtest', { strategy: sid })}
+          onBacktest={(sid, segment) => (segment === 'MCX' ? router.push(`/mcx?tab=backtest&strategy=${sid}`) : go('backtest', { strategy: sid }))}
           onCustomizeBuiltin={() => go('builder', { template: 'rsi' })}
         />
       )}

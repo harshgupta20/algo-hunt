@@ -4,8 +4,21 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Save, Sparkles, Rocket } from 'lucide-react';
 import clsx from 'clsx';
-import type { BuilderCatalog, ExpiryType, Group, StrategyDef, StrategyDefInput, StrategyMarket, Timeframe } from '@ash/shared';
-import { UNDERLYINGS, describeFixed, describeOpen, fixedUnderlyings, isSpecific } from '@ash/shared';
+import type { BuilderCatalog, ExpiryType, Group, StrategyDef, StrategyDefInput, StrategyMarket, Timeframe, UnderlyingDef } from '@ash/shared';
+import {
+  EXPIRY_TYPES,
+  MCX_GROUP_LABEL,
+  MCX_PRODUCTS,
+  UNDERLYINGS,
+  describeFixed,
+  describeOpen,
+  effectiveExpiryType,
+  fixedUnderlyings,
+  isMcxExpiry,
+  isSpecific,
+  marketSegment,
+  segmentOf,
+} from '@ash/shared';
 import { MarketBadge } from '../components/market';
 import { api } from '../lib/api';
 import { Card, EmptyState, Help, Spinner } from '../components/ui';
@@ -50,7 +63,7 @@ const ANY = '';
 
 /** The "Applies to" section: fix each market field, or leave it open for runs to choose. */
 function AppliesTo({ market, onChange }: { market: StrategyMarket; onChange: (m: StrategyMarket) => void }) {
-  const metaQ = useQuery({ queryKey: ['meta'], queryFn: api.meta });
+  const metaQ = useQuery({ queryKey: ['meta'], queryFn: () => api.meta() });
   const groupsQ = useQuery({ queryKey: ['groups'], queryFn: api.listGroups });
   const chosen = fixedUnderlyings(market);
   const set = (patch: Partial<StrategyMarket>) => {
@@ -62,7 +75,48 @@ function AppliesTo({ market, onChange }: { market: StrategyMarket; onChange: (m:
     }
     onChange(next);
   };
-  const toggle = (sym: string) => set({ underlyings: chosen.includes(sym) ? chosen.filter((x) => x !== sym) : [...chosen, sym] });
+  const segment = marketSegment(market);
+  /**
+   * A strategy fixes NSE/BSE underlyings or MCX products, never both: picking
+   * from the other market starts a new selection. A fixed expiry follows the
+   * market (weekly → month on MCX; MCX months are dropped on NSE).
+   */
+  const toggle = (sym: string) => {
+    const seg = segmentOf(sym);
+    const same = chosen.filter((x) => segmentOf(x) === seg);
+    const next = same.includes(sym) ? same.filter((x) => x !== sym) : [...same, sym];
+    let expiryType = market.expiryType;
+    if (expiryType && next.length && seg === 'MCX') expiryType = effectiveExpiryType(expiryType, 'MCX');
+    if (expiryType && isMcxExpiry(expiryType) && (seg !== 'MCX' || next.length === 0)) expiryType = undefined;
+    set({ underlyings: next, expiryType });
+  };
+  const expiryChoices = EXPIRY_TYPES[segment === 'MCX' && chosen.length ? 'MCX' : 'NSE'];
+
+  const chip = (u: UnderlyingDef) => (
+    <Help
+      key={u.symbol}
+      content={{
+        title: `${u.symbol} — ${u.name}`,
+        body: chosen.includes(u.symbol) ? 'Included. Click to remove.' : 'Click to fix the strategy to this underlying (pick several for a basket).',
+        note:
+          u.segment === 'MCX'
+            ? `MCX · ${MCX_GROUP_LABEL[u.group!]} · ${u.optionsLiquid ? 'futures + liquid options' : 'futures (options thin or not listed)'}`
+            : `${u.kind === 'index' ? 'Index' : 'Stock'} · ${u.derivativeExchange} · strikes every ${u.strikeInterval}`,
+      }}
+    >
+      <button
+        type="button"
+        aria-pressed={chosen.includes(u.symbol)}
+        onClick={() => toggle(u.symbol)}
+        className={clsx(
+          'rounded-md px-2.5 py-1 text-xs border',
+          chosen.includes(u.symbol) ? 'bg-accent/20 border-accent/40 text-accent-soft font-semibold' : 'bg-ink-800 border-ink-700 text-slate-400',
+        )}
+      >
+        {u.symbol}
+      </button>
+    </Help>
+  );
 
   return (
     <Card>
@@ -88,28 +142,7 @@ function AppliesTo({ market, onChange }: { market: StrategyMarket; onChange: (m:
             All
           </button>
         </Help>
-        {UNDERLYINGS.map((u) => (
-          <Help
-            key={u.symbol}
-            content={{
-              title: `${u.symbol} — ${u.name}`,
-              body: chosen.includes(u.symbol) ? 'Included. Click to remove.' : 'Click to fix the strategy to this underlying (pick several for a basket).',
-              note: `${u.kind === 'index' ? 'Index' : 'Stock'} · ${u.derivativeExchange} · strikes every ${u.strikeInterval}`,
-            }}
-          >
-            <button
-              type="button"
-              aria-pressed={chosen.includes(u.symbol)}
-              onClick={() => toggle(u.symbol)}
-              className={clsx(
-                'rounded-md px-2.5 py-1 text-xs border',
-                chosen.includes(u.symbol) ? 'bg-accent/20 border-accent/40 text-accent-soft font-semibold' : 'bg-ink-800 border-ink-700 text-slate-400',
-              )}
-            >
-              {u.symbol}
-            </button>
-          </Help>
-        ))}
+        {UNDERLYINGS.map(chip)}
         {(groupsQ.data?.length ?? 0) > 0 && (
           <Help content={{ title: 'Use a group', body: 'Fill the underlyings from a saved group (e.g. Indices). You can still adjust them after.' }}>
             <select
@@ -131,13 +164,19 @@ function AppliesTo({ market, onChange }: { market: StrategyMarket; onChange: (m:
           </Help>
         )}
       </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500 mr-1">
+          MCX <InfoTip content={HELP.market.mcxProducts} />
+        </span>
+        {MCX_PRODUCTS.map(chip)}
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
         <div>
           <FieldLabel help={HELP.field.expiry}>Expiry</FieldLabel>
           <select className="input w-full" value={market.expiryType ?? ANY} onChange={(e) => set({ expiryType: (e.target.value || undefined) as ExpiryType | undefined })}>
             <option value={ANY}>Any — choose when running</option>
-            {metaQ.data?.expiryTypes.map((x) => (
+            {expiryChoices.map((x) => (
               <option key={x.type} value={x.type}>
                 {x.label}
               </option>

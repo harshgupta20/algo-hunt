@@ -3,11 +3,24 @@
  * (/api/cron/tick) and, as a fallback, by any open dashboard. A DB lease
  * guarantees a single run at a time and at most one run per ~minute, no
  * matter how many callers fire.
+ *
+ * Runs while EITHER market is in session (NSE/BSE 09:15–15:30, MCX
+ * 09:00–23:30/23:55 IST); each monitor is only evaluated during its own
+ * market's session.
  */
-import type { LiveStatus } from '@ash/shared';
+import type { LiveStatus, Segment, SessionStatus } from '@ash/shared';
+import { segmentOf } from '@ash/shared';
 import type { DataStore } from '../../db/store';
 import { childLogger } from '../../utils/logger';
-import { isMarketWindow } from '../../utils/marketTime';
+import {
+  MCX_SESSION,
+  NSE_SESSION,
+  isAnyMarketWindow,
+  isMarketWindow,
+  sessionCloseMs,
+  sessionOpenMs,
+  type Session,
+} from '../../utils/marketTime';
 import type { InstrumentStore } from '../kite/instrumentStore';
 import type { KiteAuthService } from '../kite/kiteAuth';
 import { kiteErrorMessage } from '../kite/kiteClient';
@@ -50,7 +63,7 @@ export async function runLiveTick(deps: TickDeps, opts: { force?: boolean; now?:
   const at = new Date(now).toISOString();
 
   if (!(await deps.kiteAuth.isConnected())) return { ran: false, reason: 'kite-not-connected', at };
-  if (!opts.force && !isMarketWindow(now)) return { ran: false, reason: 'market-closed', at };
+  if (!opts.force && !isAnyMarketWindow(now)) return { ran: false, reason: 'market-closed', at };
   if (!(await deps.store.locks.acquire(LOCK, LEASE_SECONDS, opts.force ? 0 : MIN_INTERVAL_SECONDS))) {
     return { ran: false, reason: 'busy', at };
   }
@@ -64,7 +77,7 @@ export async function runLiveTick(deps: TickDeps, opts: { force?: boolean; now?:
       log.error({ err: kiteErrorMessage(err) }, 'instrument sync failed; continuing with stored master');
     }
 
-    const results = await deps.monitors.runAll(now);
+    const results = await deps.monitors.runAll(now, { force: opts.force });
     const alerts = results.reduce((n, r) => n + r.alerts, 0);
     const summary: LastTick = { at, monitors: results.length, alerts, errors: results.filter((r) => r.error).length };
     await deps.store.kv.set(LAST_TICK_KEY, summary);
@@ -75,6 +88,14 @@ export async function runLiveTick(deps: TickDeps, opts: { force?: boolean; now?:
   }
 }
 
+function sessionStatus(now: number, session: Session): SessionStatus {
+  return {
+    open: isMarketWindow(now, 0, session),
+    opensAt: new Date(sessionOpenMs(now, session)).toISOString(),
+    closesAt: new Date(sessionCloseMs(now, session)).toISOString(),
+  };
+}
+
 /** Evaluator health for the UI. */
 export async function liveStatus(deps: TickDeps, now = Date.now()): Promise<LiveStatus> {
   const [kiteConnected, active, last] = await Promise.all([
@@ -82,10 +103,14 @@ export async function liveStatus(deps: TickDeps, now = Date.now()): Promise<Live
     deps.store.configs.listActive(),
     deps.store.kv.get<LastTick>(LAST_TICK_KEY),
   ]);
+  const activeBySegment: Record<Segment, number> = { NSE: 0, MCX: 0 };
+  for (const c of active) activeBySegment[segmentOf(c.underlying)]++;
   return {
     kiteConnected,
     marketOpen: isMarketWindow(now, 0),
+    sessions: { NSE: sessionStatus(now, NSE_SESSION), MCX: sessionStatus(now, MCX_SESSION) },
     activeMonitors: active.length,
+    activeBySegment,
     lastRunAt: last?.value.at,
     lastRunSummary: last ? { monitors: last.value.monitors, alerts: last.value.alerts, errors: last.value.errors } : undefined,
     channels: channelsFromConfig().map((c) => c.name),

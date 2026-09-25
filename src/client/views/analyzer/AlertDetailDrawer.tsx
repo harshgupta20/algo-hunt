@@ -68,7 +68,7 @@ export function AlertDetailDrawer({ alert, onClose }: { alert: BacktestAlert | n
         <div className="p-4 space-y-4">
           <div className="flex flex-wrap gap-2 text-xs">
             <RuleBadge scenario={alert.scenario} variant={alert.variant} />
-            <span className="rounded-md bg-ink-800 px-2 py-0.5 text-slate-300">{alert.underlying} · {alert.strike}</span>
+            <span className="rounded-md bg-ink-800 px-2 py-0.5 text-slate-300">{alert.underlying}{alert.strike ? ` · ${alert.strike}` : ''}</span>
             <span className="rounded-md bg-ink-800 px-2 py-0.5 text-slate-300">{alert.timeframe}</span>
             <span className="rounded-md bg-ink-800 px-2 py-0.5 text-slate-300">exp {alert.expiry}</span>
             <span className="rounded-md bg-ink-800 px-2 py-0.5 text-slate-300">

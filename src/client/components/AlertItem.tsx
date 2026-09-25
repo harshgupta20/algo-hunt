@@ -50,7 +50,7 @@ export function AlertItem({ alert }: { alert: Alert }) {
             )}
             <RuleBadge scenario={alert.scenario} variant={alert.variant} />
             <span className="text-sm font-semibold text-fg">{alert.underlying}</span>
-            <span className="text-xs text-slate-400 tabular-nums">{alert.strike}</span>
+            {alert.strike ? <span className="text-xs text-slate-400 tabular-nums">{alert.strike}</span> : null}
           </div>
           <div className="text-xs text-slate-500 mt-1">
             {alert.strategyName ?? BUILTIN_STRATEGY_NAME} · {alert.timeframe} · exp {alert.expiry || '—'}

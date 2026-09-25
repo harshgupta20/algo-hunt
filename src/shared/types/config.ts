@@ -4,8 +4,11 @@
 import type { Timeframe } from './market';
 import type { RsiSyncParams, StrategyKey } from './strategy';
 
-/** Expiry selection modes offered in the UI. */
-export type ExpiryType = 'current-weekly' | 'next-weekly' | 'monthly';
+/**
+ * Expiry selection modes. NSE/BSE: current weekly / next weekly / monthly.
+ * MCX (monthly contracts only): near / next / far month.
+ */
+export type ExpiryType = 'current-weekly' | 'next-weekly' | 'monthly' | 'near-month' | 'next-month' | 'far-month';
 
 /**
  * Strike selection relative to ATM. ATM is the default and the only mode

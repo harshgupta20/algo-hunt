@@ -10,7 +10,7 @@ import { HELP } from '../lib/help';
 export function GroupsManager() {
   const qc = useQueryClient();
   const groups = useQuery({ queryKey: ['groups'], queryFn: api.listGroups });
-  const underlyings = useQuery({ queryKey: ['underlyings'], queryFn: api.underlyings });
+  const underlyings = useQuery({ queryKey: ['underlyings'], queryFn: () => api.underlyings() });
   const [name, setName] = useState('');
   const [members, setMembers] = useState<string[]>([]);
 

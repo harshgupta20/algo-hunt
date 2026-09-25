@@ -23,10 +23,15 @@ interface LiveValue {
 
 const LiveContext = createContext<LiveValue | null>(null);
 
+/** Either market in session (NSE/BSE or MCX). */
+export function anyMarketOpen(s: LiveStatus): boolean {
+  return s.sessions ? s.sessions.NSE.open || s.sessions.MCX.open : s.marketOpen;
+}
+
 function healthOf(s: LiveStatus | undefined): LiveHealth {
   if (!s) return 'unknown';
   if (!s.kiteConnected) return 'kite-offline';
-  if (!s.marketOpen) return 'market-closed';
+  if (!anyMarketOpen(s)) return 'market-closed';
   if (s.activeMonitors > 0 && (!s.lastRunAt || Date.now() - Date.parse(s.lastRunAt) > STALE_RUN_MS)) return 'stale';
   return 'live';
 }
@@ -62,14 +67,21 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     for (const a of fresh.slice(0, 3)) {
       if (prefs?.browserNotifications !== false) {
         const detail = a.scenario ? `Scenario ${a.scenario}` : (a.variant ?? a.strategyName ?? 'Triggered');
-        showNotification(a.title, `${detail} · ${a.underlying} ${a.strike} · ${a.timeframe}`);
+        showNotification(a.title, `${detail} · ${a.underlying}${a.strike ? ` ${a.strike}` : ''} · ${a.timeframe}`);
       }
     }
     if (prefs?.soundEnabled !== false) playChime();
   }, [latest.data, qc]);
 
-  // Dashboard-driven evaluation fallback (works even without an external cron).
-  const canTick = Boolean(status.data?.kiteConnected && status.data.marketOpen && status.data.activeMonitors > 0);
+  // Dashboard-driven evaluation fallback (works even without an external cron):
+  // only while some market with active monitors is in session.
+  const s = status.data;
+  const canTick = Boolean(
+    s?.kiteConnected &&
+      (s.sessions && s.activeBySegment
+        ? (s.sessions.NSE.open && s.activeBySegment.NSE > 0) || (s.sessions.MCX.open && s.activeBySegment.MCX > 0)
+        : s.marketOpen && s.activeMonitors > 0),
+  );
   useEffect(() => {
     if (!canTick) return;
     const tick = async () => {

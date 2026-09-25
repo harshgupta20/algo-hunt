@@ -2,7 +2,7 @@
  * Aggregates backtest alerts into summary statistics, distributions, and
  * heatmap buckets. Reuses isoWeek from the live store for weekly grouping.
  */
-import type { BacktestAlert, BacktestStats, CountBucket, Timeframe } from '@ash/shared';
+import type { BacktestAlert, BacktestStats, CountBucket, Segment, Timeframe } from '@ash/shared';
 import { isoWeek } from '../../db/store';
 import { tradingDaysInRange } from './dateRange';
 
@@ -31,6 +31,8 @@ export interface StatsContext {
   underlying: string;
   expiry: string;
   timeframe: Timeframe;
+  /** Market, for the trading-hour axis: NSE 09–15 h, MCX 09–23 h. Default NSE. */
+  segment?: Segment;
 }
 
 export function computeStats(alerts: BacktestAlert[], ctx: StatsContext): BacktestStats {
@@ -67,7 +69,7 @@ export function computeStats(alerts: BacktestAlert[], ctx: StatsContext): Backte
 
   // Ensure heatmap axes are dense (all weekdays present, sorted).
   const weekdayBuckets: CountBucket[] = WEEKDAYS.slice(0, 5).map((k) => ({ key: k, count: byWeekday.get(k) ?? 0 }));
-  const hourBuckets: CountBucket[] = Array.from({ length: 7 }, (_, i) => {
+  const hourBuckets: CountBucket[] = Array.from({ length: ctx.segment === 'MCX' ? 15 : 7 }, (_, i) => {
     const key = `${String(9 + i).padStart(2, '0')}:00`;
     return { key, count: byHour.get(key) ?? 0 };
   });

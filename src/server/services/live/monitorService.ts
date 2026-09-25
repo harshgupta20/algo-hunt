@@ -10,7 +10,10 @@
  *  - `monitor_state.last_bucket` + the alerts unique index make every candle
  *    fire at most once, across overlapping or retried runs.
  *  - Candles come straight from Kite, so RSI matches the Kite chart exactly
- *    (09:15-aligned buckets, truncated final candle of the session).
+ *    (session-aligned buckets — 09:15 NSE, 09:00 MCX — and a truncated final
+ *    candle of the session).
+ *  - Each monitor follows its underlying's market session (NSE/BSE or MCX), and
+ *    futures-only MCX products run with just the Future leg.
  */
 import type {
   AlertConfiguration,
@@ -19,13 +22,14 @@ import type {
   Leg,
   LegReadings,
   OHLCV,
+  StrategyDef,
   Timeframe,
 } from '@ash/shared';
-import { TIMEFRAME_MS, applyMarket, underlyingNotAllowed } from '@ash/shared';
+import { BUILTIN_STRATEGY_NAME, TIMEFRAME_MS, applyMarket, underlyingNotAllowed } from '@ash/shared';
 import type { DataStore } from '../../db/store';
 import type { MonitorSnapshot, MonitorState } from '../../db/types';
 import { childLogger } from '../../utils/logger';
-import { candleCloseMs, istDate } from '../../utils/marketTime';
+import { NSE_SESSION, candleCloseMs, istDate, isMarketWindow, sessionFor, sessionMinutes, type Session } from '../../utils/marketTime';
 import type { AlertService } from '../history/alertService';
 import { computeRsiSeries } from '../indicator/rsi';
 import type { Bar } from '../indicator/types';
@@ -40,8 +44,8 @@ const LEGS: Leg[] = ['future', 'call', 'put'];
 const DAY_MS = 86_400_000;
 /** Bars of history fetched per run so RSI/EMA warm-up matches the broker chart. */
 const WARMUP_BARS = 300;
-/** Trading minutes per session (09:15–15:30). */
-const SESSION_MINUTES = 375;
+/** Weekly candles fetched for warm-up (two years). */
+const WARMUP_WEEKS = 104;
 /**
  * Candles that closed longer ago than this are not alerted on (e.g. after the
  * scheduler was down) — a stale alert is worse than none. They still advance
@@ -50,10 +54,29 @@ const SESSION_MINUTES = 375;
 export const MAX_ALERT_LAG_MS = 30 * 60_000;
 
 /** Calendar days of history needed for WARMUP_BARS on a timeframe (weekends included). */
-export function lookbackDays(tf: Timeframe): number {
-  const barsPerDay = Math.max(1, Math.floor(SESSION_MINUTES / (TIMEFRAME_MS[tf] / 60_000)));
+export function lookbackDays(tf: Timeframe, session: Session = NSE_SESSION, now = Date.now()): number {
+  if (tf === '1w') return WARMUP_WEEKS * 7 + 7;
+  const barsPerDay = tf === '1d' ? 1 : Math.max(1, Math.floor(sessionMinutes(now, session) / (TIMEFRAME_MS[tf] / 60_000)));
   const tradingDays = Math.ceil(WARMUP_BARS / barsPerDay);
   return Math.ceil((tradingDays * 7) / 5) + 3;
+}
+
+/** Legs a contract set actually has (futures-only products have no call/put). */
+function availableLegs(t: InstrumentTriplet): Leg[] {
+  return LEGS.filter((l) => t[l]);
+}
+
+/** Why a strategy can't run on a futures-only contract set, if it can't. */
+function optionLegProblem(underlying: string, triplet: InstrumentTriplet, strategy: string, def: StrategyDef | null): string | undefined {
+  if (triplet.call && triplet.put) return undefined;
+  if (strategy === 'rsi-sync') {
+    return `${BUILTIN_STRATEGY_NAME} needs the ATM Call and Put, but ${underlying} has no listed options — use a strategy that only reads the Future.`;
+  }
+  const uses = def ? new CustomStrategyEvaluator(def).instruments().filter((i) => i === 'call' || i === 'put') : [];
+  if (uses.length) {
+    return `"${def!.name}" reads the ${uses.join(' and ')} leg, but ${underlying} has no listed options — only the Future can be monitored.`;
+  }
+  return undefined;
 }
 
 export interface MonitorDeps {
@@ -117,12 +140,15 @@ export class MonitorService {
 
   /** Start monitoring a config: lock its strike/contracts and mark it active. */
   async activate(config: AlertConfiguration, now = Date.now()): Promise<AlertConfiguration> {
+    let def: StrategyDef | null = null;
     if (config.strategy !== 'rsi-sync') {
-      const def = await this.deps.store.strategies.get(config.strategy);
+      def = await this.deps.store.strategies.get(config.strategy);
       if (!def) throw new Error(`Custom strategy not found: ${config.strategy}`);
       if (def.status === 'disabled') throw new Error(`Strategy "${def.name}" is disabled — publish it first.`);
     }
     const { expiryDate, triplet } = await this.resolve(config);
+    const problem = optionLegProblem(config.underlying, triplet, config.strategy, def);
+    if (problem) throw new Error(problem);
     await this.deps.store.monitors.upsert({
       configId: config.id,
       strike: triplet.strike,
@@ -171,6 +197,9 @@ export class MonitorService {
         strike: s?.strike ?? 0,
         expiry: s?.expiry ?? c.expiryDate ?? '',
         legs: { future: leg('future'), call: leg('call'), put: leg('put') },
+        contracts: s
+          ? Object.fromEntries(availableLegs(s.triplet).map((l) => [l, { tradingSymbol: s.triplet[l]!.tradingSymbol, expiry: s.triplet[l]!.expiry }]))
+          : undefined,
         lastClosedBucket: s?.snapshot?.lastClosedBucket ?? null,
         evaluatedAt: s?.snapshot?.evaluatedAt ?? null,
         lastError: s?.lastError ?? null,
@@ -180,9 +209,14 @@ export class MonitorService {
 
   // ---- Evaluation --------------------------------------------------------------
 
-  /** Evaluate every active monitor once. Candle fetches are shared across monitors. */
-  async runAll(now = Date.now()): Promise<MonitorRunResult[]> {
-    const configs = await this.deps.store.configs.listActive();
+  /**
+   * Evaluate every active monitor whose market is in session (all of them with
+   * `force`). Candle fetches are shared across monitors.
+   */
+  async runAll(now = Date.now(), opts: { force?: boolean } = {}): Promise<MonitorRunResult[]> {
+    const configs = (await this.deps.store.configs.listActive()).filter(
+      (c) => opts.force || isMarketWindow(now, 10, sessionFor(c.underlying)),
+    );
     if (configs.length === 0) return [];
     const states = new Map((await this.deps.store.monitors.list()).map((s) => [s.configId, s]));
     const cache = new Map<string, Promise<OHLCV[]>>();
@@ -237,15 +271,29 @@ export class MonitorService {
     return { config: { ...updated, active: true }, reset: true };
   }
 
-  private candles(token: number, tf: Timeframe, now: number, cache: Map<string, Promise<OHLCV[]>>): Promise<OHLCV[]> {
-    const key = `${token}:${tf}`;
+  /**
+   * Candles for one contract, shared across monitors in a run. Daily / weekly
+   * futures candles are continuous (expired contracts stitched in) so long
+   * indicators warm up.
+   */
+  private candles(
+    token: number,
+    tf: Timeframe,
+    now: number,
+    cache: Map<string, Promise<OHLCV[]>>,
+    session: Session,
+    isFuture: boolean,
+  ): Promise<OHLCV[]> {
+    const continuous = isFuture && (tf === '1d' || tf === '1w');
+    const key = `${token}:${tf}${continuous ? ':c' : ''}`;
     let p = cache.get(key);
     if (!p) {
       p = this.deps.historical.getCandles({
         token,
         timeframe: tf,
-        from: istDate(now - lookbackDays(tf) * DAY_MS),
+        from: istDate(now - lookbackDays(tf, session, now) * DAY_MS),
         to: istDate(now),
+        ...(continuous && { continuous }),
       });
       cache.set(key, p);
     }
@@ -260,12 +308,13 @@ export class MonitorService {
     cache = new Map<string, Promise<OHLCV[]>>(),
   ): Promise<MonitorRunResult> {
     const tf = config.timeframe;
+    const session = sessionFor(config.underlying);
     const triplet = state.triplet;
-    const [future, call, put] = await Promise.all(
-      [triplet.future.token, triplet.call.token, triplet.put.token].map((t) => this.candles(t, tf, now, cache)),
-    );
-    const all: Record<Leg, OHLCV[]> = { future: future!, call: call!, put: put! };
-    const isClosed = (c: OHLCV) => candleCloseMs(c.time * 1000, tf) <= now;
+    const legs = availableLegs(triplet);
+    const fetched = await Promise.all(legs.map((l) => this.candles(triplet[l]!.token, tf, now, cache, session, l === 'future')));
+    const all: Record<Leg, OHLCV[]> = { future: [], call: [], put: [] };
+    legs.forEach((l, i) => (all[l] = fetched[i]!));
+    const isClosed = (c: OHLCV) => candleCloseMs(c.time * 1000, tf, session) <= now;
     const closed: Record<Leg, OHLCV[]> = {
       future: all.future.filter(isClosed),
       call: all.call.filter(isClosed),
@@ -277,9 +326,9 @@ export class MonitorService {
     const activatedAt = Date.parse(state.activatedAt);
     const isNew = (t: number) => {
       const openMs = t * 1000;
-      return (state.lastBucket === null || openMs > state.lastBucket) && candleCloseMs(openMs, tf) > activatedAt;
+      return (state.lastBucket === null || openMs > state.lastBucket) && candleCloseMs(openMs, tf, session) > activatedAt;
     };
-    const isFresh = (t: number) => now - candleCloseMs(t * 1000, tf) <= MAX_ALERT_LAG_MS;
+    const isFresh = (t: number) => now - candleCloseMs(t * 1000, tf, session) <= MAX_ALERT_LAG_MS;
 
     const result: MonitorRunResult = {
       configId: config.id,
@@ -290,9 +339,9 @@ export class MonitorService {
     };
 
     if (config.strategy === 'rsi-sync') {
-      await this.evaluateBuiltin(config, triplet, closed, isNew, isFresh, result);
+      await this.evaluateBuiltin(config, triplet, closed, isNew, isFresh, result, session);
     } else {
-      await this.evaluateCustom(config, triplet, closed, isNew, isFresh, result);
+      await this.evaluateCustom(config, triplet, closed, isNew, isFresh, result, { session, now, cache });
     }
 
     const lastClosed = closed.future.at(-1)?.time;
@@ -311,7 +360,10 @@ export class MonitorService {
     isNew: (t: number) => boolean,
     isFresh: (t: number) => boolean,
     result: MonitorRunResult,
+    session: Session,
   ): Promise<void> {
+    const problem = optionLegProblem(config.underlying, triplet, 'rsi-sync', null);
+    if (problem) throw new Error(problem);
     const period = config.params.rsiPeriod;
     const rsi = {} as Record<Leg, Map<number, number>>;
     for (const leg of LEGS) {
@@ -346,7 +398,7 @@ export class MonitorService {
         result.skippedStale++;
         continue;
       }
-      const saved = await this.deps.alertService.record(config, triplet, match, candleCloseMs(t * 1000, config.timeframe));
+      const saved = await this.deps.alertService.record(config, triplet, match, candleCloseMs(t * 1000, config.timeframe, session));
       if (saved) result.alerts++;
     }
   }
@@ -358,15 +410,26 @@ export class MonitorService {
     isNew: (t: number) => boolean,
     isFresh: (t: number) => boolean,
     result: MonitorRunResult,
+    run: { session: Session; now: number; cache: Map<string, Promise<OHLCV[]>> },
   ): Promise<void> {
     const def = await this.deps.store.strategies.get(config.strategy);
     if (!def) throw new Error(`Custom strategy not found: ${config.strategy}`);
     // Disabling a strategy pauses every monitor running it (surfaced as the monitor's error).
     if (def.status === 'disabled') throw new Error(`Strategy "${def.name}" is disabled — publish it to resume this monitor.`);
-    const evaluator = new CustomStrategyEvaluator(def);
+    const problem = optionLegProblem(config.underlying, triplet, config.strategy, def);
+    if (problem) throw new Error(problem);
+    const { session, now, cache } = run;
+    const evaluator = new CustomStrategyEvaluator(def, { baseTimeframe: config.timeframe, session });
     const referenced = new Set(evaluator.instruments());
     const instruments = LEGS.filter((l) => referenced.has(l));
     if (instruments.length === 0) instruments.push('future');
+
+    // Other timeframes the rules read (e.g. Daily RSI inside a 15-minute monitor).
+    for (const req of evaluator.requirements()) {
+      const inst = triplet[req.instrument as Leg];
+      if (!inst) continue;
+      evaluator.seed(req.instrument, req.timeframe, await this.candles(inst.token, req.timeframe, now, cache, session, req.instrument === 'future'));
+    }
 
     const bars = Object.fromEntries(LEGS.map((l) => [l, new Map(closed[l].map((c) => [c.time, c]))])) as Record<
       Leg,
@@ -392,7 +455,7 @@ export class MonitorService {
         def,
         match,
         t * 1000,
-        candleCloseMs(t * 1000, config.timeframe),
+        candleCloseMs(t * 1000, config.timeframe, session),
       );
       if (saved) result.alerts++;
     }
@@ -407,6 +470,10 @@ export class MonitorService {
     const period = config.params.rsiPeriod;
     const legs = {} as MonitorSnapshot['legs'];
     for (const leg of LEGS) {
+      if (all[leg].length === 0) {
+        legs[leg] = { rsi: null, closedRsi: null, ltp: null, level: levelFor(leg, config) };
+        continue;
+      }
       const closedRsi = lastDefined(computeRsiSeries(closed[leg].map((c) => c.close), period));
       const provisional = lastDefined(computeRsiSeries(all[leg].map((c) => c.close), period));
       legs[leg] = {

@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Play } from 'lucide-react';
 import { format, subDays } from 'date-fns';
-import type { AnalyzerParams, DateRangePreset, ExpiryType, StrikeSelection, Timeframe } from '@ash/shared';
-import { BUILTIN_STRATEGY_NAME, fixedFields, isSpecific, marketOf } from '@ash/shared';
+import type { AnalyzerParams, DateRangePreset, ExpiryType, Segment, StrikeSelection, Timeframe } from '@ash/shared';
+import { BUILTIN_STRATEGY_NAME, fixedFields, isSpecific, marketOf, runsOnSegment } from '@ash/shared';
 import { api } from '../../lib/api';
 import { Card, Help } from '../../components/ui';
 import { FieldLabel } from '../../components/Tooltip';
@@ -27,30 +27,40 @@ export type BacktestRequest = Pick<AnalyzerParams, 'strategy' | 'preset' | 'from
 /**
  * Backtest filters, strategy first. Fields the strategy fixes are shown as
  * locked chips (the server applies them); only open fields are editable.
+ * `segment` picks the market: NSE/BSE indices (default) or MCX commodities.
  */
 export function FilterBar({
   onAnalyze,
   loading,
   initialStrategy,
   autoRun,
+  segment = 'NSE',
 }: {
   onAnalyze: (p: BacktestRequest) => void;
   loading: boolean;
   initialStrategy?: string;
   /** Run once on mount — used when a specific strategy is opened from the library. */
   autoRun?: boolean;
+  segment?: Segment;
 }) {
-  const underlyings = useQuery({ queryKey: ['underlyings'], queryFn: api.underlyings });
-  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta });
+  const isMcx = segment === 'MCX';
+  const underlyings = useQuery({ queryKey: ['underlyings', segment], queryFn: () => api.underlyings(segment) });
+  const meta = useQuery({ queryKey: ['meta', segment], queryFn: () => api.meta(segment) });
   const strategies = useQuery({ queryKey: ['strategies-custom'], queryFn: api.listStrategies });
-  const groups = useQuery({ queryKey: ['groups'], queryFn: api.listGroups });
+  const groups = useQuery({ queryKey: ['groups'], queryFn: api.listGroups, enabled: !isMcx });
 
   const [strategy, setStrategy] = useState(initialStrategy ?? 'rsi-sync');
   const [preset, setPreset] = useState<DateRangePreset>(autoRun ? 'last-week' : 'last-month');
   const [from, setFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
   const [to, setTo] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [underlying, setUnderlying] = useState('NIFTY');
-  const [expiryType, setExpiryType] = useState<ExpiryType>('current-weekly');
+  const [underlying, setUnderlying] = useState(isMcx ? 'CRUDEOIL' : 'NIFTY');
+  const [expiryType, setExpiryType] = useState<ExpiryType>(isMcx ? 'near-month' : 'current-weekly');
+
+  // MCX: fall back to the first synced product if the default isn't in the master.
+  useEffect(() => {
+    const list = underlyings.data;
+    if (isMcx && list?.length && !list.some((u) => u.symbol === underlying)) setUnderlying(list[0]!.symbol);
+  }, [isMcx, underlyings.data, underlying]);
   const [strikeSelection, setStrikeSelection] = useState<StrikeSelection>('ATM');
   const [customStrike, setCustomStrike] = useState<number | undefined>(undefined);
   const [timeframe, setTimeframe] = useState<Timeframe>('15m');
@@ -95,7 +105,7 @@ export function FilterBar({
           <FieldLabel help={HELP.field.strategy}>Strategy</FieldLabel>
           <select className="input w-full" value={strategy} onChange={(e) => setStrategy(e.target.value)}>
             <option value="rsi-sync">{BUILTIN_STRATEGY_NAME} (built-in)</option>
-            {strategies.data?.map((s) => (
+            {strategies.data?.filter((s) => runsOnSegment(s.market, segment) || s.id === strategy).map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
                 {s.status === 'draft' ? ' (draft)' : s.status === 'disabled' ? ' (disabled)' : ''}
@@ -138,7 +148,7 @@ export function FilterBar({
       <div className="mt-4 pt-4 border-t border-ink-700/60">
         <div className="flex flex-wrap items-center gap-3 mb-3">
           <MarketBadge market={market} compact />
-          <LockedFields market={market} />
+          <LockedFields market={market} segment={segment} />
           {isSpecific(market) && <span className="text-xs text-slate-500">Runs exactly as the strategy defines — just pick the date range.</span>}
         </div>
 
@@ -146,16 +156,16 @@ export function FilterBar({
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 items-end">
             {!fixed.underlying && (
               <div>
-                <FieldLabel help={HELP.backtest.underlyingGroup}>Underlying / Group</FieldLabel>
+                <FieldLabel help={isMcx ? HELP.mcx.product : HELP.backtest.underlyingGroup}>{isMcx ? 'Product' : 'Underlying / Group'}</FieldLabel>
                 <select className="input w-full" value={underlying} onChange={(e) => setUnderlying(e.target.value)}>
-                  <optgroup label="Underlyings">
+                  <optgroup label={isMcx ? 'MCX products' : 'Underlyings'}>
                     {underlyings.data?.map((u) => (
                       <option key={u.symbol} value={u.symbol}>
                         {u.symbol}
                       </option>
                     ))}
                   </optgroup>
-                  {(groups.data?.length ?? 0) > 0 && (
+                  {!isMcx && (groups.data?.length ?? 0) > 0 && (
                     <optgroup label="Groups">
                       {groups.data?.map((g) => (
                         <option key={g.id} value={`group:${g.id}`}>
@@ -169,7 +179,7 @@ export function FilterBar({
             )}
             {!fixed.expiryType && (
               <div>
-                <FieldLabel help={HELP.field.expiry}>Expiry</FieldLabel>
+                <FieldLabel help={isMcx ? HELP.mcx.expiry : HELP.field.expiry}>{isMcx ? 'Contract Month' : 'Expiry'}</FieldLabel>
                 <select className="input w-full" value={expiryType} onChange={(e) => setExpiryType(e.target.value as ExpiryType)}>
                   {meta.data?.expiryTypes.map((x) => (
                     <option key={x.type} value={x.type}>
@@ -181,7 +191,7 @@ export function FilterBar({
             )}
             {!fixed.strikeSelection && (
               <div>
-                <FieldLabel help={HELP.field.strike}>Strike</FieldLabel>
+                <FieldLabel help={isMcx ? HELP.mcx.strike : HELP.field.strike}>Strike</FieldLabel>
                 <select className="input w-full" value={strikeSelection} onChange={(e) => setStrikeSelection(e.target.value as StrikeSelection)}>
                   {meta.data?.strikeSelections.map((s) => (
                     <option key={s} value={s}>

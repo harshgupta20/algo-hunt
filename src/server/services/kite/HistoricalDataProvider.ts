@@ -11,6 +11,12 @@ export interface HistoricalCandleQuery {
   /** Inclusive IST date range, yyyy-mm-dd. */
   from: string;
   to: string;
+  /**
+   * Futures only, Daily / Weekly only: stitch expired contracts into one
+   * continuous series (Kite `continuous=1`), so long daily indicators warm up
+   * even though each contract only lives a few months.
+   */
+  continuous?: boolean;
 }
 
 export interface HistoricalDataProvider {

@@ -2,11 +2,20 @@
  * Core market-data domain types shared between server and client.
  */
 
-/** Supported candle timeframes (intraday; 4h/daily reserved for future). */
-export type Timeframe = '1m' | '3m' | '5m' | '10m' | '15m' | '30m' | '1h';
+/** Supported candle timeframes: intraday, plus daily and weekly. */
+export type Timeframe = '1m' | '3m' | '5m' | '10m' | '15m' | '30m' | '1h' | '1d' | '1w';
 
 /** Exchange segments we care about. */
-export type Exchange = 'NSE' | 'NFO' | 'BSE' | 'BFO';
+export type Exchange = 'NSE' | 'NFO' | 'BSE' | 'BFO' | 'MCX';
+
+/**
+ * Market an underlying trades in. Each has its own session hours, expiry
+ * cycle and instrument sync: NSE = NSE/BSE index F&O, MCX = commodity F&O.
+ */
+export type Segment = 'NSE' | 'MCX';
+
+/** How candles are drawn before indicators read them. */
+export type CandleType = 'normal' | 'heikinAshi';
 
 /** Instrument kinds within an underlying's derivative chain. */
 export type InstrumentType = 'FUT' | 'CE' | 'PE';
@@ -35,14 +44,15 @@ export interface Instrument {
 }
 
 /**
- * The three instruments a single strategy config watches, resolved for a
- * given underlying / expiry / strike selection.
+ * The instruments a single strategy config watches, resolved for a given
+ * underlying / expiry / strike selection. Call and put are absent only for
+ * underlyings with no listed options (futures-only MCX products).
  */
 export interface InstrumentTriplet {
   future: Instrument;
-  call: Instrument;
-  put: Instrument;
-  /** The ATM (or selected) strike the call/put were resolved at. */
+  call?: Instrument;
+  put?: Instrument;
+  /** The ATM (or selected) strike the call/put were resolved at; 0 when futures-only. */
   strike: number;
 }
 

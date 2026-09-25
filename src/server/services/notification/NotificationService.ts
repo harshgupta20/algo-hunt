@@ -21,7 +21,8 @@ function describe(alert: Alert): string {
   const s = alert.snapshot;
   const lines = [
     `🔔 ${alert.title}`,
-    `${alert.underlying} ${alert.strike} · ${alert.timeframe} · exp ${alert.expiry}`,
+    // Futures-only (MCX) alerts have no strike.
+    `${alert.underlying}${alert.strike ? ` ${alert.strike}` : ''} · ${alert.timeframe} · exp ${alert.expiry}`,
     alert.scenario ? `Scenario ${alert.scenario}` : alert.variant ? `Variant: ${alert.variant}` : undefined,
     alert.strategy === 'rsi-sync'
       ? `RSI  FUT ${s.futureRsi} · CE ${s.callRsi} · PE ${s.putRsi}`

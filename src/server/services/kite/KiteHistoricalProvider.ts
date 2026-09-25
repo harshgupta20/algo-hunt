@@ -9,11 +9,13 @@
  */
 import type { OHLCV, Timeframe } from '@ash/shared';
 import { childLogger } from '../../utils/logger';
+import { aggregateWeekly } from '../indicator/candles';
 import type { HistoricalCandleQuery, HistoricalDataProvider } from './HistoricalDataProvider';
 import type { KiteAuthService } from './kiteAuth';
 import { delay, isKiteRateLimit, type KiteClient } from './kiteClient';
 
 const log = childLogger('kite-historical');
+/** Kite interval per timeframe. Kite has no weekly interval: weekly is aggregated from daily candles. */
 const INTERVAL: Record<Timeframe, string> = {
   '1m': 'minute',
   '3m': '3minute',
@@ -22,6 +24,8 @@ const INTERVAL: Record<Timeframe, string> = {
   '15m': '15minute',
   '30m': '30minute',
   '1h': '60minute',
+  '1d': 'day',
+  '1w': 'day',
 };
 
 /** Max days Kite allows per historical request, per interval (conservative). */
@@ -33,6 +37,8 @@ const MAX_DAYS: Record<Timeframe, number> = {
   '15m': 180,
   '30m': 180,
   '1h': 360,
+  '1d': 1900,
+  '1w': 1900,
 };
 
 const DAY_MS = 86_400_000;
@@ -62,15 +68,15 @@ export class KiteHistoricalProvider implements HistoricalDataProvider {
   constructor(private readonly auth: KiteAuthService) {}
 
   /** Serialize + space historical requests, retrying with backoff on 429. */
-  private async request(kc: KiteClient, token: number, interval: string, from: string, to: string): Promise<KiteCandle[]> {
+  private async request(kc: KiteClient, token: number, interval: string, from: string, to: string, continuous: boolean): Promise<KiteCandle[]> {
     const call = this.gate.then(async () => {
       for (let attempt = 0; ; attempt++) {
         const wait = MIN_INTERVAL_MS - (Date.now() - this.lastCallAt);
         if (wait > 0) await delay(wait);
         this.lastCallAt = Date.now();
         try {
-          // continuous=false, oi=true (open interest powers the OI indicator).
-          return await kc.getHistoricalData(token, interval, from, to, false, true);
+          // oi=true (open interest powers the OI indicator); continuous only for futures day candles.
+          return await kc.getHistoricalData(token, interval, from, to, continuous, true);
         } catch (err) {
           if (isKiteRateLimit(err) && attempt < MAX_RETRIES) {
             await delay(1000 * (attempt + 1));
@@ -85,12 +91,15 @@ export class KiteHistoricalProvider implements HistoricalDataProvider {
   }
 
   async getCandles(q: HistoricalCandleQuery): Promise<OHLCV[]> {
-    return this.auth.call((kc) => this.fetch(kc, q));
+    const candles = await this.auth.call((kc) => this.fetch(kc, q));
+    return q.timeframe === '1w' ? aggregateWeekly(candles) : candles;
   }
 
   private async fetch(kc: KiteClient, q: HistoricalCandleQuery): Promise<OHLCV[]> {
     const interval = INTERVAL[q.timeframe];
     const windowMs = MAX_DAYS[q.timeframe] * DAY_MS;
+    // Kite serves continuous data only for day candles.
+    const continuous = Boolean(q.continuous) && interval === 'day';
 
     const start = Date.parse(`${q.from}T00:00:00Z`);
     const end = Date.parse(`${q.to}T23:59:59Z`);
@@ -99,7 +108,7 @@ export class KiteHistoricalProvider implements HistoricalDataProvider {
     const seen = new Set<number>();
     for (let ws = start; ws <= end; ws += windowMs) {
       const we = Math.min(ws + windowMs - DAY_MS, end);
-      const rows = await this.request(kc, q.token, interval, `${isoDate(ws)} 00:00:00`, `${isoDate(we)} 23:59:59`);
+      const rows = await this.request(kc, q.token, interval, `${isoDate(ws)} 00:00:00`, `${isoDate(we)} 23:59:59`, continuous);
       for (const c of rows) {
         const time = Math.floor(new Date(c.date).getTime() / 1000);
         if (seen.has(time)) continue;

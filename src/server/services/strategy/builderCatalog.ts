@@ -2,7 +2,7 @@
  * Assembles the builder catalog (indicators + operators + instruments +
  * timeframes) that drives the data-driven Strategy Builder UI.
  */
-import type { BuilderCatalog, InstrumentSpec, OperatorSpec } from '@ash/shared';
+import type { BuilderCatalog, CandleTypeSpec, InstrumentSpec, OperatorSpec } from '@ash/shared';
 import { TIMEFRAMES } from '@ash/shared';
 import { INDICATOR_SPECS } from '../indicator/registry';
 
@@ -86,6 +86,25 @@ const OPERATORS: OperatorSpec[] = [
     description: 'True when the value is down by at least this percentage versus “Lookback” candles ago.',
     example: 'Future OI decreased by 5% over 3 bars',
   },
+  {
+    value: 'detected', label: 'Is Detected', arity: 'flag', group: 'Pattern',
+    description: 'For candle patterns: true on the closed candle that completes the pattern.',
+    example: 'Future Hammer is detected',
+  },
+];
+
+const CANDLES: CandleTypeSpec[] = [
+  {
+    value: 'normal',
+    label: 'Normal',
+    description: 'Standard OHLC candles exactly as Kite reports them.',
+  },
+  {
+    value: 'heikinAshi',
+    label: 'Heikin Ashi',
+    description:
+      'Smoothed candles: close = average of O/H/L/C, open = midpoint of the previous Heikin Ashi candle. Trends show as runs of one color with fewer whipsaws. Indicators and patterns then read these candles.',
+  },
 ];
 
 const INSTRUMENTS: InstrumentSpec[] = [
@@ -112,5 +131,6 @@ export function builderCatalog(): BuilderCatalog {
     operators: OPERATORS,
     instruments: INSTRUMENTS,
     timeframes: TIMEFRAMES.map((t) => ({ key: t.key, label: t.label })),
+    candles: CANDLES,
   };
 }

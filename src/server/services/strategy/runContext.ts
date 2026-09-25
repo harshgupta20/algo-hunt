@@ -9,8 +9,12 @@ import {
   MARKET_FIELD_LABEL,
   UNDERLYING_BY_SYMBOL,
   applyMarket,
+  expiryLabel,
+  expiryNotAllowed,
   fixedUnderlyings,
+  isMcxExpiry,
   marketOf,
+  segmentOf,
   underlyingNotAllowed,
   type MarketField,
 } from '@ash/shared';
@@ -30,10 +34,31 @@ export async function loadStrategy(store: DataStore, strategy: string): Promise<
   return { def, market: marketOf(strategy, def), name: def.name };
 }
 
-/** Reject unknown symbols in a market profile. */
+/**
+ * Reject market profiles that can't run: unknown symbols, a basket mixing
+ * NSE/BSE and MCX underlyings (different sessions and expiry cycles), or an MCX
+ * month expiry on anything but MCX products.
+ */
 export function validateMarket(m: StrategyMarket | undefined): void {
-  const unknown = (m?.underlyings ?? []).filter((u) => !UNDERLYING_BY_SYMBOL[u]);
+  const u = m?.underlyings ?? [];
+  const unknown = u.filter((x) => !UNDERLYING_BY_SYMBOL[x]);
   if (unknown.length) throw new HttpError(400, `Unknown underlying: ${unknown.join(', ')}`);
+  const segments = new Set(u.map(segmentOf));
+  if (segments.size > 1) {
+    throw new HttpError(400, 'A strategy can fix NSE/BSE underlyings or MCX products, not both — they trade in different sessions and expiry cycles.');
+  }
+  if (m?.expiryType && isMcxExpiry(m.expiryType) && !(u.length > 0 && segments.has('MCX'))) {
+    throw new HttpError(
+      400,
+      `${expiryLabel(m.expiryType)} is an MCX expiry — also fix the underlyings to MCX products, or leave Expiry on “Any”.`,
+    );
+  }
+}
+
+/** The run's expiry must exist on the underlying's market (MCX month expiries are MCX-only). */
+function requireExpiryFits(ctx: Pick<RunContext, 'underlying' | 'expiryType'>): void {
+  const bad = expiryNotAllowed(ctx.expiryType, ctx.underlying);
+  if (bad) throw new HttpError(400, bad);
 }
 
 function requireComplete(ctx: Partial<RunContext>, strategyName: string): RunContext {
@@ -82,6 +107,7 @@ export async function resolveAnalyzerParams(
   if (ctx.strikeSelection === 'CUSTOM' && req.customStrike === undefined) {
     throw new HttpError(400, 'Pick the strike price for a CUSTOM strike.');
   }
+  for (const u of underlyings ?? [ctx.underlying]) requireExpiryFits({ underlying: u, expiryType: ctx.expiryType });
   return { ...req, ...ctx, underlyings, groupName } as AnalyzerParams;
 }
 
@@ -91,5 +117,7 @@ export async function resolveMonitorContext<T extends RunContext & { strategy: s
   if (def?.status === 'disabled') throw new HttpError(400, `Strategy "${def.name}" is disabled — publish it first.`);
   const bad = underlyingNotAllowed(input.underlying, market);
   if (bad) throw new HttpError(400, bad);
-  return applyMarket(input, market);
+  const effective = applyMarket(input, market);
+  requireExpiryFits(effective);
+  return effective;
 }

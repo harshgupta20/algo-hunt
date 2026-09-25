@@ -4,7 +4,7 @@
  * definition drives live alerts and historical analysis.
  */
 import type { ExpiryType, StrikeSelection } from './config';
-import type { Timeframe } from './market';
+import type { CandleType, Timeframe } from './market';
 
 export type IndicatorKind =
   | 'RSI'
@@ -16,13 +16,19 @@ export type IndicatorKind =
   | 'SUPERTREND'
   | 'VOLUME'
   | 'PRICE'
-  | 'OI';
+  | 'OI'
+  | 'ADX'
+  | 'DMI'
+  | 'PATTERN';
 
 /** A reference to an indicator with its parameters and (for multi-output) field. */
 export interface IndicatorRef {
   kind: IndicatorKind;
   params?: Record<string, number>;
-  /** MACD: line|signal|hist · BBANDS: upper|mid|lower · PRICE: open|high|low|close · SUPERTREND: value|direction */
+  /**
+   * MACD: line|signal|hist · BBANDS: upper|mid|lower · PRICE: open|high|low|close ·
+   * SUPERTREND: value|direction · DMI: plus|minus · PATTERN: the candlestick pattern (e.g. hammer)
+   */
   field?: string;
 }
 
@@ -45,7 +51,8 @@ export type Operator =
   | 'between'
   | 'outside'
   | 'increasedByPct'
-  | 'decreasedByPct';
+  | 'decreasedByPct'
+  | 'detected';
 
 export interface Condition {
   type: 'condition';
@@ -62,8 +69,16 @@ export interface Condition {
   compareInstrument?: BuilderInstrument;
   /** Bars back for rising/falling/percent operators (default 1). */
   lookback?: number;
-  /** Reserved for multi-timeframe; v1 uses the strategy timeframe. */
+  /**
+   * Candle size this condition reads (e.g. Daily RSI inside a 15-minute strategy).
+   * Omitted = the strategy / run timeframe. A larger timeframe uses its still-forming
+   * candle as of each evaluated candle's close — never a candle from the future.
+   */
   timeframe?: Timeframe;
+  /** Timeframe of the compare-to indicator. Omitted = same as `timeframe`. */
+  compareTimeframe?: Timeframe;
+  /** Candle construction for both sides. Omitted = normal candles. */
+  candle?: CandleType;
 }
 
 export interface Group {
@@ -172,12 +187,15 @@ export interface IndicatorSpec {
   description?: string;
   example?: string;
   params: IndicatorParamSpec[];
-  fields?: Array<{ value: string; label: string }>;
+  /** Per-output tooltips (e.g. what a Hammer looks like), keyed by field value. */
+  fields?: Array<{ value: string; label: string; description?: string; group?: string }>;
   /** Whether the indicator returns a value comparable to a numeric level. */
   numeric: boolean;
+  /** True for yes/no outputs (candlestick patterns): tested with “Is Detected”, not levels. */
+  boolean?: boolean;
 }
 
-export type OperatorArity = 'unary' | 'value' | 'value2' | 'percent';
+export type OperatorArity = 'unary' | 'value' | 'value2' | 'percent' | 'flag';
 
 export interface OperatorSpec {
   value: Operator;
@@ -197,9 +215,17 @@ export interface InstrumentSpec {
   description?: string;
 }
 
+export interface CandleTypeSpec {
+  value: CandleType;
+  label: string;
+  /** Tooltip: how the candles are built. */
+  description: string;
+}
+
 export interface BuilderCatalog {
   indicators: IndicatorSpec[];
   operators: OperatorSpec[];
   instruments: InstrumentSpec[];
   timeframes: Array<{ key: Timeframe; label: string }>;
+  candles: CandleTypeSpec[];
 }

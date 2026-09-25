@@ -3,6 +3,11 @@
  * selection into the concrete Future/Call/Put triplet a monitor watches.
  * Source-agnostic: production loads the Kite master from Neon (see
  * instrumentSync.ts); the reference price comes from a live Kite LTP.
+ *
+ * NSE/BSE: weekly + monthly option expiries, registry strike intervals.
+ * MCX: monthly contracts (near / next / far month), strike interval read from
+ * the listed strikes, and futures-only products (no listed options) resolve
+ * to a future-only triplet.
  */
 import type {
   ExpiryType,
@@ -10,7 +15,7 @@ import type {
   InstrumentTriplet,
   StrikeSelection,
 } from '@ash/shared';
-import { UNDERLYING_BY_SYMBOL } from '@ash/shared';
+import { UNDERLYING_BY_SYMBOL, effectiveExpiryType, segmentOf } from '@ash/shared';
 import { childLogger } from '../../utils/logger';
 import { istDate } from '../../utils/marketTime';
 
@@ -50,12 +55,15 @@ const CACHE_TTL_MS = 10 * 60_000;
 export class InstrumentStore {
   private instruments: Instrument[] = [];
   private loadedAt = 0;
+  /** Sorted listed strikes per `underlying|expiry` (backtests look these up per candle). */
+  private strikeCache = new Map<string, number[]>();
 
   constructor(private readonly source: InstrumentSource) {}
 
   async load(force = false): Promise<void> {
     if (!force && this.loadedAt && Date.now() - this.loadedAt < CACHE_TTL_MS) return;
     this.instruments = await this.source.loadInstruments();
+    this.strikeCache = new Map();
     this.loadedAt = Date.now();
     log.info({ count: this.instruments.length }, 'instrument master loaded');
   }
@@ -72,18 +80,36 @@ export class InstrumentStore {
   }
 
   /** Distinct upcoming expiry dates (yyyy-mm-dd) for an underlying, ascending. */
-  private upcomingExpiries(underlying: string): string[] {
+  private upcomingExpiries(underlying: string, types?: Array<Instrument['instrumentType']>): string[] {
     const today = istDate(Date.now());
     const set = new Set(
       this.instruments
-        .filter((i) => i.underlying === underlying && i.expiry >= today)
+        .filter((i) => i.underlying === underlying && i.expiry >= today && (!types || types.includes(i.instrumentType)))
         .map((i) => i.expiry),
     );
     return [...set].sort();
   }
 
-  /** Expiry options (current weekly / next weekly / monthly) for the dropdown. */
+  /** True if the master lists any option (CE/PE) for the underlying. */
+  hasOptions(underlying: string): boolean {
+    return this.instruments.some((i) => i.underlying === underlying && i.instrumentType !== 'FUT');
+  }
+
+  /**
+   * Expiry options for the dropdown. NSE: current weekly / next weekly / monthly.
+   * MCX: near / next / far month — option expiries where options are listed
+   * (the future is then the contract the option devolves into), else futures expiries.
+   */
   expiryOptions(underlying: string): ExpiryOption[] {
+    if (segmentOf(underlying) === 'MCX') {
+      const dates = this.upcomingExpiries(underlying, this.hasOptions(underlying) ? ['CE', 'PE'] : ['FUT']);
+      const names: Array<[ExpiryType, string]> = [
+        ['near-month', 'Near Month'],
+        ['next-month', 'Next Month'],
+        ['far-month', 'Far Month'],
+      ];
+      return names.flatMap(([type, label], i) => (dates[i] ? [{ type, date: dates[i]!, label: `${label} (${dates[i]})` }] : []));
+    }
     const dates = this.upcomingExpiries(underlying);
     const options: ExpiryOption[] = [];
     if (dates[0]) options.push({ type: 'current-weekly', date: dates[0], label: `Current Weekly (${dates[0]})` });
@@ -93,19 +119,43 @@ export class InstrumentStore {
     return options;
   }
 
-  /** Resolve an ExpiryType into a concrete date for an underlying. */
+  /** Resolve an ExpiryType into a concrete date (weekly types map onto months on MCX). */
   resolveExpiryDate(underlying: string, type: ExpiryType): string | undefined {
-    return this.expiryOptions(underlying).find((o) => o.type === type)?.date;
+    const effective = effectiveExpiryType(type, segmentOf(underlying));
+    return this.expiryOptions(underlying).find((o) => o.type === effective)?.date;
   }
 
-  /** Strikes available for an underlying + expiry (from listed options). */
+  /** Strikes available for an underlying + expiry (from listed options), ascending. */
   strikes(underlying: string, expiry: string): number[] {
-    const set = new Set(
-      this.instruments
-        .filter((i) => i.underlying === underlying && i.expiry === expiry && i.instrumentType !== 'FUT')
-        .map((i) => i.strike),
-    );
-    return [...set].sort((a, b) => a - b);
+    const key = `${underlying}|${expiry}`;
+    let list = this.strikeCache.get(key);
+    if (!list) {
+      const set = new Set(
+        this.instruments
+          .filter((i) => i.underlying === underlying && i.expiry === expiry && i.instrumentType !== 'FUT')
+          .map((i) => i.strike),
+      );
+      list = [...set].sort((a, b) => a - b);
+      this.strikeCache.set(key, list);
+    }
+    return list;
+  }
+
+  /** Nearest upcoming option expiry (for strike lookups when none is given). */
+  private nearestOptionExpiry(underlying: string): string | undefined {
+    return this.upcomingExpiries(underlying, ['CE', 'PE'])[0];
+  }
+
+  /**
+   * MCX strike pick: the listed strike nearest `price`, shifted by `offset`
+   * listed strikes (so uneven or wide ladders still land on a real contract).
+   */
+  private listedStrike(underlying: string, expiry: string, price: number, offset: number): number | undefined {
+    const list = this.strikes(underlying, expiry);
+    if (!list.length) return undefined;
+    let atm = 0;
+    for (let i = 1; i < list.length; i++) if (Math.abs(list[i]! - price) < Math.abs(list[atm]! - price)) atm = i;
+    return list[Math.min(Math.max(atm + offset, 0), list.length - 1)];
   }
 
   private find(
@@ -158,6 +208,12 @@ export class InstrumentStore {
     // Future uses the monthly futures chain (weekly option expiries have no future).
     const future = this.nearestFuture(underlying, expiry);
 
+    // Futures-only product (e.g. MCX Aluminium): nothing to resolve beyond the future.
+    if (!this.hasOptions(underlying)) {
+      if (!future) throw new Error(`No future contract found for ${underlying} (${expiry})`);
+      return { future, strike: 0 };
+    }
+
     let strike: number;
     if (strikeSelection === 'CUSTOM') {
       if (customStrike === undefined) throw new Error('CUSTOM strike selection requires customStrike');
@@ -165,8 +221,14 @@ export class InstrumentStore {
     } else {
       if (!future) throw new Error(`No future contract found for ${underlying} to derive the ATM strike`);
       const reference = await this.source.referencePrice(future);
-      const atm = Math.round(reference / def.strikeInterval) * def.strikeInterval;
-      strike = atm + STRIKE_OFFSETS[strikeSelection] * def.strikeInterval;
+      if (def.strikeInterval) {
+        const atm = Math.round(reference / def.strikeInterval) * def.strikeInterval;
+        strike = atm + STRIKE_OFFSETS[strikeSelection] * def.strikeInterval;
+      } else {
+        const listed = this.listedStrike(underlying, expiry, reference, STRIKE_OFFSETS[strikeSelection]);
+        if (listed === undefined) throw new Error(`No listed strikes for ${underlying} ${expiry}`);
+        strike = listed;
+      }
     }
 
     const call = this.find(underlying, expiry, 'CE', strike);
@@ -192,13 +254,32 @@ export class InstrumentStore {
 
   // ---- Helpers for dynamic ATM tracking (strike follows the future price) ----
 
-  strikeInterval(underlying: string): number {
-    return UNDERLYING_BY_SYMBOL[underlying]?.strikeInterval ?? 50;
+  /**
+   * Distance between adjacent strikes: the registry value (NSE/BSE indices), or
+   * for MCX the most common gap between listed strikes of that expiry.
+   */
+  strikeInterval(underlying: string, expiry?: string): number {
+    const fixed = UNDERLYING_BY_SYMBOL[underlying]?.strikeInterval;
+    if (fixed) return fixed;
+    const exp = expiry ?? this.nearestOptionExpiry(underlying);
+    const list = exp ? this.strikes(underlying, exp) : [];
+    const gaps = new Map<number, number>();
+    for (let i = 1; i < list.length; i++) {
+      const g = Math.round((list[i]! - list[i - 1]!) * 1000) / 1000;
+      if (g > 0) gaps.set(g, (gaps.get(g) ?? 0) + 1);
+    }
+    const best = [...gaps.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+    return best?.[0] ?? 50;
   }
 
   /** Target strike for a given underlying price + selection (ATM, ATM±n, custom). */
-  strikeFromPrice(underlying: string, price: number, selection: StrikeSelection, customStrike?: number): number {
-    const interval = this.strikeInterval(underlying);
+  strikeFromPrice(underlying: string, price: number, selection: StrikeSelection, customStrike?: number, expiry?: string): number {
+    if (!UNDERLYING_BY_SYMBOL[underlying]?.strikeInterval) {
+      const exp = expiry ?? this.nearestOptionExpiry(underlying);
+      const listed = exp ? this.listedStrike(underlying, exp, selection === 'CUSTOM' ? (customStrike ?? price) : price, STRIKE_OFFSETS[selection]) : undefined;
+      if (listed !== undefined) return selection === 'CUSTOM' ? (customStrike ?? listed) : listed;
+    }
+    const interval = this.strikeInterval(underlying, expiry);
     const atm = Math.round(price / interval) * interval;
     if (selection === 'CUSTOM') return customStrike ?? atm;
     return atm + STRIKE_OFFSETS[selection] * interval;

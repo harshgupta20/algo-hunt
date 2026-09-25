@@ -15,6 +15,7 @@ import { strategyBuilderController } from './controllers/strategyBuilderControll
 import { kiteController } from './controllers/kiteController';
 import { groupController } from './controllers/groupController';
 import { liveController } from './controllers/liveController';
+import { mcxController } from './controllers/mcxController';
 
 export function createRouter(ctx: AppContext): Router {
   const r = new Router();
@@ -64,6 +65,10 @@ export function createRouter(ctx: AppContext): Router {
   r.get('/instruments/underlyings', inst.underlyings);
   r.get('/instruments/:underlying/expiries', inst.expiries);
   r.get('/instruments/:underlying/strikes', inst.strikes);
+
+  // MCX commodities tab
+  const mcx = mcxController(ctx);
+  r.get('/mcx/products', mcx.products);
 
   const prefs = preferencesController(ctx);
   r.get('/preferences', prefs.get);

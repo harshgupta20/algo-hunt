@@ -8,6 +8,7 @@ import type {
   AlertHistoryFilters,
   AnalyticsSummary,
   InstrumentTriplet,
+  Segment,
   StrategyDef,
   StrategyMatch,
 } from '@ash/shared';
@@ -132,7 +133,7 @@ export class AlertService {
     return this.store.alerts.getById(id);
   }
 
-  analytics(): Promise<AnalyticsSummary> {
-    return this.store.alerts.analytics();
+  analytics(segment?: Segment): Promise<AnalyticsSummary> {
+    return this.store.alerts.analytics(segment);
   }
 }

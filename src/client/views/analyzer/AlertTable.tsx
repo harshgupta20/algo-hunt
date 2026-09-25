@@ -129,7 +129,7 @@ export function AlertTable({
                     </td>
                     <td className="px-3 py-2 text-fg font-medium">{a.underlying}</td>
                     <td className="px-3 py-2 text-slate-400">{a.expiry}</td>
-                    <td className="px-3 py-2 tabular-nums">{a.strike}</td>
+                    <td className="px-3 py-2 tabular-nums">{a.strike || '—'}</td>
                     <td className="px-3 py-2">
                       <RuleBadge scenario={a.scenario} variant={a.variant} compact />
                     </td>

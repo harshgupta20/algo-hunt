@@ -3,87 +3,44 @@
 import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import type { ConfigRuntimeSnapshot, Leg } from '@ash/shared';
+import { ArrowRight, Coins } from 'lucide-react';
+import { isMcx } from '@ash/shared';
 import { api } from '../lib/api';
-import { formatDistanceToNowStrict } from 'date-fns';
-import clsx from 'clsx';
-import { ArrowRight } from 'lucide-react';
-import { LEG_ORDER } from '../lib/signals';
+import { useLive } from '../context/LiveContext';
 import { SignalLegend } from '../components/signal';
 import { InfoTip, Tooltip } from '../components/Tooltip';
 import { PerformanceSection } from '../components/PerformanceSection';
 import { HELP } from '../lib/help';
-import { Card, EmptyState, PageHeader, Spinner, StatCard } from '../components/ui';
-import { RsiGauge } from '../components/RsiGauge';
+import { Badge, Card, EmptyState, PageHeader, Spinner, StatCard } from '../components/ui';
+import { MonitorCard } from '../components/MonitorCard';
 import { AlertItem } from '../components/AlertItem';
 
-const TRIGGER_SIDE: Record<Leg, 'above' | 'below'> = { future: 'above', call: 'above', put: 'below' };
-
-function ActiveConfigCard({ snap }: { snap: ConfigRuntimeSnapshot }) {
-  const legs = snap.legs;
-  const status = snap.lastError ? 'error' : snap.evaluatedAt ? 'live' : 'waiting';
-  const metCount = LEG_ORDER.filter((leg) => {
-    const r = legs[leg].rsi;
-    return r != null && (TRIGGER_SIDE[leg] === 'above' ? r >= legs[leg].level : r <= legs[leg].level);
-  }).length;
-
+/** One line linking to the MCX tab: commodity monitors live there, with their own session. */
+function McxStrip() {
+  const { status } = useLive();
+  const mcx = status?.sessions?.MCX;
+  const active = status?.activeBySegment?.MCX ?? 0;
   return (
-    <Card className="flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <Tooltip content={HELP.monitor[status]}>
-              <span
-                tabIndex={0}
-                aria-label={HELP.monitor[status].title}
-                className={clsx(
-                  'w-2.5 h-2.5 rounded-full cursor-help',
-                  status === 'live' ? 'bg-bull' : status === 'error' ? 'bg-bear' : 'bg-slate-500 animate-pulse',
-                )}
-              />
-            </Tooltip>
-            <span className="text-fg font-semibold">{snap.underlying}</span>
-            <span className="text-xs text-slate-400">
-              {snap.strike || '—'} · {snap.timeframe} · exp {snap.expiry || '—'}
-            </span>
-          </div>
-          <div className="mt-1 text-[11px] text-slate-500">
-            {snap.evaluatedAt ? `updated ${formatDistanceToNowStrict(snap.evaluatedAt)} ago` : 'awaiting first evaluation'}
-            {legs.future.ltp != null && (
-              <>
-                {' · '}
-                <Tooltip content={HELP.monitor.ltp}>
-                  <span className="cursor-help">FUT {legs.future.ltp.toFixed(2)}</span>
-                </Tooltip>
-              </>
-            )}
-          </div>
-        </div>
-        <Tooltip content={HELP.monitor.metCount} className="shrink-0">
-          <span
-            tabIndex={0}
-            className={clsx(
-              'rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums cursor-help',
-              metCount === 3 ? 'bg-bull/15 text-bull' : 'bg-ink-800 text-slate-400',
-            )}
-          >
-            {metCount}/3 met
+    <Card className="mb-6 flex flex-wrap items-center justify-between gap-3 py-3">
+      <span className="flex items-center gap-2 text-sm text-slate-300">
+        <Coins className="w-4 h-4 text-slate-500" />
+        MCX commodities <InfoTip content={HELP.mcx.dashboardStrip} />
+        <Tooltip content={HELP.mcx.session}>
+          <span tabIndex={0} className="cursor-help">
+            <Badge tone={mcx?.open ? 'bull' : 'default'}>{mcx ? (mcx.open ? 'session open' : 'session closed') : '—'}</Badge>
           </span>
         </Tooltip>
-      </div>
-      {snap.lastError && <div className="text-xs text-bear -mt-2">{snap.lastError}</div>}
-      <div className="space-y-3">
-        {LEG_ORDER.map((leg) => (
-          <RsiGauge
-            key={leg}
-            leg={leg}
-            detail={leg === 'future' ? undefined : `ATM ${snap.strike || '—'}`}
-            rsi={legs[leg].rsi}
-            level={legs[leg].level}
-            triggerSide={TRIGGER_SIDE[leg]}
-          />
-        ))}
-      </div>
+        <Tooltip content={HELP.stats.activeMonitors}>
+          <span tabIndex={0} className="cursor-help">
+            <Badge tone="accent">{active} active</Badge>
+          </span>
+        </Tooltip>
+      </span>
+      <Tooltip content={HELP.mcx.toMcx} side="left">
+        <Link href="/mcx" className="inline-flex items-center gap-1 text-xs font-medium text-accent-soft hover:underline">
+          Open MCX <ArrowRight className="w-3.5 h-3.5" />
+        </Link>
+      </Tooltip>
     </Card>
   );
 }
@@ -94,10 +51,11 @@ function ActiveConfigCard({ snap }: { snap: ConfigRuntimeSnapshot }) {
  */
 export function Dashboard() {
   const snapshots = useQuery({ queryKey: ['snapshots'], queryFn: api.snapshots, refetchInterval: 15_000 });
-  const alerts = useQuery({ queryKey: ['alerts', { limit: 6 }], queryFn: () => api.listAlerts({ limit: 6 }) });
-  const analytics = useQuery({ queryKey: ['analytics'], queryFn: api.analytics });
+  const alerts = useQuery({ queryKey: ['alerts', { limit: 6, segment: 'NSE' }], queryFn: () => api.listAlerts({ limit: 6, segment: 'NSE' }) });
+  const analytics = useQuery({ queryKey: ['analytics', 'NSE'], queryFn: () => api.analytics('NSE') });
 
-  const active = snapshots.data ?? [];
+  // NSE/BSE only — commodity monitors live in the MCX tab.
+  const active = (snapshots.data ?? []).filter((s) => !isMcx(s.underlying));
   const a = analytics.data;
 
   // Deep link (/#performance, e.g. from the old /analytics URL): scroll once the
@@ -112,7 +70,9 @@ export function Dashboard() {
 
   return (
     <div>
-      <PageHeader title="Dashboard" subtitle="Live monitors, latest alerts and performance — at a glance." />
+      <PageHeader title="Dashboard" subtitle="NSE/BSE index monitors, latest alerts and performance — at a glance." />
+
+      <McxStrip />
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
         <StatCard label="Active Monitors" value={active.length} tone="accent" help={HELP.stats.activeMonitors} />
@@ -145,7 +105,7 @@ export function Dashboard() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {active.map((s) => (
-                <ActiveConfigCard key={s.configId} snap={s} />
+                <MonitorCard key={s.configId} snap={s} />
               ))}
             </div>
           )}

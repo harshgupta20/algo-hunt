@@ -2,8 +2,9 @@
  * Concrete streaming indicators. Adding a new indicator = add a class here and
  * one line in the registry; the builder UI picks it up from the catalog.
  */
+import { MAX_PATTERN_BARS, PATTERN_BY_ID } from './patterns';
 import { RsiCalculator } from './rsi';
-import { BaseIndicator, Ema, param, type Bar } from './types';
+import { BaseIndicator, Ema, Rma, param, type Bar } from './types';
 
 class RsiIndicator extends BaseIndicator {
   private readonly calc = new RsiCalculator(param(this.ref, 'period', 14));
@@ -170,6 +171,73 @@ class OiIndicator extends BaseIndicator {
   }
 }
 
+/**
+ * Wilder's directional movement (as TradingView's DMI): +DM / −DM and true
+ * range from consecutive candles, each smoothed with RMA(period);
+ * +DI = 100·RMA(+DM)/RMA(TR), −DI = 100·RMA(−DM)/RMA(TR).
+ */
+class DirectionalMovement {
+  private prev: Bar | undefined;
+  private readonly tr: Rma;
+  private readonly plusDm: Rma;
+  private readonly minusDm: Rma;
+
+  constructor(period: number) {
+    this.tr = new Rma(period);
+    this.plusDm = new Rma(period);
+    this.minusDm = new Rma(period);
+  }
+
+  push(bar: Bar): { plus: number; minus: number } | undefined {
+    const prev = this.prev;
+    this.prev = bar;
+    if (!prev) return undefined;
+    const up = bar.high - prev.high;
+    const down = prev.low - bar.low;
+    const tr = Math.max(bar.high - bar.low, Math.abs(bar.high - prev.close), Math.abs(bar.low - prev.close));
+    const atr = this.tr.push(tr);
+    const p = this.plusDm.push(up > down && up > 0 ? up : 0);
+    const m = this.minusDm.push(down > up && down > 0 ? down : 0);
+    if (atr === undefined || p === undefined || m === undefined) return undefined;
+    if (atr === 0) return { plus: 0, minus: 0 };
+    return { plus: (100 * p) / atr, minus: (100 * m) / atr };
+  }
+}
+
+class DmiIndicator extends BaseIndicator {
+  private readonly dm = new DirectionalMovement(param(this.ref, 'period', 14));
+  private readonly field = this.ref.field ?? 'plus';
+  protected compute(bar: Bar): number | undefined {
+    const di = this.dm.push(bar);
+    if (!di) return undefined;
+    return this.field === 'minus' ? di.minus : di.plus;
+  }
+}
+
+/** ADX = RMA(smoothing) of DX, where DX = 100·|+DI − −DI| / (+DI + −DI). */
+class AdxIndicator extends BaseIndicator {
+  private readonly dm = new DirectionalMovement(param(this.ref, 'period', 14));
+  private readonly adx = new Rma(param(this.ref, 'smoothing', 14));
+  protected compute(bar: Bar): number | undefined {
+    const di = this.dm.push(bar);
+    if (!di) return undefined;
+    const sum = di.plus + di.minus;
+    return this.adx.push((100 * Math.abs(di.plus - di.minus)) / (sum === 0 ? 1 : sum));
+  }
+}
+
+/** 1 when the selected candlestick pattern completes on this candle, else 0. */
+class PatternIndicator extends BaseIndicator {
+  private readonly pattern = PATTERN_BY_ID[this.ref.field ?? 'anyBullish'] ?? PATTERN_BY_ID.anyBullish!;
+  private readonly recent: Bar[] = [];
+  protected compute(bar: Bar): number | undefined {
+    this.recent.push(bar);
+    if (this.recent.length > MAX_PATTERN_BARS) this.recent.shift();
+    if (this.recent.length < this.pattern.bars) return undefined;
+    return this.pattern.detect(this.recent) ? 1 : 0;
+  }
+}
+
 export const INDICATOR_CLASSES = {
   RSI: RsiIndicator,
   EMA: EmaIndicator,
@@ -181,4 +249,7 @@ export const INDICATOR_CLASSES = {
   PRICE: PriceIndicator,
   VOLUME: VolumeIndicator,
   OI: OiIndicator,
+  ADX: AdxIndicator,
+  DMI: DmiIndicator,
+  PATTERN: PatternIndicator,
 } as const;

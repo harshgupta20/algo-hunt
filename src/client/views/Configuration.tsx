@@ -1,11 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Play, Power, Trash2, Zap } from 'lucide-react';
+import { ArrowRight, Play, Power, Trash2, Zap } from 'lucide-react';
 import clsx from 'clsx';
 import type { AlertConfiguration, AlertConfigurationInput, ExpiryType, StrikeSelection, Timeframe } from '@ash/shared';
-import { DEFAULT_RSI_SYNC_PARAMS, BUILTIN_STRATEGY_NAME, fixedFields, fixedUnderlyings, isSpecific, marketOf } from '@ash/shared';
+import { DEFAULT_RSI_SYNC_PARAMS, BUILTIN_STRATEGY_NAME, fixedFields, fixedUnderlyings, isMcx, isSpecific, marketOf, runsOnSegment } from '@ash/shared';
+import { Tooltip } from '../components/Tooltip';
 import { api } from '../lib/api';
 import { Badge, Card, EmptyState, Help, IconButton, PageHeader, Spinner } from '../components/ui';
 import { InfoTip } from '../components/Tooltip';
@@ -34,9 +36,11 @@ export function Configuration() {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const underlyings = useQuery({ queryKey: ['underlyings'], queryFn: api.underlyings });
-  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta });
+  const underlyings = useQuery({ queryKey: ['underlyings'], queryFn: () => api.underlyings() });
+  const meta = useQuery({ queryKey: ['meta'], queryFn: () => api.meta() });
   const configs = useQuery({ queryKey: ['configs'], queryFn: api.listConfigs });
+  // NSE/BSE monitors only — commodity monitors are managed in the MCX tab.
+  const nseConfigs = configs.data?.filter((c) => !isMcx(c.underlying));
   const snapshots = useQuery({ queryKey: ['snapshots'], queryFn: api.snapshots, refetchInterval: 15_000 });
   const customStrategies = useQuery({ queryKey: ['strategies-custom'], queryFn: api.listStrategies });
   const groups = useQuery({ queryKey: ['groups'], queryFn: api.listGroups });
@@ -136,7 +140,17 @@ export function Configuration() {
 
   return (
     <div>
-      <PageHeader title="Configuration" subtitle="Define what to monitor and tune the RSI-sync strategy." />
+      <PageHeader
+        title="Configuration"
+        subtitle="Define which NSE/BSE indices to monitor and tune the RSI-sync strategy."
+        actions={
+          <Tooltip content={HELP.mcx.toMcx} side="left">
+            <Link href="/mcx?tab=monitors" className="inline-flex items-center gap-1 text-xs font-medium text-accent-soft hover:underline">
+              MCX commodity monitors <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </Tooltip>
+        }
+      />
 
       {notice && (
         <div className="mb-4 rounded-lg border border-accent/30 bg-accent/10 px-4 py-2 text-sm text-accent-soft flex justify-between">
@@ -161,7 +175,7 @@ export function Configuration() {
               <select className="input w-full" value={form.strategy} onChange={(e) => setForm({ ...form, strategy: e.target.value, customStrike: undefined })}>
                 <option value="rsi-sync">{BUILTIN_STRATEGY_NAME} (built-in)</option>
                 {customStrategies.data
-                  ?.filter((s) => s.status === 'active')
+                  ?.filter((s) => s.status === 'active' && runsOnSegment(s.market, 'NSE'))
                   .map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
@@ -340,7 +354,7 @@ export function Configuration() {
           <h2 className="text-sm font-semibold text-slate-300 mb-4">Monitors</h2>
           {configs.isLoading ? (
             <Spinner />
-          ) : (configs.data?.length ?? 0) === 0 ? (
+          ) : (nseConfigs?.length ?? 0) === 0 ? (
             <Card>
               <EmptyState title="No monitors yet" hint="Create one on the left to begin." />
             </Card>
@@ -348,7 +362,7 @@ export function Configuration() {
             (() => {
               const groupOf = new Map<string, AlertConfiguration[]>();
               const singles: AlertConfiguration[] = [];
-              configs.data!.forEach((c) => {
+              nseConfigs!.forEach((c) => {
                 if (c.groupId) {
                   const arr = groupOf.get(c.groupId) ?? [];
                   arr.push(c);

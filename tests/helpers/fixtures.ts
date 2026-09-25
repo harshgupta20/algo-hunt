@@ -17,16 +17,30 @@ export const OPT_EXPIRY = '2099-12-24';
 export const FUT_EXPIRY = '2099-12-31';
 
 let nextToken = 1000;
-function inst(underlying: string, type: Instrument['instrumentType'], strike: number, expiry: string): Instrument {
+function inst(underlying: string, type: Instrument['instrumentType'], strike: number, expiry: string, exchange: Instrument['exchange'] = 'NFO'): Instrument {
   return {
     token: nextToken++,
     tradingSymbol: `${underlying}${type}${strike}`,
     underlying,
-    exchange: 'NFO',
+    exchange,
     instrumentType: type,
     strike,
     expiry,
   };
+}
+
+/**
+ * MCX master: CRUDEOIL with monthly futures + options (strikes 5300..5600 step 50,
+ * option expiries a few days before the futures) and futures-only ALUMINIUM.
+ */
+export function mcxMaster(): Instrument[] {
+  const list: Instrument[] = [];
+  for (const e of ['2099-10-20', '2099-11-19', '2099-12-17']) list.push(inst('CRUDEOIL', 'FUT', 0, e, 'MCX'));
+  for (const e of ['2099-10-16', '2099-11-17']) {
+    for (let k = 5300; k <= 5600; k += 50) list.push(inst('CRUDEOIL', 'CE', k, e, 'MCX'), inst('CRUDEOIL', 'PE', k, e, 'MCX'));
+  }
+  for (const e of ['2099-10-31', '2099-11-28', '2099-12-31']) list.push(inst('ALUMINIUM', 'FUT', 0, e, 'MCX'));
+  return list;
 }
 
 /** NIFTY future + CE/PE at strikes 21900..22100 (step 50). */
@@ -79,10 +93,14 @@ export function toCandles(closes: number[], lastOpen: number, tf: Timeframe): OH
 export class FixtureHistorical implements HistoricalDataProvider {
   readonly name = 'fixture';
   readonly calls: HistoricalCandleQuery[] = [];
-  constructor(private readonly byToken: Map<number, OHLCV[]>) {}
+  /** `byTokenTf` ("token:timeframe") serves other timeframes; otherwise candles are per token. */
+  constructor(
+    private readonly byToken: Map<number, OHLCV[]>,
+    private readonly byTokenTf = new Map<string, OHLCV[]>(),
+  ) {}
   async getCandles(q: HistoricalCandleQuery): Promise<OHLCV[]> {
     this.calls.push(q);
-    return this.byToken.get(q.token) ?? [];
+    return this.byTokenTf.get(`${q.token}:${q.timeframe}`) ?? this.byToken.get(q.token) ?? [];
   }
 }
 
