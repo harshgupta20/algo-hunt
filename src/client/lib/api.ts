@@ -133,9 +133,10 @@ export const api = {
   liveTick: () => request<{ ran: boolean; reason?: string; at: string; alerts: number }>('/live/tick', { method: 'POST' }),
 
   // Historical Strategy Analyzer
-  analyzerRun: (params: AnalyzerParams) =>
+  /** Fields the strategy fixes may be omitted — the server applies its market profile. */
+  analyzerRun: (params: Partial<AnalyzerParams> & Pick<AnalyzerParams, 'strategy' | 'preset'>) =>
     request<BacktestResult>('/analyzer/run', { method: 'POST', body: JSON.stringify(params) }),
-  analyzerChart: (params: AnalyzerParams, center: number, span?: number) =>
+  analyzerChart: (params: Partial<AnalyzerParams> & Pick<AnalyzerParams, 'strategy' | 'preset'>, center: number, span?: number) =>
     request<ChartWindow>('/analyzer/chart', {
       method: 'POST',
       body: JSON.stringify({ params, center, span }),

@@ -144,7 +144,10 @@ export const HELP = {
     builder: { title: 'Builder', body: 'Create or edit a strategy from rules — no code. Rules are stored as JSON and versioned on every save.' },
     backtest: { title: 'Backtest', body: 'Replay a strategy on Kite historical candles with the exact engine used for live alerts.' },
     builtin: { title: 'Built-in strategy', body: 'Ships with the platform and can’t be edited. Use “Customize a copy” to change its rules.' },
-    runBacktest: { title: 'Backtest', body: 'Open the Backtest tab with this strategy pre-filled and run it on the last week.' },
+    runBacktest: {
+      title: 'Backtest',
+      body: 'Open the Backtest tab with this strategy selected. A specific strategy runs on the last week right away; a universal one asks for its open fields first.',
+    },
     customize: {
       title: 'Customize a copy',
       body: 'Open the Builder with these rules as a starting point. Saving creates your own strategy; the built-in one stays unchanged.',
@@ -155,7 +158,47 @@ export const HELP = {
     publish: { title: 'Publish', body: 'Make this strategy available to monitors.' },
     disable: { title: 'Disable', body: 'Stop monitors from using this strategy. You can publish it again later.' },
     delete: { title: 'Delete', body: 'Permanently remove this strategy and its version history.', note: 'Monitors using it stop evaluating.' },
-    runsOn: { title: 'Runs on', body: 'The strategy’s default underlying · strike · timeframe (used to pre-fill backtests).' },
+    runsOn: {
+      title: 'Applies to',
+      body: 'Specific = runs exactly on the listed setup. Universal = the listed parts are fixed and the rest is chosen per run.',
+    },
+  },
+
+  market: {
+    appliesTo: {
+      title: 'Applies to',
+      body: 'Where this strategy runs. Fix a field to a value, or leave it on “Any” to choose it each time you backtest or create a monitor.',
+      note: 'Fixed values always win — backtests and monitors can’t override them.',
+    },
+    specific: {
+      title: 'Specific strategy',
+      body: 'Everything is fixed (underlying, expiry, strike, timeframe), so it runs exactly as defined. A backtest only asks for the date range; a monitor is one click.',
+    },
+    universal: {
+      title: 'Universal strategy',
+      body: 'Some fields are left open, so the same rules can run on different markets. Backtests and monitors ask only for the open fields.',
+    },
+    underlyings: {
+      title: 'Underlyings',
+      body: 'All — the strategy works on any underlying (chosen per run). Or pick one (single-instrument strategy) or several (a basket: backtests cover every member, monitors are created for each).',
+    },
+    any: {
+      title: 'Any',
+      body: 'Not fixed by the strategy — you choose it when backtesting or creating a monitor.',
+    },
+    locked: {
+      title: 'Set by the strategy',
+      body: 'This value is fixed in the strategy’s “Applies to” section, so it can’t be changed here.',
+      note: 'Edit the strategy in the Builder to change it.',
+    },
+    basket: {
+      title: 'Basket',
+      body: 'The strategy runs on each of these underlyings. A backtest merges all of them; creating a monitor adds one per underlying.',
+    },
+    customStrike: {
+      title: 'Strike price',
+      body: 'The exact strike to watch when Strike is CUSTOM. Listed strikes come from the Kite instrument master for this expiry.',
+    },
   },
 
   builder: {
@@ -168,12 +211,7 @@ export const HELP = {
     publish: { title: 'Publish', body: 'Save and make it available to monitors on the Configuration page.' },
     name: { title: 'Name', body: 'Shown in the Library, monitors, alerts and Telegram messages.' },
     category: { title: 'Category', body: 'Free-text tag to organise your strategies (e.g. Momentum, Scalping).' },
-    scope: { title: 'Scope', body: 'What the strategy trades. A label for organising strategies — it doesn’t change how rules are evaluated.' },
     description: { title: 'Description', body: 'One line about the idea behind the strategy.' },
-    context: {
-      title: 'Scope & context',
-      body: 'Defaults used when you backtest this strategy. A monitor can still run it on any underlying, strike and timeframe.',
-    },
     conditions: {
       title: 'Conditions',
       body: 'Build the rule tree from conditions and groups. The strategy alerts once, when the whole tree turns true on a closed candle — not on every candle it stays true.',

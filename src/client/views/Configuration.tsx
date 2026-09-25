@@ -5,10 +5,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Play, Power, Trash2, Zap } from 'lucide-react';
 import clsx from 'clsx';
 import type { AlertConfiguration, AlertConfigurationInput, ExpiryType, StrikeSelection, Timeframe } from '@ash/shared';
-import { DEFAULT_RSI_SYNC_PARAMS, BUILTIN_STRATEGY_NAME } from '@ash/shared';
+import { DEFAULT_RSI_SYNC_PARAMS, BUILTIN_STRATEGY_NAME, fixedFields, fixedUnderlyings, isSpecific, marketOf } from '@ash/shared';
 import { api } from '../lib/api';
 import { Badge, Card, EmptyState, Help, IconButton, PageHeader, Spinner } from '../components/ui';
 import { InfoTip } from '../components/Tooltip';
+import { CustomStrikeSelect, LockedFields, MarketBadge } from '../components/market';
 import { GroupsManager } from '../components/GroupsManager';
 import { FieldLabel } from '../components/Tooltip';
 import { HELP } from '../lib/help';
@@ -19,6 +20,7 @@ const DEFAULT_FORM = {
   groupId: '',
   expiryType: 'current-weekly' as ExpiryType,
   strikeSelection: 'ATM' as StrikeSelection,
+  customStrike: undefined as number | undefined,
   timeframe: '15m' as Timeframe,
   strategy: 'rsi-sync',
   rsiPeriod: DEFAULT_RSI_SYNC_PARAMS.rsiPeriod,
@@ -44,10 +46,21 @@ export function Configuration() {
     void qc.invalidateQueries({ queryKey: ['snapshots'] });
   };
 
+  // The chosen strategy's market profile decides which fields this form asks for.
+  const def = customStrategies.data?.find((x) => x.id === form.strategy);
+  const market = marketOf(form.strategy, def);
+  const fixed = fixedFields(market);
+  const basket = fixedUnderlyings(market);
+  const multiUnderlying = basket.length > 1 || (!fixed.underlying && form.mode === 'group');
+  const singleUnderlying = basket[0] ?? form.underlying;
+  const needsStrikePrice = !fixed.strikeSelection && form.strikeSelection === 'CUSTOM';
+
+  // Fixed fields come from the strategy (the server enforces them too).
   const params = () => ({
-    expiryType: form.expiryType,
-    strikeSelection: form.strikeSelection,
-    timeframe: form.timeframe,
+    expiryType: market.expiryType ?? form.expiryType,
+    strikeSelection: market.strikeSelection ?? form.strikeSelection,
+    customStrike: needsStrikePrice ? form.customStrike : undefined,
+    timeframe: market.timeframe ?? form.timeframe,
     strategy: form.strategy,
     params: {
       rsiPeriod: Number(form.rsiPeriod),
@@ -96,6 +109,14 @@ export function Configuration() {
   const deleteMut = useMutation({ mutationFn: (id: string) => api.deleteConfig(id), onSuccess: invalidate });
 
   const submit = () => {
+    if (basket.length > 1) {
+      createGroupMut.mutate({ members: basket, groupName: def?.name });
+      return;
+    }
+    if (basket.length === 1) {
+      createMut.mutate({ underlying: basket[0]!, ...params() });
+      return;
+    }
     if (form.mode === 'group') {
       const group = groups.data?.find((g) => g.id === form.groupId);
       if (!group) {
@@ -136,94 +157,8 @@ export function Configuration() {
           </h2>
           <div className="space-y-4">
             <div>
-              <div className="flex items-center gap-1.5 mb-2">
-                <div className="flex rounded-lg overflow-hidden border border-ink-700 text-xs w-fit">
-                  {(['single', 'group'] as const).map((m) => (
-                    <Help
-                      key={m}
-                      content={
-                        m === 'single'
-                          ? { title: 'Single', body: 'One monitor for one underlying.' }
-                          : { title: 'Group', body: 'One monitor per member of a saved underlying group, created and switched together.' }
-                      }
-                    >
-                      <button
-                        onClick={() => setForm({ ...form, mode: m })}
-                        className={clsx('px-3 py-1 capitalize', form.mode === m ? 'bg-accent text-white' : 'bg-ink-800 text-slate-400')}
-                      >
-                        {m}
-                      </button>
-                    </Help>
-                  ))}
-                </div>
-                <InfoTip content={HELP.config.mode} />
-              </div>
-              {form.mode === 'single' ? (
-                <>
-                  <FieldLabel help={HELP.field.underlying}>Underlying</FieldLabel>
-                  <select className="input w-full" value={form.underlying} onChange={(e) => setForm({ ...form, underlying: e.target.value })}>
-                    {underlyings.data?.map((u) => (
-                      <option key={u.symbol} value={u.symbol}>
-                        {u.symbol} — {u.name}
-                      </option>
-                    ))}
-                  </select>
-                  {underlyings.data?.length === 0 && (
-                    <p className="text-xs text-warn mt-1">
-                      No instruments yet — connect Zerodha Kite in Settings to load the F&amp;O instrument master.
-                    </p>
-                  )}
-                </>
-              ) : (
-                <>
-                  <FieldLabel help={HELP.config.group}>Group</FieldLabel>
-                  <select className="input w-full" value={form.groupId} onChange={(e) => setForm({ ...form, groupId: e.target.value })}>
-                    <option value="">Select a group…</option>
-                    {groups.data?.map((g) => (
-                      <option key={g.id} value={g.id}>
-                        {g.name} ({g.members.length})
-                      </option>
-                    ))}
-                  </select>
-                </>
-              )}
-            </div>
-            <div>
-              <FieldLabel help={HELP.field.expiry}>Expiry</FieldLabel>
-              <select className="input w-full" value={form.expiryType} onChange={(e) => setForm({ ...form, expiryType: e.target.value as ExpiryType })}>
-                {meta.data?.expiryTypes.map((x) => (
-                  <option key={x.type} value={x.type}>
-                    {x.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <FieldLabel help={HELP.field.strike}>Strike</FieldLabel>
-                <select className="input w-full" value={form.strikeSelection} onChange={(e) => setForm({ ...form, strikeSelection: e.target.value as StrikeSelection })}>
-                  {meta.data?.strikeSelections.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <FieldLabel help={HELP.field.timeframe}>Timeframe</FieldLabel>
-                <select className="input w-full" value={form.timeframe} onChange={(e) => setForm({ ...form, timeframe: e.target.value as Timeframe })}>
-                  {meta.data?.timeframes.map((t) => (
-                    <option key={t.key} value={t.key}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div>
               <FieldLabel help={HELP.field.strategy}>Strategy</FieldLabel>
-              <select className="input w-full" value={form.strategy} onChange={(e) => setForm({ ...form, strategy: e.target.value })}>
+              <select className="input w-full" value={form.strategy} onChange={(e) => setForm({ ...form, strategy: e.target.value, customStrike: undefined })}>
                 <option value="rsi-sync">{BUILTIN_STRATEGY_NAME} (built-in)</option>
                 {customStrategies.data
                   ?.filter((s) => s.status === 'active')
@@ -233,7 +168,126 @@ export function Configuration() {
                     </option>
                   ))}
               </select>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <MarketBadge market={market} compact />
+                <LockedFields market={market} />
+              </div>
+              {isSpecific(market) && (
+                <p className="mt-2 text-xs text-slate-500">This strategy fixes its whole setup — nothing else to choose.</p>
+              )}
             </div>
+
+            {!fixed.underlying && (
+              <div>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <div className="flex rounded-lg overflow-hidden border border-ink-700 text-xs w-fit">
+                    {(['single', 'group'] as const).map((m) => (
+                      <Help
+                        key={m}
+                        content={
+                          m === 'single'
+                            ? { title: 'Single', body: 'One monitor for one underlying.' }
+                            : { title: 'Group', body: 'One monitor per member of a saved underlying group, created and switched together.' }
+                        }
+                      >
+                        <button
+                          onClick={() => setForm({ ...form, mode: m })}
+                          className={clsx('px-3 py-1 capitalize', form.mode === m ? 'bg-accent text-white' : 'bg-ink-800 text-slate-400')}
+                        >
+                          {m}
+                        </button>
+                      </Help>
+                    ))}
+                  </div>
+                  <InfoTip content={HELP.config.mode} />
+                </div>
+                {form.mode === 'single' ? (
+                  <>
+                    <FieldLabel help={HELP.field.underlying}>Underlying</FieldLabel>
+                    <select className="input w-full" value={form.underlying} onChange={(e) => setForm({ ...form, underlying: e.target.value, customStrike: undefined })}>
+                      {underlyings.data?.map((u) => (
+                        <option key={u.symbol} value={u.symbol}>
+                          {u.symbol} — {u.name}
+                        </option>
+                      ))}
+                    </select>
+                    {underlyings.data?.length === 0 && (
+                      <p className="text-xs text-warn mt-1">
+                        No instruments yet — connect Zerodha Kite in Settings to load the F&amp;O instrument master.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <FieldLabel help={HELP.config.group}>Group</FieldLabel>
+                    <select className="input w-full" value={form.groupId} onChange={(e) => setForm({ ...form, groupId: e.target.value })}>
+                      <option value="">Select a group…</option>
+                      {groups.data?.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.name} ({g.members.length})
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+              </div>
+            )}
+
+            {(!fixed.expiryType || !fixed.strikeSelection || !fixed.timeframe) && (
+              <div className="grid grid-cols-2 gap-3">
+                {!fixed.expiryType && (
+                  <div className="col-span-2">
+                    <FieldLabel help={HELP.field.expiry}>Expiry</FieldLabel>
+                    <select className="input w-full" value={form.expiryType} onChange={(e) => setForm({ ...form, expiryType: e.target.value as ExpiryType, customStrike: undefined })}>
+                      {meta.data?.expiryTypes.map((x) => (
+                        <option key={x.type} value={x.type}>
+                          {x.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {!fixed.strikeSelection && (
+                  <div>
+                    <FieldLabel help={HELP.field.strike}>Strike</FieldLabel>
+                    <select className="input w-full" value={form.strikeSelection} onChange={(e) => setForm({ ...form, strikeSelection: e.target.value as StrikeSelection })}>
+                      {meta.data?.strikeSelections.map((x) => (
+                        <option key={x} value={x}>
+                          {x}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {!fixed.timeframe && (
+                  <div>
+                    <FieldLabel help={HELP.field.timeframe}>Timeframe</FieldLabel>
+                    <select className="input w-full" value={form.timeframe} onChange={(e) => setForm({ ...form, timeframe: e.target.value as Timeframe })}>
+                      {meta.data?.timeframes.map((t) => (
+                        <option key={t.key} value={t.key}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {needsStrikePrice && (
+                  <div className="col-span-2">
+                    <FieldLabel help={HELP.market.customStrike}>Strike Price</FieldLabel>
+                    {multiUnderlying ? (
+                      <p className="text-xs text-warn">A CUSTOM strike needs a single underlying.</p>
+                    ) : (
+                      <CustomStrikeSelect
+                        underlying={singleUnderlying}
+                        expiryType={market.expiryType ?? form.expiryType}
+                        value={form.customStrike}
+                        onChange={(k) => setForm({ ...form, customStrike: k })}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className={form.strategy === 'rsi-sync' ? 'border-t border-ink-700/60 pt-4' : 'hidden'}>
               <FieldLabel help={HELP.config.rsiLevels}>RSI Levels</FieldLabel>
@@ -255,9 +309,25 @@ export function Configuration() {
               </div>
             </div>
 
-            <Help content={HELP.config.create} className="w-full">
-              <button className="btn-primary w-full justify-center" onClick={submit} disabled={createMut.isPending || createGroupMut.isPending}>
-                <Zap className="w-4 h-4" /> {form.mode === 'group' ? 'Create Group Monitor' : 'Create Monitor'}
+            <Help
+              content={
+                basket.length > 1
+                  ? { ...HELP.config.create, title: `Create ${basket.length} monitors`, body: `One monitor per underlying in this strategy: ${basket.join(', ')}. They start idle — activate them together.` }
+                  : HELP.config.create
+              }
+              className="w-full"
+            >
+              <button
+                className="btn-primary w-full justify-center"
+                onClick={submit}
+                disabled={createMut.isPending || createGroupMut.isPending || (needsStrikePrice && (multiUnderlying || form.customStrike === undefined))}
+              >
+                <Zap className="w-4 h-4" />{' '}
+                {basket.length > 1
+                  ? `Create ${basket.length} Monitors (${basket.join(', ')})`
+                  : form.mode === 'group' && !fixed.underlying
+                    ? 'Create Group Monitor'
+                    : 'Create Monitor'}
               </button>
             </Help>
           </div>

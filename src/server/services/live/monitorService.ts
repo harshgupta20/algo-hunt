@@ -21,7 +21,7 @@ import type {
   OHLCV,
   Timeframe,
 } from '@ash/shared';
-import { TIMEFRAME_MS } from '@ash/shared';
+import { TIMEFRAME_MS, applyMarket, underlyingNotAllowed } from '@ash/shared';
 import type { DataStore } from '../../db/store';
 import type { MonitorSnapshot, MonitorState } from '../../db/types';
 import { childLogger } from '../../utils/logger';
@@ -190,14 +190,15 @@ export class MonitorService {
 
     for (const config of configs) {
       try {
-        let state = states.get(config.id);
-        // Missing state (pre-migration activation) or an expired contract → re-resolve.
-        if (!state || state.expiry < istDate(now)) {
-          await this.activate(config, now);
+        const synced = await this.syncWithStrategy(config);
+        let state = synced.reset ? undefined : states.get(config.id);
+        // Missing state, an expired contract, or a changed strategy setup → re-resolve.
+        if (!state || state.expiry < istDate(now) || synced.reset) {
+          await this.activate(synced.config, now);
           state = (await this.deps.store.monitors.get(config.id)) ?? undefined;
           if (!state) throw new Error('monitor state could not be created');
         }
-        results.push(await this.evaluate(config, state, now, cache));
+        results.push(await this.evaluate(synced.config, state, now, cache));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         log.error({ configId: config.id, err: message }, 'monitor evaluation failed');
@@ -206,6 +207,34 @@ export class MonitorService {
       }
     }
     return results;
+  }
+
+  /**
+   * Keep a custom-strategy monitor in line with its strategy's market profile:
+   * fixed timeframe / expiry / strike changes are applied (and contracts
+   * re-locked); an underlying the strategy no longer covers is an error.
+   */
+  private async syncWithStrategy(config: AlertConfiguration): Promise<{ config: AlertConfiguration; reset: boolean }> {
+    if (config.strategy === 'rsi-sync') return { config, reset: false };
+    const def = await this.deps.store.strategies.get(config.strategy);
+    if (!def) return { config, reset: false }; // evaluate() reports "not found"
+    const bad = underlyingNotAllowed(config.underlying, def.market);
+    if (bad) throw new Error(`${bad} Delete this monitor, or add ${config.underlying} to "${def.name}".`);
+    const eff = applyMarket(config, def.market);
+    if (eff.expiryType === config.expiryType && eff.strikeSelection === config.strikeSelection && eff.timeframe === config.timeframe) {
+      return { config, reset: false };
+    }
+    const updated =
+      (await this.deps.store.configs.update(config.id, {
+        expiryType: eff.expiryType,
+        strikeSelection: eff.strikeSelection,
+        timeframe: eff.timeframe,
+      })) ?? eff;
+    log.info(
+      { configId: config.id, strategy: def.name, timeframe: eff.timeframe, expiry: eff.expiryType, strike: eff.strikeSelection },
+      'monitor re-synced to its strategy market profile',
+    );
+    return { config: { ...updated, active: true }, reset: true };
   }
 
   private candles(token: number, tf: Timeframe, now: number, cache: Map<string, Promise<OHLCV[]>>): Promise<OHLCV[]> {

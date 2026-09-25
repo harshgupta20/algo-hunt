@@ -8,6 +8,7 @@ import { Badge, Card, EmptyState, Help, IconButton, ScenarioBadge, Spinner, Stra
 import { InfoTip } from '../components/Tooltip';
 import { HELP } from '../lib/help';
 import { LegTag } from '../components/signal';
+import { MarketBadge } from '../components/market';
 import { fmtRelative } from '../lib/format';
 
 export interface LibraryActions {
@@ -63,6 +64,7 @@ function BuiltinCard({ onBacktest, onCustomizeBuiltin }: Pick<LibraryActions, 'o
               <LegTag leg="put" /> <span className="text-bear font-semibold">≤ {s.defaultParams.putLevel}</span>
             </span>
             <span className="text-slate-500">RSI period {s.defaultParams.rsiPeriod} · closed candles only</span>
+            <MarketBadge market={{}} />
           </div>
 
           <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -129,7 +131,7 @@ export function StrategyLibrary({ onNew, onEdit, onBacktest, onCustomizeBuiltin 
                     <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3">
                       <span className="inline-flex items-center gap-1">
-                        Runs on <InfoTip content={HELP.strategies.runsOn} />
+                        Applies to <InfoTip content={HELP.strategies.runsOn} />
                       </span>
                     </th>
                     <th className="px-4 py-3">Updated</th>
@@ -152,8 +154,8 @@ export function StrategyLibrary({ onNew, onEdit, onBacktest, onCustomizeBuiltin 
                       <td className="px-4 py-3 whitespace-nowrap">
                         <StrategyStatusBadge status={s.status} />
                       </td>
-                      <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
-                        {s.underlying} · {s.strikeSelection} · {s.timeframe}
+                      <td className="px-4 py-3">
+                        <MarketBadge market={s.market} />
                       </td>
                       <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{fmtRelative(s.updatedAt)}</td>
                       <td className="px-4 py-3">

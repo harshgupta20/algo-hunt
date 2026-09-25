@@ -132,6 +132,26 @@ describe('MonitorService (cron evaluator: Kite candles → RSI → strategy → 
     expect(store.alertRows).toHaveLength(0);
   });
 
+  it('re-syncs a running monitor when its strategy pins a different timeframe', async () => {
+    const { store, monitors, config } = await setup(1, { strategy: 'custom-rsi' });
+    await monitors.activate(config, LAST_OPEN - 86_400_000);
+    const def = await store.strategies.get('custom-rsi');
+    def!.market = { timeframe: '5m' };
+    const [r] = await monitors.runAll(LAST_CLOSE + 5_000);
+    expect(r?.error).toBeUndefined();
+    expect((await store.configs.getById(config.id))?.timeframe).toBe('5m');
+  });
+
+  it('flags a monitor whose underlying the strategy no longer covers', async () => {
+    const { store, monitors, config } = await setup(1, { strategy: 'custom-rsi' });
+    await monitors.activate(config, LAST_OPEN - 86_400_000);
+    const def = await store.strategies.get('custom-rsi');
+    def!.market = { underlyings: ['BANKNIFTY'] };
+    const [r] = await monitors.runAll(LAST_CLOSE + 5_000);
+    expect(r?.error).toMatch(/only runs on BANKNIFTY/);
+    expect(store.alertRows).toHaveLength(0);
+  });
+
   it('shares one candle fetch per instrument across monitors in a run', async () => {
     const { store, monitors, config, historical } = await setup(1);
     const second = await store.configs.create({ ...config, params: config.params });

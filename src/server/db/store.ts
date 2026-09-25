@@ -143,6 +143,19 @@ export function buildGroup(input: UnderlyingGroupInput): UnderlyingGroup {
   return { id: randomUUID(), name: input.name, members: input.members, builtin: false, createdAt: now, updatedAt: now };
 }
 
+/**
+ * Normalize a stored definition. Definitions saved before market profiles had
+ * loose `underlying / expiryType / strikeSelection / timeframe` fields that were
+ * only form defaults (runs could override them), so they become UNIVERSAL —
+ * nothing a running monitor or backtest relied on changes. Pin fields in the builder.
+ */
+export function normalizeStrategyDef(raw: unknown): StrategyDef {
+  const d = raw as StrategyDef & Record<string, unknown>;
+  if (d.market) return d;
+  const { scope: _scope, underlying: _u, expiryType: _e, strikeSelection: _s, timeframe: _t, ...rest } = d;
+  return { ...(rest as StrategyDef), market: {} };
+}
+
 /** Build a fresh custom strategy from builder input. */
 export function buildStrategy(input: StrategyDefInput): StrategyDef {
   const now = new Date().toISOString();
@@ -155,11 +168,7 @@ export function buildStrategy(input: StrategyDefInput): StrategyDef {
     status: input.status ?? 'draft',
     version: 1,
     builtin: false,
-    scope: input.scope,
-    underlying: input.underlying,
-    expiryType: input.expiryType,
-    strikeSelection: input.strikeSelection,
-    timeframe: input.timeframe,
+    market: input.market,
     root: input.root,
     createdAt: now,
     updatedAt: now,

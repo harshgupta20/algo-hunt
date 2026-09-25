@@ -186,6 +186,12 @@ the engine, and **versioned** on every save.
 - **Operators**: numeric (`> < ≥ ≤ = ≠`), cross (above/below), trend (rising/falling), state (above/below),
   range (between/outside), percentage (increased/decreased by %).
 - **Nested AND/OR groups**, multi-instrument conditions (Future/Call/Put), and compare-to-indicator RHS.
+- **Applies to (market profile)**: each of underlying, expiry, strike and timeframe is either **fixed** by the
+  strategy or **Any** (chosen per run). Underlying can be *All*, one symbol, or a basket.
+  - **Specific** (everything fixed) — runs exactly as defined: a backtest only asks for the date range, a monitor is
+    one click (one per basket member).
+  - **Universal** (something open) — backtest and monitor forms ask only for the open fields; fixed ones show as
+    locked chips. The server enforces fixed values, and running monitors re-sync when a strategy's profile changes.
 - **Library** with edit / duplicate / publish / disable / delete / backtest and version history; a strategy must be
   **published** to be used by a monitor.
 - Every alert carries a **per-condition trace** (`Future RSI(14) · 59.98 → 60.02 · cross above 60 ✓`).

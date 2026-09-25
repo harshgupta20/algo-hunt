@@ -3,7 +3,10 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Save, Sparkles, Rocket } from 'lucide-react';
-import type { BuilderCatalog, ExpiryType, Group, StrategyDef, StrategyDefInput, StrategyScope, StrikeSelection, Timeframe } from '@ash/shared';
+import clsx from 'clsx';
+import type { BuilderCatalog, ExpiryType, Group, StrategyDef, StrategyDefInput, StrategyMarket, Timeframe } from '@ash/shared';
+import { UNDERLYINGS, describeFixed, describeOpen, fixedUnderlyings, isSpecific } from '@ash/shared';
+import { MarketBadge } from '../components/market';
 import { api } from '../lib/api';
 import { Card, EmptyState, Help, Spinner } from '../components/ui';
 import { RuleTreeEditor, newCondition, newGroup } from './builder/ConditionBuilder';
@@ -16,11 +19,7 @@ interface FormState {
   description: string;
   category: string;
   notes: string;
-  scope: StrategyScope;
-  underlying: string;
-  expiryType: ExpiryType;
-  strikeSelection: StrikeSelection;
-  timeframe: Timeframe;
+  market: StrategyMarket;
   root: Group;
 }
 
@@ -30,36 +29,172 @@ function fromDef(def: StrategyDef, resetName = false): FormState {
     description: def.description ?? '',
     category: def.category ?? '',
     notes: def.notes ?? '',
-    scope: def.scope,
-    underlying: def.underlying,
-    expiryType: def.expiryType,
-    strikeSelection: def.strikeSelection,
-    timeframe: def.timeframe,
+    market: def.market ?? {},
     root: def.root,
   };
 }
 
+/** New strategies default to a common pro setup: any underlying, weekly ATM, 15-minute candles. */
 function blankForm(catalog: BuilderCatalog): FormState {
   return {
     name: '',
     description: '',
     category: 'Custom',
     notes: '',
-    scope: 'options',
-    underlying: 'NIFTY',
-    expiryType: 'current-weekly',
-    strikeSelection: 'ATM',
-    timeframe: '15m',
+    market: { expiryType: 'current-weekly', strikeSelection: 'ATM', timeframe: '15m' },
     root: { ...newGroup('AND'), children: [newCondition(catalog)] },
   };
 }
 
-const SCOPES: Array<{ value: StrategyScope; label: string }> = [
-  { value: 'options', label: 'Options' },
-  { value: 'index-futures', label: 'Index Futures' },
-  { value: 'stock-futures', label: 'Stock Futures' },
-  { value: 'spot', label: 'Spot (soon)' },
-];
+const ANY = '';
+
+/** The "Applies to" section: fix each market field, or leave it open for runs to choose. */
+function AppliesTo({ market, onChange }: { market: StrategyMarket; onChange: (m: StrategyMarket) => void }) {
+  const metaQ = useQuery({ queryKey: ['meta'], queryFn: api.meta });
+  const groupsQ = useQuery({ queryKey: ['groups'], queryFn: api.listGroups });
+  const chosen = fixedUnderlyings(market);
+  const set = (patch: Partial<StrategyMarket>) => {
+    const next = { ...market, ...patch };
+    // Drop open (undefined / empty) fields so the stored profile stays minimal.
+    for (const k of Object.keys(next) as Array<keyof StrategyMarket>) {
+      const v = next[k];
+      if (v === undefined || (Array.isArray(v) && v.length === 0)) delete next[k];
+    }
+    onChange(next);
+  };
+  const toggle = (sym: string) => set({ underlyings: chosen.includes(sym) ? chosen.filter((x) => x !== sym) : [...chosen, sym] });
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300">
+          Applies to <InfoTip content={HELP.market.appliesTo} />
+        </h2>
+        <MarketBadge market={market} compact />
+      </div>
+
+      <FieldLabel help={HELP.market.underlyings}>Underlyings</FieldLabel>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Help content={{ title: 'All underlyings', body: 'Universal across underlyings — choose one (or a group) each time you run it.' }}>
+          <button
+            type="button"
+            aria-pressed={chosen.length === 0}
+            onClick={() => set({ underlyings: [] })}
+            className={clsx(
+              'rounded-md px-2.5 py-1 text-xs border font-medium',
+              chosen.length === 0 ? 'bg-accent text-white border-accent' : 'bg-ink-800 border-ink-700 text-slate-400',
+            )}
+          >
+            All
+          </button>
+        </Help>
+        {UNDERLYINGS.map((u) => (
+          <Help
+            key={u.symbol}
+            content={{
+              title: `${u.symbol} — ${u.name}`,
+              body: chosen.includes(u.symbol) ? 'Included. Click to remove.' : 'Click to fix the strategy to this underlying (pick several for a basket).',
+              note: `${u.kind === 'index' ? 'Index' : 'Stock'} · ${u.derivativeExchange} · strikes every ${u.strikeInterval}`,
+            }}
+          >
+            <button
+              type="button"
+              aria-pressed={chosen.includes(u.symbol)}
+              onClick={() => toggle(u.symbol)}
+              className={clsx(
+                'rounded-md px-2.5 py-1 text-xs border',
+                chosen.includes(u.symbol) ? 'bg-accent/20 border-accent/40 text-accent-soft font-semibold' : 'bg-ink-800 border-ink-700 text-slate-400',
+              )}
+            >
+              {u.symbol}
+            </button>
+          </Help>
+        ))}
+        {(groupsQ.data?.length ?? 0) > 0 && (
+          <Help content={{ title: 'Use a group', body: 'Fill the underlyings from a saved group (e.g. Indices). You can still adjust them after.' }}>
+            <select
+              className="input py-1 text-xs"
+              value=""
+              aria-label="Use a group"
+              onChange={(e) => {
+                const g = groupsQ.data?.find((x) => x.id === e.target.value);
+                if (g) set({ underlyings: g.members });
+              }}
+            >
+              <option value="">Use a group…</option>
+              {groupsQ.data?.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name} ({g.members.length})
+                </option>
+              ))}
+            </select>
+          </Help>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
+        <div>
+          <FieldLabel help={HELP.field.expiry}>Expiry</FieldLabel>
+          <select className="input w-full" value={market.expiryType ?? ANY} onChange={(e) => set({ expiryType: (e.target.value || undefined) as ExpiryType | undefined })}>
+            <option value={ANY}>Any — choose when running</option>
+            {metaQ.data?.expiryTypes.map((x) => (
+              <option key={x.type} value={x.type}>
+                {x.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <FieldLabel help={{ ...HELP.field.strike, note: 'A fixed strike price (CUSTOM) is chosen per run, since it depends on the underlying.' }}>Strike</FieldLabel>
+          <select
+            className="input w-full"
+            value={market.strikeSelection ?? ANY}
+            onChange={(e) => set({ strikeSelection: (e.target.value || undefined) as StrategyMarket['strikeSelection'] })}
+          >
+            <option value={ANY}>Any — choose when running</option>
+            {metaQ.data?.strikeSelections
+              .filter((x) => x !== 'CUSTOM')
+              .map((x) => (
+                <option key={x} value={x}>
+                  {x}
+                </option>
+              ))}
+          </select>
+        </div>
+        <div>
+          <FieldLabel help={HELP.field.timeframe}>Timeframe</FieldLabel>
+          <select className="input w-full" value={market.timeframe ?? ANY} onChange={(e) => set({ timeframe: (e.target.value || undefined) as Timeframe | undefined })}>
+            <option value={ANY}>Any — choose when running</option>
+            {metaQ.data?.timeframes.map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div
+        className={clsx(
+          'mt-4 rounded-lg border px-3 py-2 text-xs leading-relaxed',
+          isSpecific(market) ? 'border-accent/30 bg-accent/5 text-slate-300' : 'border-ink-700 bg-ink-850 text-slate-400',
+        )}
+      >
+        {isSpecific(market) ? (
+          <>
+            <span className="font-semibold text-accent-soft">Specific.</span> Runs exactly on <span className="text-slate-200">{describeFixed(market)}</span>.
+            Backtests only ask for a date range{chosen.length > 1 ? '; creating monitors adds one per underlying' : '; creating a monitor is one click'}.
+          </>
+        ) : (
+          <>
+            <span className="font-semibold text-slate-200">Universal.</span> {describeFixed(market) ? <>Fixed: <span className="text-slate-200">{describeFixed(market)}</span>. </> : null}
+            Backtests and monitors will ask for the <span className="text-slate-200">{describeOpen(market)}</span>.
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
 
 export interface StrategyBuilderProps {
   /** Edit an existing strategy; omit to create a new one. */
@@ -74,8 +209,6 @@ export function StrategyBuilder({ id, fromTemplate, onSaved, onCancel }: Strateg
   const qc = useQueryClient();
   const catalogQ = useQuery({ queryKey: ['builder-catalog'], queryFn: api.builderCatalog });
   const templateQ = useQuery({ queryKey: ['builder-template'], queryFn: api.builderTemplate, enabled: Boolean(fromTemplate && !id) });
-  const underlyingsQ = useQuery({ queryKey: ['underlyings'], queryFn: api.underlyings });
-  const metaQ = useQuery({ queryKey: ['meta'], queryFn: api.meta });
   const existingQ = useQuery({ queryKey: ['strategy', id], queryFn: () => api.getStrategy(id!), enabled: Boolean(id) });
 
   const [form, setForm] = useState<FormState | null>(null);
@@ -101,11 +234,7 @@ export function StrategyBuilder({ id, fromTemplate, onSaved, onCancel }: Strateg
         description: form.description || undefined,
         category: form.category || undefined,
         notes: form.notes || undefined,
-        scope: form.scope,
-        underlying: form.underlying,
-        expiryType: form.expiryType,
-        strikeSelection: form.strikeSelection,
-        timeframe: form.timeframe,
+        market: form.market,
         root: form.root,
         status,
       };
@@ -178,69 +307,13 @@ export function StrategyBuilder({ id, fromTemplate, onSaved, onCancel }: Strateg
                 <input className="input w-full" value={form.category} onChange={(e) => set({ category: e.target.value })} />
               </div>
               <div>
-                <FieldLabel help={HELP.builder.scope}>Scope</FieldLabel>
-                <select className="input w-full" value={form.scope} onChange={(e) => set({ scope: e.target.value as StrategyScope })}>
-                  {SCOPES.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="md:col-span-2">
                 <FieldLabel help={HELP.builder.description}>Description</FieldLabel>
                 <input className="input w-full" value={form.description} onChange={(e) => set({ description: e.target.value })} />
               </div>
             </div>
           </Card>
 
-          <Card>
-            <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300 mb-3">
-              Scope & Context <InfoTip content={HELP.builder.context} />
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div>
-                <FieldLabel help={HELP.field.underlying}>Underlying</FieldLabel>
-                <select className="input w-full" value={form.underlying} onChange={(e) => set({ underlying: e.target.value })}>
-                  {underlyingsQ.data?.map((u) => (
-                    <option key={u.symbol} value={u.symbol}>
-                      {u.symbol}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <FieldLabel help={HELP.field.expiry}>Expiry</FieldLabel>
-                <select className="input w-full" value={form.expiryType} onChange={(e) => set({ expiryType: e.target.value as ExpiryType })}>
-                  {metaQ.data?.expiryTypes.map((x) => (
-                    <option key={x.type} value={x.type}>
-                      {x.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <FieldLabel help={HELP.field.strike}>Strike</FieldLabel>
-                <select className="input w-full" value={form.strikeSelection} onChange={(e) => set({ strikeSelection: e.target.value as StrikeSelection })}>
-                  {metaQ.data?.strikeSelections.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <FieldLabel help={HELP.field.timeframe}>Timeframe</FieldLabel>
-                <select className="input w-full" value={form.timeframe} onChange={(e) => set({ timeframe: e.target.value as Timeframe })}>
-                  {metaQ.data?.timeframes.map((t) => (
-                    <option key={t.key} value={t.key}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </Card>
+          <AppliesTo market={form.market} onChange={(market) => set({ market })} />
 
           <Card>
             <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300 mb-3">
@@ -260,10 +333,8 @@ export function StrategyBuilder({ id, fromTemplate, onSaved, onCancel }: Strateg
             ) : (
               <pre className="whitespace-pre-wrap text-sm text-slate-200 font-mono leading-relaxed">{groupText(form.root)}</pre>
             )}
-            <div className="mt-4 pt-3 border-t border-ink-700/60 text-xs text-slate-500 space-y-1">
-              <div>Underlying: <span className="text-slate-300">{form.underlying}</span></div>
-              <div>Strike: <span className="text-slate-300">{form.strikeSelection}</span> · {form.expiryType}</div>
-              <div>Timeframe: <span className="text-slate-300">{form.timeframe}</span></div>
+            <div className="mt-4 pt-3 border-t border-ink-700/60">
+              <MarketBadge market={form.market} />
             </div>
           </Card>
         </div>

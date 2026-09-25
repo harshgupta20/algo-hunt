@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { FileJson, FileSpreadsheet, FileText, Pencil } from 'lucide-react';
-import type { AnalyzerParams, BacktestAlert, StrategyDef } from '@ash/shared';
+import type { BacktestAlert, StrategyDef } from '@ash/shared';
 import { api } from '../lib/api';
 import { exportCsv, exportJson, exportXlsx } from '../lib/export';
 import { fmtRelative } from '../lib/format';
@@ -12,7 +12,8 @@ import { Card, EmptyState, Help, Spinner, StrategyStatusBadge } from '../compone
 import { InfoTip } from '../components/Tooltip';
 import { HELP } from '../lib/help';
 import { SignalLegend } from '../components/signal';
-import { FilterBar } from './analyzer/FilterBar';
+import { MarketBadge } from '../components/market';
+import { FilterBar, type BacktestRequest } from './analyzer/FilterBar';
 import { SummaryCards } from './analyzer/SummaryCards';
 import { AlertTable } from './analyzer/AlertTable';
 import { AlertDetailDrawer } from './analyzer/AlertDetailDrawer';
@@ -32,6 +33,7 @@ function StrategyInsight({ def, onEdit }: { def: StrategyDef; onEdit: (id: strin
           <div className="flex items-center gap-2">
             <h3 className="text-fg font-semibold">{def.name}</h3>
             <StrategyStatusBadge status={def.status} />
+            <MarketBadge market={def.market} />
           </div>
           <pre className="mt-2 whitespace-pre-wrap text-xs text-slate-300 font-mono leading-relaxed">{groupText(def.root)}</pre>
         </div>
@@ -71,16 +73,10 @@ export interface StrategyAnalyzerProps {
 }
 
 export function StrategyAnalyzer({ strategyId, onEdit }: StrategyAnalyzerProps) {
-  const [params, setParams] = useState<AnalyzerParams | null>(null);
+  const [params, setParams] = useState<BacktestRequest | null>(null);
   const [active, setActive] = useState<BacktestAlert | null>(null);
   const [drawerAlert, setDrawerAlert] = useState<BacktestAlert | null>(null);
 
-  const isCustom = Boolean(strategyId && strategyId !== 'rsi-sync');
-  const opened = useQuery({
-    queryKey: ['strategy', strategyId],
-    queryFn: () => api.getStrategy(strategyId!),
-    enabled: isCustom,
-  });
   // The strategy of the last run, for the insight card.
   const ranCustomId = params && params.strategy !== 'rsi-sync' ? params.strategy : undefined;
   const ranDef = useQuery({
@@ -90,22 +86,23 @@ export function StrategyAnalyzer({ strategyId, onEdit }: StrategyAnalyzerProps) 
   });
 
   const runMut = useMutation({
-    mutationFn: (p: AnalyzerParams) => api.analyzerRun(p),
+    mutationFn: (p: BacktestRequest) => api.analyzerRun(p),
     onSuccess: (res) => {
       setActive(res.alerts[0] ?? null);
       setDrawerAlert(null);
     },
   });
 
+  // Chart the selected signal's own underlying (group / basket runs span several).
   const chart = useQuery({
-    queryKey: ['analyzer-chart', params, active?.bucket],
-    queryFn: () => api.analyzerChart(params!, active!.bucket, 100),
+    queryKey: ['analyzer-chart', params, active?.id],
+    queryFn: () => api.analyzerChart({ ...params!, underlying: active!.underlying, underlyings: undefined, groupName: undefined }, active!.bucket, 100),
     enabled: Boolean(params && active),
   });
 
   const result = runMut.data;
 
-  const analyze = (p: AnalyzerParams) => {
+  const analyze = (p: BacktestRequest) => {
     setParams(p);
     runMut.mutate(p);
   };
@@ -115,25 +112,9 @@ export function StrategyAnalyzer({ strategyId, onEdit }: StrategyAnalyzerProps) 
     setDrawerAlert(a);
   };
 
-  // A strategy opened from the library: use its own scope, a short range, and run immediately.
-  const initial: Partial<AnalyzerParams> | undefined = strategyId
-    ? {
-        strategy: strategyId,
-        preset: 'last-week',
-        ...(opened.data && {
-          underlying: opened.data.underlying,
-          expiryType: opened.data.expiryType,
-          strikeSelection: opened.data.strikeSelection,
-          timeframe: opened.data.timeframe,
-        }),
-      }
-    : undefined;
-
-  if (isCustom && opened.isLoading) return <Spinner label="Loading strategy…" />;
-
   return (
     <div>
-      <FilterBar onAnalyze={analyze} loading={runMut.isPending} initial={initial} autoRun={Boolean(strategyId)} />
+      <FilterBar onAnalyze={analyze} loading={runMut.isPending} initialStrategy={strategyId} autoRun={Boolean(strategyId)} />
 
       {ranDef.data && <StrategyInsight def={ranDef.data} onEdit={onEdit} />}
 

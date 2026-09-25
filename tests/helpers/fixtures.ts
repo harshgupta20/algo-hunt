@@ -108,6 +108,13 @@ export function fixtureStore(strategies: StrategyDef[] = []): DataStore & { aler
       async listActive() {
         return [...configs.values()].filter((c) => c.active);
       },
+      async update(id: string, patch: Partial<AlertConfigurationInput>) {
+        const c = configs.get(id);
+        if (!c) return null;
+        const u = { ...c, ...patch, params: { ...c.params, ...patch.params } } as AlertConfiguration;
+        configs.set(id, u);
+        return u;
+      },
       async setActive(id: string, active: boolean, expiryDate?: string) {
         const c = configs.get(id);
         if (!c) return null;

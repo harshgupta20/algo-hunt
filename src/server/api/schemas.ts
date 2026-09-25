@@ -63,14 +63,15 @@ export const dateRangePresetSchema = z.enum([
   'custom',
 ]);
 
+/** Fields the strategy fixes may be omitted — the server fills them from its market profile. */
 export const analyzerParamsSchema = z.object({
-  underlying: z.string().min(1),
+  underlying: z.string().min(1).optional(),
   underlyings: z.array(z.string().min(1)).optional(),
   groupName: z.string().optional(),
-  expiryType: expiryTypeSchema,
-  strikeSelection: strikeSelectionSchema,
+  expiryType: expiryTypeSchema.optional(),
+  strikeSelection: strikeSelectionSchema.optional(),
   customStrike: z.number().optional(),
-  timeframe: timeframeSchema,
+  timeframe: timeframeSchema.optional(),
   strategy: z.string().min(1),
   preset: dateRangePresetSchema,
   from: z.string().optional(),
@@ -137,16 +138,20 @@ const groupSchema: z.ZodType<GroupShape> = z.lazy(() =>
   }),
 );
 
+/** Market profile: each field fixed (value) or open (omitted). CUSTOM strikes are per-run only. */
+export const strategyMarketSchema = z.object({
+  underlyings: z.array(z.string().min(1)).max(50).optional(),
+  expiryType: expiryTypeSchema.optional(),
+  strikeSelection: z.enum(['ATM', 'ATM+1', 'ATM-1', 'ATM+2', 'ATM-2']).optional(),
+  timeframe: timeframeSchema.optional(),
+});
+
 export const strategyDefInputSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   category: z.string().optional(),
   notes: z.string().optional(),
-  scope: z.enum(['index-futures', 'stock-futures', 'options', 'spot']),
-  underlying: z.string().min(1),
-  expiryType: expiryTypeSchema,
-  strikeSelection: strikeSelectionSchema,
-  timeframe: timeframeSchema,
+  market: strategyMarketSchema,
   root: groupSchema,
   status: z.enum(['draft', 'active', 'disabled']).optional(),
 });

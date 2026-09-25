@@ -5,6 +5,7 @@ import { parse, strategyDefInputSchema } from '../schemas';
 import { builderCatalog } from '../../services/strategy/builderCatalog';
 import { rsiSyncStrategyDef } from '../../services/strategy/builtinStrategies';
 import { computeStrategyStats } from '../../db/store';
+import { validateMarket } from '../../services/strategy/runContext';
 
 export function strategyBuilderController(ctx: AppContext) {
   const catalog: Handler = () => builderCatalog();
@@ -22,11 +23,14 @@ export function strategyBuilderController(ctx: AppContext) {
 
   const create: Handler = async (req) => {
     const input = parse(strategyDefInputSchema, req.body) as StrategyDefInput;
+    validateMarket(input.market);
     return created(await ctx.store.strategies.create(input));
   };
 
+  /** Monitors using this strategy re-sync to a changed market profile on their next evaluation. */
   const update: Handler = async (req) => {
     const patch = parse(strategyDefInputSchema.partial(), req.body) as Partial<StrategyDefInput>;
+    validateMarket(patch.market);
     const s = await ctx.store.strategies.update(req.params.id!, patch);
     if (!s) throw new HttpError(404, 'Strategy not found');
     return s;

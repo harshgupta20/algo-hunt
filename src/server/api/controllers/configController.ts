@@ -3,6 +3,7 @@ import type { AppContext } from '../context';
 import { HttpError, created, type Handler } from '../http';
 import { configGroupInputSchema, configInputSchema, configUpdateSchema, parse } from '../schemas';
 import { KiteNotConnectedError } from '../../services/kite/kiteClient';
+import { resolveMonitorContext } from '../../services/strategy/runContext';
 
 export function configController(ctx: AppContext) {
   /** Activation resolves contracts + the ATM strike from live Kite data. */
@@ -18,10 +19,22 @@ export function configController(ctx: AppContext) {
     return cfg;
   };
 
-  const create: Handler = async (req) => created(await ctx.store.configs.create(parse(configInputSchema, req.body)));
+  // The strategy's fixed market fields win and its underlying list is enforced.
+  const create: Handler = async (req) =>
+    created(await ctx.store.configs.create(await resolveMonitorContext(ctx.store, parse(configInputSchema, req.body))));
 
   const update: Handler = async (req) => {
-    const cfg = await ctx.store.configs.update(req.params.id!, parse(configUpdateSchema, req.body));
+    const current = await ctx.store.configs.getById(req.params.id!);
+    if (!current) throw new HttpError(404, 'Configuration not found');
+    const patch = parse(configUpdateSchema, req.body);
+    const merged = await resolveMonitorContext(ctx.store, { ...current, ...patch });
+    const cfg = await ctx.store.configs.update(current.id, {
+      ...patch,
+      underlying: merged.underlying,
+      expiryType: merged.expiryType,
+      strikeSelection: merged.strikeSelection,
+      timeframe: merged.timeframe,
+    });
     if (!cfg) throw new HttpError(404, 'Configuration not found');
     // A running monitor keeps the contracts it locked at activation; re-activate to apply changes.
     if (cfg.active) {
@@ -64,17 +77,26 @@ export function configController(ctx: AppContext) {
 
   const createGroup: Handler = async (req) => {
     const input = parse(configGroupInputSchema, req.body);
-    const groupId = randomUUID();
-    const configs = [];
+    // Validate every member against the strategy before creating anything.
+    const members = [];
     for (const underlying of input.members) {
-      configs.push(
-        await ctx.store.configs.create({
+      members.push(
+        await resolveMonitorContext(ctx.store, {
           underlying,
           expiryType: input.expiryType,
           strikeSelection: input.strikeSelection,
-          customStrike: input.customStrike,
           timeframe: input.timeframe,
           strategy: input.strategy,
+        }),
+      );
+    }
+    const groupId = randomUUID();
+    const configs = [];
+    for (const m of members) {
+      configs.push(
+        await ctx.store.configs.create({
+          ...m,
+          customStrike: input.customStrike,
           params: input.params,
           groupId,
           groupName: input.groupName,

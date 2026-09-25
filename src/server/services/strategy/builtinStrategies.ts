@@ -28,11 +28,8 @@ export function rsiSyncStrategyDef(params: RsiSyncParams = DEFAULT_RSI_SYNC_PARA
     status: 'active',
     version: 1,
     builtin: true,
-    scope: 'options',
-    underlying: 'NIFTY',
-    expiryType: 'current-weekly',
-    strikeSelection: 'ATM',
-    timeframe: '15m',
+    // Universal, like the built-in: any underlying, expiry, strike and timeframe.
+    market: {},
     root: {
       type: 'group',
       id: 'root',

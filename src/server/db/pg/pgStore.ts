@@ -36,7 +36,7 @@ import type {
   PreferencesRepository,
   StrategyRepository,
 } from '../store';
-import { BUILTIN_INDICES_GROUP_ID, buildConfiguration, buildGroup, buildStrategy, indicesGroup, summarize } from '../store';
+import { BUILTIN_INDICES_GROUP_ID, buildConfiguration, buildGroup, buildStrategy, indicesGroup, normalizeStrategyDef, summarize } from '../store';
 import type { KiteSessionRecord, MonitorState, NewAlert, NewNotificationLog, NotificationLog } from '../types';
 import { DEFAULT_USER_ID } from '../constants';
 
@@ -351,12 +351,12 @@ class PgStrategyRepository implements StrategyRepository {
 
   async get(id: string): Promise<StrategyDef | null> {
     const res = await this.pool.query('SELECT definition FROM custom_strategies WHERE id = $1', [id]);
-    return res.rows[0] ? (res.rows[0].definition as StrategyDef) : null;
+    return res.rows[0] ? normalizeStrategyDef(res.rows[0].definition) : null;
   }
 
   async list(): Promise<StrategyDef[]> {
     const res = await this.pool.query('SELECT definition FROM custom_strategies ORDER BY updated_at DESC');
-    return res.rows.map((r: any) => r.definition as StrategyDef);
+    return res.rows.map((r: any) => normalizeStrategyDef(r.definition));
   }
 
   async delete(id: string): Promise<boolean> {
@@ -385,7 +385,7 @@ class PgStrategyRepository implements StrategyRepository {
       'SELECT version, definition, created_at FROM strategy_versions WHERE strategy_id = $1 ORDER BY version DESC',
       [id],
     );
-    return res.rows.map((r: any) => ({ version: r.version, createdAt: new Date(r.created_at).toISOString(), def: r.definition as StrategyDef }));
+    return res.rows.map((r: any) => ({ version: r.version, createdAt: new Date(r.created_at).toISOString(), def: normalizeStrategyDef(r.definition) }));
   }
 }
 

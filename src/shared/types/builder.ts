@@ -80,7 +80,22 @@ export interface Group {
 export type StrategyNode = Group | Condition;
 
 export type StrategyStatus = 'draft' | 'active' | 'disabled';
-export type StrategyScope = 'index-futures' | 'stock-futures' | 'options' | 'spot';
+
+/**
+ * Where a strategy runs — its market profile. Each field is either FIXED by the
+ * strategy (a value) or OPEN (omitted: chosen per backtest / per monitor).
+ *  - All fixed → a "specific" strategy: runs exactly as defined; a backtest only
+ *    asks for the date range.
+ *  - Anything open → a "universal" strategy: run forms ask only for open fields.
+ */
+export interface StrategyMarket {
+  /** Fixed underlyings: one (single-instrument) or several (a basket). Omitted/empty = any underlying. */
+  underlyings?: string[];
+  expiryType?: ExpiryType;
+  /** Relative to ATM. CUSTOM (a fixed strike price) is a per-run choice, never fixed here. */
+  strikeSelection?: Exclude<StrikeSelection, 'CUSTOM'>;
+  timeframe?: Timeframe;
+}
 
 export interface StrategyDef {
   id: string;
@@ -92,11 +107,7 @@ export interface StrategyDef {
   version: number;
   /** True for the seeded read-only reference strategy. */
   builtin?: boolean;
-  scope: StrategyScope;
-  underlying: string;
-  expiryType: ExpiryType;
-  strikeSelection: StrikeSelection;
-  timeframe: Timeframe;
+  market: StrategyMarket;
   root: Group;
   createdAt: string;
   updatedAt: string;
@@ -107,11 +118,7 @@ export interface StrategyDefInput {
   description?: string;
   category?: string;
   notes?: string;
-  scope: StrategyScope;
-  underlying: string;
-  expiryType: ExpiryType;
-  strikeSelection: StrikeSelection;
-  timeframe: Timeframe;
+  market: StrategyMarket;
   root: Group;
   status?: StrategyStatus;
 }

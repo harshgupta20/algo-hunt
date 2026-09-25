@@ -59,11 +59,7 @@ describe('CustomStrategyEvaluator ≡ built-in rsi-sync', () => {
       name: 'x',
       status: 'active',
       version: 1,
-      scope: 'options',
-      underlying: 'NIFTY',
-      expiryType: 'current-weekly',
-      strikeSelection: 'ATM',
-      timeframe: '15m',
+      market: {},
       root: {
         type: 'group',
         id: 'r',
