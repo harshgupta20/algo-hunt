@@ -73,6 +73,19 @@ export const HELP = {
       note: 'Nothing is evaluated until the next session opens.',
     },
     kiteOffline: { title: 'Kite offline', body: 'No valid Zerodha Kite session, so no market data. Click Connect Kite to log in.' },
+    nseMarket: { title: 'NSE/BSE', body: 'Index F&O (NIFTY, BANKNIFTY, SENSEX…). Session 09:15–15:30 IST, weekdays.' },
+    mcxMarket: {
+      title: 'MCX',
+      body: 'Commodity F&O (Gold, Silver, Crude Oil…). Session 09:00–23:30 IST (23:55 while the US is on standard time), weekdays.',
+    },
+    marketState: {
+      live: 'Open, and your monitors on this market are evaluated on every closed candle.',
+      stale: 'Open with active monitors, but no evaluation ran in the last few minutes. Check the per-minute scheduler calling /api/cron/tick — keeping this dashboard open also triggers evaluations.',
+      paused: 'Open with active monitors, but Kite is offline so they can’t be evaluated. Connect Kite to resume.',
+      unused: 'Open, but no active monitor runs on this market.',
+      closed: 'Outside the session. Monitors on this market wait for the next session.',
+    },
+    lastRun: { title: 'Last evaluator run', body: 'When monitors were last evaluated (across both markets).' },
     connecting: { title: 'Connecting', body: 'Loading the evaluator status…' },
     connectKite: {
       title: 'Connect Kite',
