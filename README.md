@@ -6,6 +6,14 @@ moment their RSIs align on a closed candle. It is an **alerting** platform — i
 Built with **Next.js 16** (App Router), **Neon Postgres** and **Zerodha Kite Connect**, and designed to deploy on
 **Vercel** as-is. Everything runs on real market data — there is no simulated feed.
 
+Two markets are supported: **NSE/BSE index F&O** and **MCX commodities** (13 products, own tab and session). Beyond
+the built-in strategy, a no-code builder supports ADX/DMI, Bollinger %B/Bandwidth, multi-timeframe conditions
+(incl. Daily/Weekly), Heikin Ashi candles and candlestick patterns.
+
+> 📚 **Full, up-to-date documentation lives in [docs/](docs/README.md)** — architecture, domain logic, setup, API,
+> database, testing, deployment, troubleshooting and the current [status / open issues](docs/status.md). Where this
+> README and `docs/` differ, `docs/` is current.
+
 The core distinction the whole system is built around: an **RSI crossing** (RSI just moved across a level — even
 `59.99 → 60.01`) is *not* the same as an **RSI already above/below** a level. Both drive alerts, via two scenarios,
 but they are detected differently.
@@ -32,7 +40,7 @@ The Future condition (cross vs already) is mutually exclusive, so at most one sc
 ```
 src/
   app/                 Next.js App Router — pages, API route handlers, layout
-    (dashboard)/       Dashboard (live monitors + alerts + performance), Alerts (feed + history), Strategies (Library · Builder · Backtest), Configuration, Settings
+    (dashboard)/       Dashboard (live monitors + alerts + performance), Alerts (feed + history), Strategies (Library · Builder · Backtest), Configuration, MCX (Overview · Monitors · Backtest), Settings
     api/[...path]/     REST API (dispatches to src/server/api/routes.ts)
     api/cron/tick/     Scheduled live evaluator (CRON_SECRET-protected)
     api/auth/*         Password login / logout
@@ -45,7 +53,7 @@ src/
     services/
       kite/            auth (encrypted session in DB), historical candles, instrument master sync
       live/            MonitorService (candle-close evaluator) + liveTick (lease-guarded run)
-      indicator/       RSI (Wilder), EMA, SMA, VWAP, MACD, Bollinger, Supertrend, Volume, Price, OI
+      indicator/       RSI (Wilder), EMA, SMA, VWAP, MACD, Bollinger (+%B, Bandwidth), Supertrend, Volume, Price, OI, ADX, DMI, candlestick patterns, Heikin Ashi
       strategy/        crossing · rsiSyncStrategy · StrategyEngine · generic custom-strategy evaluator
       analyzer/        backtest runner, stats, explanations
       history/         alert persistence
@@ -74,7 +82,8 @@ no-op if the cron already ran) — so alerts keep flowing even before you set up
 
 Details that matter for correctness:
 
-- Candles follow Kite's 09:15-aligned sessions; the last candle of the day is truncated at 15:30 IST.
+- Candles follow Kite's session-aligned candles (09:15 on NSE/BSE, 09:00 on MCX); the last candle of the day is
+  truncated at the close (15:30 IST on NSE/BSE; 23:30 or 23:55 IST on MCX, following US daylight saving).
 - A monitor locks its strike/contracts at activation (ATM from the live future LTP) and only alerts on candles that
   close **after** activation. Expired contracts are rolled automatically on the next run.
 - Candles that closed more than 30 minutes ago (e.g. the scheduler was down) are not alerted on — a stale alert is
@@ -123,16 +132,16 @@ they're idempotent). To run them by hand: `DATABASE_URL=… npm run db:migrate`.
 
 ### 4. Scheduler (every minute)
 
-The evaluator must be called every minute during market hours (09:15–15:40 IST, Mon–Fri — calls outside that
-window return immediately).
+The evaluator must be called every minute while either market is open: **09:00–00:05 IST, Mon–Fri** (NSE/BSE
+09:15–15:40 and MCX 09:00–23:40/00:05, including grace). Calls outside every market window return immediately.
 
 - **Vercel Pro:** add to `vercel.json` (Vercel sends the `CRON_SECRET` header automatically):
 
   ```json
-  "crons": [{ "path": "/api/cron/tick", "schedule": "* 3-10 * * 1-5" }]
+  "crons": [{ "path": "/api/cron/tick", "schedule": "* 3-18 * * 1-5" }]
   ```
 
-  (`3-10` UTC covers 08:30–16:29 IST.) Hobby plans only allow daily crons, so don't add this there — a
+  (`3-18` UTC covers 08:30–00:29 IST, so MCX evenings are included.) Hobby plans only allow daily crons, so don't add this there — a
   more frequent schedule fails the deployment.
 
 - **Any plan (free):** create a job at [cron-job.org](https://cron-job.org) (or any scheduler) that runs every
@@ -219,13 +228,14 @@ All under `/api`, authenticated by the session cookie (except `/api/health` and 
 
 ```
 GET    /health
-GET    /instruments/underlyings | /:underlying/expiries | /:underlying/strikes?expiry= | /instruments/meta
+GET    /instruments/underlyings?segment= | /:underlying/expiries | /:underlying/strikes?expiry= | /instruments/meta?segment=
+GET    /mcx/products
 GET    /configs · POST /configs · GET|PUT|DELETE /configs/:id
 POST   /configs/:id/activate | /deactivate · GET /configs/snapshots
 POST   /config-groups · POST /config-groups/:groupId/activate | /deactivate · DELETE /config-groups/:groupId
 GET    /groups · POST /groups · GET|PUT|DELETE /groups/:id
-GET    /alerts (from,to,underlying,expiry,timeframe,scenario,strategyId,groupId,configId,limit,offset) · GET /alerts/:id
-GET    /analytics/summary
+GET    /alerts (from,to,underlying,expiry,timeframe,scenario,strategyId,strategy,groupId,configId,segment,limit,offset) · GET /alerts/:id
+GET    /analytics/summary?segment=
 GET    /strategies | /strategies/:key
 GET    /builder/catalog | /builder/template
 GET|POST /custom-strategies · GET|PUT|DELETE /custom-strategies/:id
