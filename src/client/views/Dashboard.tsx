@@ -5,42 +5,65 @@ import { useQuery } from '@tanstack/react-query';
 import type { ConfigRuntimeSnapshot, Leg } from '@ash/shared';
 import { api } from '../lib/api';
 import { formatDistanceToNowStrict } from 'date-fns';
+import clsx from 'clsx';
+import { LEG_ORDER } from '../lib/signals';
+import { SignalLegend } from '../components/signal';
 import { Card, EmptyState, PageHeader, Spinner, StatCard } from '../components/ui';
 import { RsiGauge } from '../components/RsiGauge';
 import { AlertItem } from '../components/AlertItem';
 
-const LEG_META: Record<Leg, { label: string; side: 'above' | 'below' }> = {
-  future: { label: 'Future', side: 'above' },
-  call: { label: 'Call (ATM)', side: 'above' },
-  put: { label: 'Put (ATM)', side: 'below' },
-};
+const TRIGGER_SIDE: Record<Leg, 'above' | 'below'> = { future: 'above', call: 'above', put: 'below' };
 
 function ActiveConfigCard({ snap }: { snap: ConfigRuntimeSnapshot }) {
   const legs = snap.legs;
+  const status = snap.lastError ? 'error' : snap.evaluatedAt ? 'live' : 'waiting';
+  const metCount = LEG_ORDER.filter((leg) => {
+    const r = legs[leg].rsi;
+    return r != null && (TRIGGER_SIDE[leg] === 'above' ? r >= legs[leg].level : r <= legs[leg].level);
+  }).length;
 
   return (
     <Card className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-fg font-semibold">{snap.underlying}</div>
-          <div className="text-xs text-slate-400">
-            {snap.strike || '—'} · {snap.timeframe} · exp {snap.expiry || '—'}
+          <div className="flex items-center gap-2">
+            <span
+              className={clsx(
+                'w-2 h-2 rounded-full',
+                status === 'live' ? 'bg-bull' : status === 'error' ? 'bg-bear' : 'bg-slate-500 animate-pulse',
+              )}
+              title={status === 'live' ? 'Monitoring' : status === 'error' ? 'Last evaluation failed' : 'Awaiting first evaluation'}
+            />
+            <span className="text-fg font-semibold">{snap.underlying}</span>
+            <span className="text-xs text-slate-400">
+              {snap.strike || '—'} · {snap.timeframe} · exp {snap.expiry || '—'}
+            </span>
+          </div>
+          <div className="mt-1 text-[11px] text-slate-500">
+            {snap.evaluatedAt ? `updated ${formatDistanceToNowStrict(snap.evaluatedAt)} ago` : 'awaiting first evaluation'}
+            {legs.future.ltp != null && <> · FUT {legs.future.ltp.toFixed(2)}</>}
           </div>
         </div>
-        <div className="text-[10px] text-right text-slate-500">
-          {snap.evaluatedAt ? `updated ${formatDistanceToNowStrict(snap.evaluatedAt)} ago` : 'awaiting first evaluation'}
-          {legs.future.ltp != null && <div className="text-slate-400">FUT {legs.future.ltp.toFixed(2)}</div>}
-        </div>
+        <span
+          className={clsx(
+            'shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums',
+            metCount === 3 ? 'bg-bull/15 text-bull' : 'bg-ink-800 text-slate-400',
+          )}
+          title="Legs currently meeting their condition"
+        >
+          {metCount}/3 met
+        </span>
       </div>
       {snap.lastError && <div className="text-xs text-bear -mt-2">{snap.lastError}</div>}
       <div className="space-y-3">
-        {(['future', 'call', 'put'] as Leg[]).map((leg) => (
+        {LEG_ORDER.map((leg) => (
           <RsiGauge
             key={leg}
-            label={LEG_META[leg].label}
+            leg={leg}
+            detail={leg === 'future' ? undefined : `ATM ${snap.strike || '—'}`}
             rsi={legs[leg].rsi}
             level={legs[leg].level}
-            triggerSide={LEG_META[leg].side}
+            triggerSide={TRIGGER_SIDE[leg]}
           />
         ))}
       </div>
@@ -68,7 +91,10 @@ export function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <h2 className="text-sm font-semibold text-slate-300 mb-3">Active Monitors</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <h2 className="text-sm font-semibold text-slate-300">Active Monitors</h2>
+            <SignalLegend />
+          </div>
           {snapshots.isLoading ? (
             <Spinner />
           ) : active.length === 0 ? (

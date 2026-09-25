@@ -23,9 +23,16 @@ export default {
           DEFAULT: themed('accent'),
           soft: themed('accent-soft'),
         },
+        // Direction: green = bullish / up, red = bearish / down. Amber = needs attention.
         bull: themed('bull'),
         bear: themed('bear'),
         warn: themed('warn'),
+        // Leg identity (Future / Call / Put) — deliberately not green/red.
+        leg: {
+          fut: themed('leg-fut'),
+          ce: themed('leg-ce'),
+          pe: themed('leg-pe'),
+        },
       },
       fontFamily: {
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],

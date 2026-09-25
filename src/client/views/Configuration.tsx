@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Play, Power, Trash2, Zap } from 'lucide-react';
 import clsx from 'clsx';
 import type { AlertConfiguration, AlertConfigurationInput, ExpiryType, StrikeSelection, Timeframe } from '@ash/shared';
-import { DEFAULT_RSI_SYNC_PARAMS } from '@ash/shared';
+import { DEFAULT_RSI_SYNC_PARAMS, BUILTIN_STRATEGY_NAME } from '@ash/shared';
 import { api } from '../lib/api';
 import { Badge, Card, EmptyState, PageHeader, Spinner } from '../components/ui';
 import { GroupsManager } from '../components/GroupsManager';
@@ -108,7 +108,7 @@ export function Configuration() {
   const snapOf = (id: string) => snapshots.data?.find((s) => s.configId === id);
   const strikeOf = (id: string) => snapOf(id)?.strike || undefined;
   const stratName = (id: string) =>
-    id === 'rsi-sync' ? 'RSI Multi Confirmation' : customStrategies.data?.find((s) => s.id === id)?.name ?? 'Custom strategy';
+    id === 'rsi-sync' ? BUILTIN_STRATEGY_NAME : customStrategies.data?.find((s) => s.id === id)?.name ?? 'Custom strategy';
 
   return (
     <div>
@@ -205,7 +205,7 @@ export function Configuration() {
             <div>
               <label className="label">Strategy</label>
               <select className="input w-full" value={form.strategy} onChange={(e) => setForm({ ...form, strategy: e.target.value })}>
-                <option value="rsi-sync">RSI Multi Confirmation (built-in)</option>
+                <option value="rsi-sync">{BUILTIN_STRATEGY_NAME} (built-in)</option>
                 {customStrategies.data
                   ?.filter((s) => s.status === 'active')
                   .map((s) => (
@@ -320,7 +320,13 @@ export function Configuration() {
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="text-fg font-semibold">{c.underlying}</span>
-                              {active ? <Badge tone="bull">Active</Badge> : <Badge>Idle</Badge>}
+                              {active && snapOf(c.id)?.lastError ? (
+                                <Badge tone="bear">● Error</Badge>
+                              ) : active ? (
+                                <Badge tone="bull">● Live</Badge>
+                              ) : (
+                                <Badge>○ Idle</Badge>
+                              )}
                             </div>
                             <div className="text-xs text-slate-400 mt-1">
                               {stratName(c.strategy)} · {c.strikeSelection} {strikeOf(c.id) ? `(${strikeOf(c.id)})` : ''} · {c.timeframe} · {c.expiryType}

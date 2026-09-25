@@ -28,12 +28,13 @@ function Bars({ title, data, color }: { title: string; data: CountBucket[]; colo
 }
 
 export function AnalyticsPanel({ stats }: { stats: BacktestStats }) {
+  const chart = useChartPalette();
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <Bars title="Alerts per Day" data={stats.byDay} color="#3b82f6" />
-      <Bars title="Alerts per Week" data={stats.byWeek} color="#60a5fa" />
-      <Bars title="Alerts by Scenario" data={stats.byScenario} color="#22c55e" />
-      <Bars title="Alerts by Timeframe" data={stats.byTimeframe} color="#f59e0b" />
+      <Bars title="Alerts per Day" data={stats.byDay} color={chart.series} />
+      <Bars title="Alerts per Week" data={stats.byWeek} color={chart.seriesSoft} />
+      <Bars title="Alerts by Scenario" data={stats.byScenario} color={chart.bull} />
+      <Bars title="Alerts by Timeframe" data={stats.byTimeframe} color={chart.series} />
     </div>
   );
 }

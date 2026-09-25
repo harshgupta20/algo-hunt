@@ -4,10 +4,11 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
 import type { Alert, AlertHistoryFilters, ScenarioId, Timeframe } from '@ash/shared';
-import { TIMEFRAMES } from '@ash/shared';
+import { BUILTIN_STRATEGY_NAME, TIMEFRAMES } from '@ash/shared';
 import { api } from '../lib/api';
 import { Card, EmptyState, PageHeader, RuleBadge, Spinner } from '../components/ui';
-import { fmtRsi, fmtTime } from '../lib/format';
+import { fmtTime } from '../lib/format';
+import { LegTag, RsiValue, SignalLegend } from '../components/signal';
 
 function toCsv(alerts: Alert[]): string {
   const header = [
@@ -136,6 +137,7 @@ export function AlertHistory() {
         </div>
       </Card>
 
+      <SignalLegend className="mb-2 px-1" />
       <Card className="p-0 overflow-hidden">
         {alerts.isLoading ? (
           <div className="p-4">
@@ -153,10 +155,11 @@ export function AlertHistory() {
                   <th className="px-4 py-3">Strike</th>
                   <th className="px-4 py-3">Expiry</th>
                   <th className="px-4 py-3">TF</th>
-                  <th className="px-4 py-3">Scenario</th>
-                  <th className="px-4 py-3 text-right">Future</th>
-                  <th className="px-4 py-3 text-right">Call</th>
-                  <th className="px-4 py-3 text-right">Put</th>
+                  <th className="px-4 py-3">Strategy</th>
+                  <th className="px-4 py-3">Signal</th>
+                  <th className="px-4 py-3 text-right"><LegTag leg="future" /></th>
+                  <th className="px-4 py-3 text-right"><LegTag leg="call" /></th>
+                  <th className="px-4 py-3 text-right"><LegTag leg="put" /></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-700/50">
@@ -167,12 +170,13 @@ export function AlertHistory() {
                     <td className="px-4 py-3 tabular-nums">{a.strike}</td>
                     <td className="px-4 py-3 text-slate-400">{a.expiry || '—'}</td>
                     <td className="px-4 py-3">{a.timeframe}</td>
+                    <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{a.strategyName ?? BUILTIN_STRATEGY_NAME}</td>
                     <td className="px-4 py-3">
-                      <RuleBadge scenario={a.scenario} variant={a.variant} />
+                      <RuleBadge scenario={a.scenario} variant={a.variant} compact />
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-bull">{fmtRsi(a.snapshot.futureRsi)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-bull">{fmtRsi(a.snapshot.callRsi)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-bear">{fmtRsi(a.snapshot.putRsi)}</td>
+                    <td className="px-4 py-3 text-right font-medium"><RsiValue value={a.snapshot.futureRsi} /></td>
+                    <td className="px-4 py-3 text-right font-medium"><RsiValue value={a.snapshot.callRsi} /></td>
+                    <td className="px-4 py-3 text-right font-medium"><RsiValue value={a.snapshot.putRsi} /></td>
                   </tr>
                 ))}
               </tbody>

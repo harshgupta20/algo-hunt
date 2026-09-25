@@ -18,12 +18,13 @@
  * result is a single strategy alert, never three per-instrument alerts.
  */
 import type { Strategy, StrategyContext, StrategyDefinition, StrategyMatch } from '@ash/shared';
+import { BUILTIN_STRATEGY_NAME } from '@ash/shared';
 import { DEFAULT_RSI_SYNC_PARAMS } from '@ash/shared';
 import { readingAlreadyAbove, readingCrossAbove, readingCrossBelow } from './crossing';
 
 const definition: StrategyDefinition = {
   key: 'rsi-sync',
-  name: 'RSI Synchronized (Future / Call / Put)',
+  name: BUILTIN_STRATEGY_NAME,
   description:
     'Detects synchronized RSI alignment across the Future, ATM Call and ATM Put on the same ' +
     'closed candle. Distinguishes an RSI crossing from an RSI that is already beyond its level.',

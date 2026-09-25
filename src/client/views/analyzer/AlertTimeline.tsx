@@ -26,8 +26,8 @@ export function AlertTimeline({
               <li key={a.id} className="mb-3 ml-4">
                 <span
                   className={clsx(
-                    'absolute -left-[7px] w-3 h-3 rounded-full border-2 border-ink-900',
-                    a.scenario === 2 ? 'bg-warn' : 'bg-accent',
+                    'absolute -left-[7px] w-3 h-3 rounded-full border-2',
+                    a.scenario === 1 ? 'bg-bull border-ink-900' : a.scenario === 2 ? 'bg-ink-900 border-bull' : 'bg-accent border-ink-900',
                   )}
                 />
                 <button
@@ -39,8 +39,8 @@ export function AlertTimeline({
                 >
                   <div className="flex items-center justify-between">
                     <span className="font-mono">{format(parseISO(a.timestamp), 'dd MMM HH:mm')}</span>
-                    <span className={clsx('text-xs', a.scenario === 2 ? 'text-warn' : 'text-accent-soft')}>
-                      {a.scenario ? `S${a.scenario}` : (a.variant ?? 'Trig')}
+                    <span className={clsx('text-xs font-semibold', a.scenario ? 'text-bull' : 'text-accent-soft')}>
+                      {a.scenario ? `▲ S${a.scenario}` : (a.variant ?? 'Trig')}
                     </span>
                   </div>
                 </button>

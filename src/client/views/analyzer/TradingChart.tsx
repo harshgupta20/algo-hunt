@@ -72,21 +72,22 @@ export function TradingChart({ data, loading }: { data: ChartWindow | null; load
 
     const priceChart = createChart(priceEl, { ...theme, width: priceEl.clientWidth, height: showRsi ? 320 : 440 });
     const candle = priceChart.addCandlestickSeries({
-      upColor: '#22c55e',
-      downColor: '#ef4444',
+      upColor: palette.bull,
+      downColor: palette.bear,
       borderVisible: false,
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
+      wickUpColor: palette.bull,
+      wickDownColor: palette.bear,
     });
     candle.setData(
       data.candles.map((c) => ({ time: c.time as UTCTimestamp, open: c.open, high: c.high, low: c.low, close: c.close })),
     );
     candle.setMarkers(
+      // Bullish signal: green up-arrow under the candle (S1 = all crossing, S2 = future already above).
       data.markers.map((m) => ({
         time: m.time as UTCTimestamp,
-        position: 'aboveBar' as const,
-        color: m.scenario === 1 ? '#3b82f6' : '#f59e0b',
-        shape: 'arrowDown' as const,
+        position: 'belowBar' as const,
+        color: palette.bull,
+        shape: 'arrowUp' as const,
         text: `S${m.scenario}`,
       })),
     );
@@ -98,7 +99,7 @@ export function TradingChart({ data, loading }: { data: ChartWindow | null; load
         data.candles.map((c) => ({
           time: c.time as UTCTimestamp,
           value: c.volume,
-          color: c.close >= c.open ? '#22c55e55' : '#ef444455',
+          color: `${c.close >= c.open ? palette.bull : palette.bear}55`,
         })),
       );
     }
@@ -110,14 +111,15 @@ export function TradingChart({ data, loading }: { data: ChartWindow | null; load
       rsiChart = createChart(rsiEl, { ...theme, width: rsiEl.clientWidth, height: 180 });
       const mkLine = (color: string) =>
         rsiChart!.addLineSeries({ color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-      const f = mkLine('#3b82f6');
-      const c = mkLine('#22c55e');
-      const p = mkLine('#f59e0b');
+      const f = mkLine(palette.legs.future);
+      const c = mkLine(palette.legs.call);
+      const p = mkLine(palette.legs.put);
       f.setData(data.futureRsi.map((r) => ({ time: r.time as UTCTimestamp, value: r.value })));
       c.setData(data.callRsi.map((r) => ({ time: r.time as UTCTimestamp, value: r.value })));
       p.setData(data.putRsi.map((r) => ({ time: r.time as UTCTimestamp, value: r.value })));
-      f.createPriceLine({ price: data.levels.future, color: '#3b82f6', lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title: 'F/C' });
-      p.createPriceLine({ price: data.levels.put, color: '#f59e0b', lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title: 'P' });
+      // Zone boundaries: bullish level (future/call) in green, bearish level (put) in red.
+      f.createPriceLine({ price: data.levels.future, color: palette.bull, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title: 'FUT/CE ≥' });
+      p.createPriceLine({ price: data.levels.put, color: palette.bear, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title: 'PE ≤' });
       rsiChart.timeScale().fitContent();
       syncTimeScales(priceChart, rsiChart);
     }
@@ -155,10 +157,11 @@ export function TradingChart({ data, loading }: { data: ChartWindow | null; load
           <div ref={priceRef} className="w-full" />
           {showRsi && <div ref={rsiRef} className="w-full mt-1" />}
           <div className="flex items-center gap-4 px-2 pt-1 text-[10px] text-slate-500">
-            <Legend color="#3b82f6" label="Future RSI" />
-            <Legend color="#22c55e" label="Call RSI" />
-            <Legend color="#f59e0b" label="Put RSI" />
-            <span className="ml-auto">▼ S1 blue · S2 amber · scroll to zoom, drag to pan</span>
+            <Legend color={palette.legs.future} label="FUT RSI" />
+            <Legend color={palette.legs.call} label="CE RSI" />
+            <Legend color={palette.legs.put} label="PE RSI" />
+            <span className="text-bull font-semibold">▲ S1 / S2 bullish signal</span>
+            <span className="ml-auto">scroll to zoom · drag to pan</span>
           </div>
         </div>
       )}

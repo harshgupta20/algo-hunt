@@ -53,7 +53,8 @@ export function Analytics() {
     { key: 'Scenario 1', count: data.scenario1Count },
     { key: 'Scenario 2', count: data.scenario2Count },
   ];
-  const scenarioColors = ['#3b82f6', '#f59e0b'];
+  // Both scenarios are bullish signals: solid green (S1) and a lighter green (S2).
+  const scenarioColors = [chart.bull, `${chart.bull}80`];
 
   return (
     <div>
@@ -61,15 +62,15 @@ export function Analytics() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <StatCard label="Total Alerts" value={data.totalAlerts} tone="accent" />
-        <StatCard label="Scenario 1" value={data.scenario1Count} />
-        <StatCard label="Scenario 2" value={data.scenario2Count} />
+        <StatCard label="Scenario 1" value={data.scenario1Count} tone="bull" />
+        <StatCard label="Scenario 2" value={data.scenario2Count} tone="bull" />
         <StatCard label="Active Symbols" value={data.mostActiveSymbols.length} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <BarPanel title="Alerts per Day" data={data.alertsPerDay} color="#3b82f6" />
-        <BarPanel title="Alerts per Underlying" data={data.alertsPerUnderlying} color="#22c55e" />
-        <BarPanel title="Alerts per Week" data={data.alertsPerWeek} color="#60a5fa" />
+        <BarPanel title="Alerts per Day" data={data.alertsPerDay} color={chart.series} />
+        <BarPanel title="Alerts per Underlying" data={data.alertsPerUnderlying} color={chart.series} />
+        <BarPanel title="Alerts per Week" data={data.alertsPerWeek} color={chart.seriesSoft} />
 
         <Card>
           <h3 className="text-sm font-semibold text-slate-300 mb-3">Scenario Split</h3>

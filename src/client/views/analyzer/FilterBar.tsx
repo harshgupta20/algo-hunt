@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Play } from 'lucide-react';
 import { format, subDays } from 'date-fns';
 import type { AnalyzerParams, DateRangePreset, ExpiryType, StrikeSelection, Timeframe } from '@ash/shared';
+import { BUILTIN_STRATEGY_NAME } from '@ash/shared';
 import { api } from '../../lib/api';
 import { Card } from '../../components/ui';
 
@@ -17,18 +18,42 @@ const PRESETS: Array<{ value: DateRangePreset; label: string }> = [
   { value: 'custom', label: 'Custom Range' },
 ];
 
-export function FilterBar({ onAnalyze, loading }: { onAnalyze: (p: AnalyzerParams) => void; loading: boolean }) {
+export function FilterBar({
+  onAnalyze,
+  loading,
+  initial,
+  autoRun,
+}: {
+  onAnalyze: (p: AnalyzerParams) => void;
+  loading: boolean;
+  /** Pre-fill (e.g. from a strategy opened in the library). */
+  initial?: Partial<AnalyzerParams>;
+  /** Run once on mount with the initial values. */
+  autoRun?: boolean;
+}) {
   const underlyings = useQuery({ queryKey: ['underlyings'], queryFn: api.underlyings });
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta });
   const strategies = useQuery({ queryKey: ['strategies-custom'], queryFn: api.listStrategies });
   const groups = useQuery({ queryKey: ['groups'], queryFn: api.listGroups });
 
-  const [underlying, setUnderlying] = useState('NIFTY');
-  const [expiryType, setExpiryType] = useState<ExpiryType>('current-weekly');
-  const [strikeSelection, setStrikeSelection] = useState<StrikeSelection>('ATM');
-  const [timeframe, setTimeframe] = useState<Timeframe>('15m');
-  const [strategy, setStrategy] = useState('rsi-sync');
-  const [preset, setPreset] = useState<DateRangePreset>('last-month');
+  const [underlying, setUnderlying] = useState(initial?.underlying ?? 'NIFTY');
+  const [expiryType, setExpiryType] = useState<ExpiryType>(initial?.expiryType ?? 'current-weekly');
+  const [strikeSelection, setStrikeSelection] = useState<StrikeSelection>(initial?.strikeSelection ?? 'ATM');
+  const [timeframe, setTimeframe] = useState<Timeframe>(initial?.timeframe ?? '15m');
+  const [strategy, setStrategy] = useState(initial?.strategy ?? 'rsi-sync');
+  const [preset, setPreset] = useState<DateRangePreset>(initial?.preset ?? 'last-month');
+
+  /** Choosing a custom strategy applies its own underlying / expiry / strike / timeframe. */
+  const chooseStrategy = (value: string) => {
+    setStrategy(value);
+    const def = strategies.data?.find((x) => x.id === value);
+    if (def) {
+      setUnderlying(def.underlying);
+      setExpiryType(def.expiryType);
+      setStrikeSelection(def.strikeSelection);
+      setTimeframe(def.timeframe);
+    }
+  };
   const [from, setFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
   const [to, setTo] = useState(format(new Date(), 'yyyy-MM-dd'));
 
@@ -57,6 +82,14 @@ export function FilterBar({ onAnalyze, loading }: { onAnalyze: (p: AnalyzerParam
       to: preset === 'custom' ? to : undefined,
     });
   };
+
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (!autoRun || autoRan.current) return;
+    autoRan.current = true;
+    analyze();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRun]);
 
   return (
     <Card className="mb-6">
@@ -124,8 +157,8 @@ export function FilterBar({ onAnalyze, loading }: { onAnalyze: (p: AnalyzerParam
         </div>
         <div>
           <label className="label">Strategy</label>
-          <select className="input w-full" value={strategy} onChange={(e) => setStrategy(e.target.value)}>
-            <option value="rsi-sync">RSI Multi Confirmation (built-in)</option>
+          <select className="input w-full" value={strategy} onChange={(e) => chooseStrategy(e.target.value)}>
+            <option value="rsi-sync">{BUILTIN_STRATEGY_NAME} (built-in)</option>
             {strategies.data?.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}

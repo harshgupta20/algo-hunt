@@ -3,30 +3,16 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
-import {
-  Activity,
-  BarChart3,
-  BellRing,
-  Blocks,
-  CandlestickChart,
-  History,
-  LayoutDashboard,
-  Library,
-  Settings,
-  SlidersHorizontal,
-  Workflow,
-} from 'lucide-react';
+import { Activity, BarChart3, BellRing, History, LayoutDashboard, Settings, SlidersHorizontal, Workflow } from 'lucide-react';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/alerts', label: 'Live Alerts', icon: BellRing },
-  { to: '/builder', label: 'Strategy Builder', icon: Blocks },
-  { to: '/library', label: 'Strategy Library', icon: Library },
-  { to: '/analyzer', label: 'Strategy Analyzer', icon: CandlestickChart },
+  // Library, Builder and Backtest live together on one page (tabs).
+  { to: '/strategies', label: 'Strategies', icon: Workflow },
   { to: '/history', label: 'Alert History', icon: History },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/configuration', label: 'Configuration', icon: SlidersHorizontal },
-  { to: '/strategies', label: 'Strategies', icon: Workflow },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 

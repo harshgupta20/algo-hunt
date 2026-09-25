@@ -2,13 +2,16 @@ import { CheckCircle2, X, XCircle } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import clsx from 'clsx';
 import type { BacktestAlert, ConditionTrace, CrossCondition, LegExplanation } from '@ash/shared';
+import { BUILTIN_STRATEGY_NAME } from '@ash/shared';
 import { RuleBadge } from '../../components/ui';
 import { fmtRsi } from '../../lib/format';
+import { LegTag } from '../../components/signal';
+import { isLeg, withoutLegName } from '../../lib/signals';
 
 const CONDITION_STYLE: Record<CrossCondition, { text: string; label: string }> = {
   'crossed-above': { text: 'text-bull', label: 'Crossed Above' },
   'crossed-below': { text: 'text-bear', label: 'Crossed Below' },
-  'already-above': { text: 'text-warn', label: 'Already Above' },
+  'already-above': { text: 'text-bull', label: 'Already Above' },
   none: { text: 'text-slate-500', label: 'No Interaction' },
 };
 
@@ -17,7 +20,10 @@ function CondRow({ c }: { c: ConditionTrace }) {
   return (
     <div className="rounded-lg border border-ink-700/60 bg-ink-850 p-3">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-slate-200">{c.label}</span>
+        <span className="flex items-center gap-2 text-sm font-medium text-slate-200">
+          {isLeg(c.instrument) && <LegTag leg={c.instrument} />}
+          {isLeg(c.instrument) ? withoutLegName(c.label, c.instrument) : c.label}
+        </span>
         <Icon className={clsx('w-4 h-4', c.passed ? 'text-bull' : 'text-bear')} />
       </div>
       <div className="mt-1.5 font-mono text-sm text-slate-300">{c.text}</div>
@@ -30,7 +36,7 @@ function LegRow({ e }: { e: LegExplanation }) {
   return (
     <div className="rounded-lg border border-ink-700/60 bg-ink-850 p-3">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-slate-200">{e.label}</span>
+        <LegTag leg={e.leg} full />
         <span className={clsx('text-xs font-semibold', s.text)}>{s.label} {e.level}</span>
       </div>
       <div className="mt-2 flex items-center gap-2 font-mono text-sm">
@@ -64,7 +70,9 @@ export function AlertDetailDrawer({ alert, onClose }: { alert: BacktestAlert | n
             <span className="rounded-md bg-ink-800 px-2 py-0.5 text-slate-300">{alert.underlying} · {alert.strike}</span>
             <span className="rounded-md bg-ink-800 px-2 py-0.5 text-slate-300">{alert.timeframe}</span>
             <span className="rounded-md bg-ink-800 px-2 py-0.5 text-slate-300">exp {alert.expiry}</span>
-            <span className="rounded-md bg-ink-800 px-2 py-0.5 text-slate-300">{alert.strategy}</span>
+            <span className="rounded-md bg-ink-800 px-2 py-0.5 text-slate-300">
+              {alert.strategy === 'rsi-sync' ? BUILTIN_STRATEGY_NAME : 'Custom strategy'}
+            </span>
           </div>
 
           <div>

@@ -32,7 +32,7 @@ The Future condition (cross vs already) is mutually exclusive, so at most one sc
 ```
 src/
   app/                 Next.js App Router — pages, API route handlers, layout
-    (dashboard)/       Dashboard, Live Alerts, Builder, Library, Analyzer, History, Analytics, Configuration, Settings
+    (dashboard)/       Dashboard, Live Alerts, Strategies (Library · Builder · Backtest tabs), History, Analytics, Configuration, Settings
     api/[...path]/     REST API (dispatches to src/server/api/routes.ts)
     api/cron/tick/     Scheduled live evaluator (CRON_SECRET-protected)
     api/auth/*         Password login / logout

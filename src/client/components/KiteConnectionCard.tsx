@@ -52,7 +52,7 @@ export function KiteConnectionCard() {
   useEffect(() => {
     const kite = params.get('kite');
     if (!kite) return;
-    if (kite === 'connected') setNotice({ kind: 'ok', msg: 'Kite connected — live monitoring and the analyzer are using real market data.' });
+    if (kite === 'connected') setNotice({ kind: 'ok', msg: 'Kite connected — live monitoring and backtests are using real market data.' });
     else setNotice({ kind: 'error', msg: params.get('message') ?? 'Kite login failed.' });
     void qc.invalidateQueries({ queryKey: ['kite-instruments'] });
     router.replace(pathname);

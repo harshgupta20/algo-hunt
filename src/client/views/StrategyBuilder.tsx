@@ -1,12 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { Save, Sparkles, Rocket } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Save, Sparkles, Rocket } from 'lucide-react';
 import type { BuilderCatalog, ExpiryType, Group, StrategyDef, StrategyDefInput, StrategyScope, StrikeSelection, Timeframe } from '@ash/shared';
 import { api } from '../lib/api';
-import { Card, EmptyState, PageHeader, Spinner } from '../components/ui';
+import { Card, EmptyState, Spinner } from '../components/ui';
 import { RuleTreeEditor, newCondition, newGroup } from './builder/ConditionBuilder';
 import { groupText } from '../lib/strategyText';
 
@@ -60,10 +59,19 @@ const SCOPES: Array<{ value: StrategyScope; label: string }> = [
   { value: 'spot', label: 'Spot (soon)' },
 ];
 
-export function StrategyBuilder() {
-  const { id } = useParams<{ id?: string }>();
-  const router = useRouter();
+export interface StrategyBuilderProps {
+  /** Edit an existing strategy; omit to create a new one. */
+  id?: string;
+  /** Start a new strategy from the built-in RSI strategy's rules. */
+  fromTemplate?: boolean;
+  onSaved: () => void;
+  onCancel: () => void;
+}
+
+export function StrategyBuilder({ id, fromTemplate, onSaved, onCancel }: StrategyBuilderProps) {
+  const qc = useQueryClient();
   const catalogQ = useQuery({ queryKey: ['builder-catalog'], queryFn: api.builderCatalog });
+  const templateQ = useQuery({ queryKey: ['builder-template'], queryFn: api.builderTemplate, enabled: Boolean(fromTemplate && !id) });
   const underlyingsQ = useQuery({ queryKey: ['underlyings'], queryFn: api.underlyings });
   const metaQ = useQuery({ queryKey: ['meta'], queryFn: api.meta });
   const existingQ = useQuery({ queryKey: ['strategy', id], queryFn: () => api.getStrategy(id!), enabled: Boolean(id) });
@@ -75,10 +83,12 @@ export function StrategyBuilder() {
     if (form) return;
     if (id) {
       if (existingQ.data) setForm(fromDef(existingQ.data));
+    } else if (fromTemplate) {
+      if (templateQ.data) setForm(fromDef(templateQ.data, true));
     } else if (catalogQ.data) {
       setForm(blankForm(catalogQ.data));
     }
-  }, [id, existingQ.data, catalogQ.data, form]);
+  }, [id, fromTemplate, existingQ.data, templateQ.data, catalogQ.data, form]);
 
   const save = useMutation({
     mutationFn: async (status: 'draft' | 'active') => {
@@ -99,7 +109,11 @@ export function StrategyBuilder() {
       };
       return id ? api.updateStrategy(id, input) : api.createStrategy(input);
     },
-    onSuccess: (s) => router.push(`/library`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['strategies-custom'] });
+      if (id) void qc.invalidateQueries({ queryKey: ['strategy', id] });
+      onSaved();
+    },
     onError: (e: Error) => setError(e.message),
   });
 
@@ -114,25 +128,27 @@ export function StrategyBuilder() {
 
   return (
     <div>
-      <PageHeader
-        title={id ? 'Edit Strategy' : 'Strategy Builder'}
-        subtitle="Compose a strategy from rules — it runs in live alerts and the analyzer through the same engine."
-        actions={
-          <div className="flex gap-2">
-            {!id && (
-              <button className="btn-ghost text-xs" onClick={loadTemplate}>
-                <Sparkles className="w-4 h-4" /> RSI template
-              </button>
-            )}
-            <button className="btn-ghost text-xs" onClick={() => save.mutate('draft')} disabled={save.isPending}>
-              <Save className="w-4 h-4" /> Save Draft
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-3">
+          <button className="btn-ghost text-xs" onClick={onCancel}>
+            <ArrowLeft className="w-4 h-4" /> Library
+          </button>
+          <h2 className="text-fg font-semibold">{id ? `Edit · ${existingQ.data?.name ?? ''}` : 'New strategy'}</h2>
+        </div>
+        <div className="flex gap-2">
+          {!id && (
+            <button className="btn-ghost text-xs" onClick={loadTemplate} title="Replace the rules with the built-in RSI strategy">
+              <Sparkles className="w-4 h-4" /> RSI template
             </button>
-            <button className="btn-primary text-xs" onClick={() => save.mutate('active')} disabled={save.isPending}>
-              <Rocket className="w-4 h-4" /> Publish
-            </button>
-          </div>
-        }
-      />
+          )}
+          <button className="btn-ghost text-xs" onClick={() => save.mutate('draft')} disabled={save.isPending}>
+            <Save className="w-4 h-4" /> Save draft
+          </button>
+          <button className="btn-primary text-xs" onClick={() => save.mutate('active')} disabled={save.isPending}>
+            <Rocket className="w-4 h-4" /> Publish
+          </button>
+        </div>
+      </div>
 
       {error && (
         <div className="mb-4 rounded-lg border border-bear/30 bg-bear/10 px-4 py-2 text-sm text-bear">{error}</div>

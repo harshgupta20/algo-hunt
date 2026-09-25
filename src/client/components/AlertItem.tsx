@@ -1,18 +1,23 @@
-import type { Alert } from '@ash/shared';
-import { ArrowDownRight, ArrowUpRight, CheckCircle2 } from 'lucide-react';
+import type { Alert, Leg } from '@ash/shared';
+import { BUILTIN_STRATEGY_NAME } from '@ash/shared';
+import { ArrowDownRight, ArrowRight, ArrowUpRight, CheckCircle2 } from 'lucide-react';
+import clsx from 'clsx';
 import { Card, RuleBadge } from './ui';
+import { LegTag, RsiValue } from './signal';
 import { fmtRelative, fmtRsi, fmtTime } from '../lib/format';
+import { TONE_TEXT, isLeg, moveTone, withoutLegName } from '../lib/signals';
 
-function RsiCell({ label, prev, curr, dir }: { label: string; prev?: number; curr: number; dir: 'up' | 'down' }) {
-  const Icon = dir === 'up' ? ArrowUpRight : ArrowDownRight;
-  const color = dir === 'up' ? 'text-bull' : 'text-bear';
+/** One leg's RSI move: arrow colored by direction, value colored by zone. */
+function RsiCell({ leg, prev, curr }: { leg: Leg; prev?: number; curr: number }) {
+  const dir = moveTone(prev, curr);
+  const Icon = dir === 'bull' ? ArrowUpRight : dir === 'bear' ? ArrowDownRight : ArrowRight;
   return (
-    <div className="flex flex-col">
-      <span className="text-[10px] uppercase tracking-wide text-slate-500">{label}</span>
-      <span className="flex items-center gap-1 text-sm tabular-nums text-slate-200">
-        {prev != null && <span className="text-slate-500">{fmtRsi(prev)}</span>}
-        <Icon className={`w-3.5 h-3.5 ${color}`} />
-        <span className={color}>{fmtRsi(curr)}</span>
+    <div className="flex flex-col gap-0.5">
+      <LegTag leg={leg} />
+      <span className="flex items-center gap-1 text-sm">
+        {prev != null && <span className="text-slate-500 tabular-nums">{fmtRsi(prev)}</span>}
+        <Icon className={clsx('w-3.5 h-3.5', TONE_TEXT[dir])} />
+        <RsiValue value={curr} className="font-semibold" />
       </span>
     </div>
   );
@@ -22,39 +27,41 @@ export function AlertItem({ alert }: { alert: Alert }) {
   const { snapshot: s } = alert;
   const isCustom = Boolean(alert.conditions?.length);
   return (
-    <Card className="flex flex-col gap-3">
+    <Card className="flex flex-col gap-3 border-l-4 border-l-bull/70">
       <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <RuleBadge scenario={alert.scenario} variant={alert.variant} />
-          <div>
-            <div className="text-sm font-semibold text-fg">{alert.title}</div>
-            <div className="text-xs text-slate-400">
-              {alert.underlying} · {alert.strike} · {alert.timeframe} · exp {alert.expiry || '—'}
-              {alert.groupName ? ` · ${alert.groupName}` : ''}
-            </div>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <RuleBadge scenario={alert.scenario} variant={alert.variant} />
+            <span className="text-sm font-semibold text-fg">{alert.underlying}</span>
+            <span className="text-xs text-slate-400 tabular-nums">{alert.strike}</span>
+          </div>
+          <div className="text-xs text-slate-500 mt-1">
+            {alert.strategyName ?? BUILTIN_STRATEGY_NAME} · {alert.timeframe} · exp {alert.expiry || '—'}
+            {alert.groupName ? ` · ${alert.groupName}` : ''}
           </div>
         </div>
-        <div className="text-right">
+        <div className="text-right shrink-0">
           <div className="text-xs text-slate-300">{fmtRelative(alert.triggeredAt)}</div>
           <div className="text-[10px] text-slate-500">{fmtTime(alert.triggeredAt)}</div>
         </div>
       </div>
 
       {isCustom ? (
-        <div className="border-t border-ink-700/60 pt-3 space-y-1">
+        <div className="border-t border-ink-700/60 pt-3 space-y-1.5">
           {alert.conditions!.map((c, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs">
+            <div key={i} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
               <CheckCircle2 className="w-3.5 h-3.5 text-bull shrink-0" />
-              <span className="text-slate-400">{c.label}</span>
+              {isLeg(c.instrument) && <LegTag leg={c.instrument} />}
+              <span className="text-slate-400">{isLeg(c.instrument) ? withoutLegName(c.label, c.instrument) : c.label}</span>
               <span className="text-slate-300 font-mono ml-auto">{c.text}</span>
             </div>
           ))}
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-2 border-t border-ink-700/60 pt-3">
-          <RsiCell label="Future RSI" prev={s.futurePrevRsi} curr={s.futureRsi} dir="up" />
-          <RsiCell label="Call RSI" prev={s.callPrevRsi} curr={s.callRsi} dir="up" />
-          <RsiCell label="Put RSI" prev={s.putPrevRsi} curr={s.putRsi} dir="down" />
+          <RsiCell leg="future" prev={s.futurePrevRsi} curr={s.futureRsi} />
+          <RsiCell leg="call" prev={s.callPrevRsi} curr={s.callRsi} />
+          <RsiCell leg="put" prev={s.putPrevRsi} curr={s.putRsi} />
         </div>
       )}
     </Card>

@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp, Search } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import clsx from 'clsx';
 import type { BacktestAlert } from '@ash/shared';
 import { EmptyState, RuleBadge } from '../../components/ui';
-import { fmtRsi } from '../../lib/format';
 import { btLegValue } from '../../lib/alertView';
+import { LegTag, RsiValue } from '../../components/signal';
 
 type SortKey = 'time' | 'scenario' | 'future' | 'call' | 'put';
 const PAGE_SIZE = 12;
@@ -68,7 +68,7 @@ export function AlertTable({
     }
   };
 
-  const Th = ({ label, k, align = 'left' }: { label: string; k: SortKey; align?: 'left' | 'right' }) => (
+  const Th = ({ label, k, align = 'left' }: { label: ReactNode; k: SortKey; align?: 'left' | 'right' }) => (
     <th className={clsx('px-3 py-2 cursor-pointer select-none', align === 'right' && 'text-right')} onClick={() => toggleSort(k)}>
       <span className={clsx('inline-flex items-center gap-1', align === 'right' && 'flex-row-reverse')}>
         {label}
@@ -108,9 +108,9 @@ export function AlertTable({
                   <th className="px-3 py-2">Expiry</th>
                   <th className="px-3 py-2">Strike</th>
                   <Th label="Scenario" k="scenario" />
-                  <Th label="Future" k="future" align="right" />
-                  <Th label="Call" k="call" align="right" />
-                  <Th label="Put" k="put" align="right" />
+                  <Th label={<LegTag leg="future" />} k="future" align="right" />
+                  <Th label={<LegTag leg="call" />} k="call" align="right" />
+                  <Th label={<LegTag leg="put" />} k="put" align="right" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-700/50">
@@ -127,11 +127,11 @@ export function AlertTable({
                     <td className="px-3 py-2 text-slate-400">{a.expiry}</td>
                     <td className="px-3 py-2 tabular-nums">{a.strike}</td>
                     <td className="px-3 py-2">
-                      <RuleBadge scenario={a.scenario} variant={a.variant} />
+                      <RuleBadge scenario={a.scenario} variant={a.variant} compact />
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-bull">{fmtRsi(btLegValue(a, 'future'))}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-bull">{fmtRsi(btLegValue(a, 'call'))}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-bear">{fmtRsi(btLegValue(a, 'put'))}</td>
+                    <td className="px-3 py-2 text-right font-medium"><RsiValue value={btLegValue(a, 'future')} /></td>
+                    <td className="px-3 py-2 text-right font-medium"><RsiValue value={btLegValue(a, 'call')} /></td>
+                    <td className="px-3 py-2 text-right font-medium"><RsiValue value={btLegValue(a, 'put')} /></td>
                   </tr>
                 ))}
               </tbody>

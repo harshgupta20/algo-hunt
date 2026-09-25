@@ -51,3 +51,6 @@ export const TIMEFRAME_MS: Record<Timeframe, number> = Object.fromEntries(
 export const DEFAULT_TIMEFRAME: Timeframe = '15m';
 
 export const DEFAULT_RSI_PERIOD = 14;
+
+/** Display name of the built-in `rsi-sync` strategy (server definition + UI labels). */
+export const BUILTIN_STRATEGY_NAME = 'RSI Multi Confirmation';
