@@ -150,6 +150,7 @@ class PgAlertRepository implements AlertRepository {
     if (f.timeframe) add('timeframe = ?', f.timeframe);
     if (f.scenario) add('scenario = ?', f.scenario);
     if (f.strategyId) add('strategy_id = ?', f.strategyId);
+    if (f.strategy) add('strategy = ?', f.strategy);
     if (f.groupId) add('group_id = ?', f.groupId);
     if (f.configId) add('config_id = ?', f.configId);
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

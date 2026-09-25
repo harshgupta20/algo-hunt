@@ -198,10 +198,12 @@ export function Tooltip({
 }) {
   const id = useId();
   const t = useTooltip(side);
+  // Inline by default; a display class from the caller (e.g. `flex` for a full-width nav row) wins.
+  const hasDisplay = /(^|\s)(flex|block|grid|inline-block|inline|hidden)(\s|$)/.test(className ?? '');
   return (
     <span
       ref={t.triggerRef}
-      className={clsx('inline-flex', className)}
+      className={clsx(!hasDisplay && 'inline-flex', className)}
       aria-describedby={t.open ? id : undefined}
       onMouseEnter={() => t.show(OPEN_DELAY_MS)}
       onMouseLeave={t.hide}

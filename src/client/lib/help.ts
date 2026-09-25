@@ -38,14 +38,18 @@ export const HELP = {
   field,
 
   nav: {
-    dashboard: { title: 'Dashboard', body: 'Live RSI gauges for every active monitor and the latest alerts.' },
-    alerts: { title: 'Live Alerts', body: 'Every alert as it fires, newest first, with the exact readings that triggered it.' },
+    dashboard: {
+      title: 'Dashboard',
+      body: 'Your trading overview: headline numbers, live RSI gauges for every active monitor, the latest alerts and performance analytics.',
+    },
+    alerts: {
+      title: 'Alerts',
+      body: 'Every alert — the live feed and the full history in one place. Filter by underlying, strategy, scenario or date; switch between cards and a table; export CSV.',
+    },
     strategies: {
       title: 'Strategies',
       body: 'Library, Builder and Backtest in one place: browse strategies, create or edit rules, and replay them on history.',
     },
-    history: { title: 'Alert History', body: 'Search, filter and export every stored alert.' },
-    analytics: { title: 'Analytics', body: 'How often alerts fire — by day, week, underlying and scenario.' },
     configuration: { title: 'Configuration', body: 'Create monitors (what to watch, which strategy) and switch them on or off.' },
     settings: { title: 'Settings', body: 'Zerodha Kite connection, notifications, theme and evaluator status.' },
   },
@@ -132,6 +136,8 @@ export const HELP = {
     scenario1: { title: 'Scenario 1 alerts', body: 'Alerts where all three legs crossed on the same candle.' },
     scenario2: { title: 'Scenario 2 alerts', body: 'Alerts where the future was already above 60 while CE and PE crossed.' },
     activeSymbols: { title: 'Active symbols', body: 'Distinct underlying + strike combinations that produced alerts.' },
+    alertsToday: { title: 'Alerts today', body: 'Alerts fired on today’s IST trading day, across every monitor and strategy. Green when there is at least one.' },
+    alertsThisWeek: { title: 'This week', body: 'Alerts fired this ISO week (Monday–Sunday, IST).' },
     btTotal: { title: 'Signals in range', body: 'How many times the strategy fired over the selected period.' },
     avgDay: { title: 'Average per day', body: 'Signals ÷ trading days in the range (weekdays).' },
     maxDay: { title: 'Busiest day', body: 'Most signals on a single day.' },
@@ -283,6 +289,24 @@ export const HELP = {
     hour: { title: 'Alerts by trading hour', body: 'Which hours of the session the strategy fires in (IST). Darker = more signals.' },
     editRules: { title: 'Edit rules', body: 'Open this strategy in the Builder.' },
     liveStats: { title: 'Live stats', body: 'Real alerts this strategy has produced from your monitors (not from this backtest).' },
+  },
+
+  dashboard: {
+    viewAll: { title: 'All alerts', body: 'Open the Alerts page: the live feed plus the full searchable history.' },
+    goConfigure: { title: 'Configuration', body: 'Create a monitor (what to watch and which strategy) and activate it.' },
+    performance: {
+      title: 'Performance',
+      body: 'How often your strategies fire — by day, underlying and week — the Scenario 1 / 2 split, and the most active contracts. Based on stored live alerts.',
+      note: 'For a strategy’s historical behaviour, run a Backtest from Strategies.',
+    },
+  },
+
+  alertsPage: {
+    feed: { title: 'Feed', body: 'Alert cards with each leg’s RSI move — best while trading. New alerts appear automatically.' },
+    table: { title: 'Table', body: 'Compact rows — best for reviewing and comparing many alerts.' },
+    fresh: { title: 'New', body: 'Fired in the last 10 minutes.' },
+    strategy: { title: 'Strategy', body: 'Show alerts from one strategy only — the built-in RSI Multi Confirmation or one of yours.' },
+    count: { title: 'Matching alerts', body: 'Alerts matching the filters (newest first, up to 500 shown). Narrow the dates to see older ones.' },
   },
 
   analytics: {

@@ -62,6 +62,8 @@ export interface AlertHistoryFilters {
   scenario?: ScenarioId;
   /** Filter to a specific custom strategy id. */
   strategyId?: string;
+  /** Filter by strategy: 'rsi-sync' (built-in) or a custom strategy id. */
+  strategy?: string;
   /** Filter to a specific underlying group. */
   groupId?: string;
   /** Filter to a specific monitor (configuration). */

@@ -18,6 +18,7 @@ function parseFilters(q: URLSearchParams): AlertHistoryFilters {
     timeframe: str('timeframe') as Timeframe | undefined,
     scenario: scenario === 1 || scenario === 2 ? (scenario as ScenarioId) : undefined,
     strategyId: str('strategyId'),
+    strategy: str('strategy'),
     groupId: str('groupId'),
     configId: str('configId'),
     limit: Math.min(num('limit') ?? 100, 1000),

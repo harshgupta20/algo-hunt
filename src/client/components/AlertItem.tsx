@@ -4,6 +4,10 @@ import { ArrowDownRight, ArrowRight, ArrowUpRight, CheckCircle2 } from 'lucide-r
 import clsx from 'clsx';
 import { Card, RuleBadge } from './ui';
 import { Tooltip } from './Tooltip';
+import { HELP } from '../lib/help';
+
+/** Alerts younger than this get a "New" marker. */
+const FRESH_MS = 10 * 60_000;
 import { LegTag, RsiValue } from './signal';
 import { fmtRelative, fmtRsi, fmtTime } from '../lib/format';
 import { TONE_TEXT, isLeg, moveTone, withoutLegName } from '../lib/signals';
@@ -39,6 +43,11 @@ export function AlertItem({ alert }: { alert: Alert }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
+            {Date.now() - Date.parse(alert.triggeredAt) < FRESH_MS && (
+              <Tooltip content={HELP.alertsPage.fresh}>
+                <span className="rounded bg-accent px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-white animate-pulse">New</span>
+              </Tooltip>
+            )}
             <RuleBadge scenario={alert.scenario} variant={alert.variant} />
             <span className="text-sm font-semibold text-fg">{alert.underlying}</span>
             <span className="text-xs text-slate-400 tabular-nums">{alert.strike}</span>

@@ -5,18 +5,18 @@ import { usePathname } from 'next/navigation';
 import { Tooltip } from '../Tooltip';
 import { HELP } from '../../lib/help';
 import clsx from 'clsx';
-import { Activity, BarChart3, BellRing, History, LayoutDashboard, Settings, SlidersHorizontal, Workflow } from 'lucide-react';
+import { Activity, BellRing, LayoutDashboard, Settings, SlidersHorizontal, Workflow } from 'lucide-react';
 
 const NAV = [
+  // Overview: live monitors, latest alerts and performance analytics.
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true, help: HELP.nav.dashboard },
-  { to: '/alerts', label: 'Live Alerts', icon: BellRing, help: HELP.nav.alerts },
-  // Library, Builder and Backtest live together on one page (tabs).
+  // Live feed + full history (Feed / Table views).
+  { to: '/alerts', label: 'Alerts', icon: BellRing, help: HELP.nav.alerts },
+  // Library, Builder and Backtest (tabs).
   { to: '/strategies', label: 'Strategies', icon: Workflow, help: HELP.nav.strategies },
-  { to: '/history', label: 'Alert History', icon: History, help: HELP.nav.history },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3, help: HELP.nav.analytics },
   { to: '/configuration', label: 'Configuration', icon: SlidersHorizontal, help: HELP.nav.configuration },
   { to: '/settings', label: 'Settings', icon: Settings, help: HELP.nav.settings },
-];
+]
 
 export function Sidebar() {
   const pathname = usePathname();

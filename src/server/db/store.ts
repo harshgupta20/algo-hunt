@@ -21,6 +21,7 @@ import type {
   UserPreferences,
 } from '@ash/shared';
 import { DEFAULT_RSI_SYNC_PARAMS, UNDERLYINGS } from '@ash/shared';
+import { istDate } from '../utils/marketTime';
 import type { KiteSessionRecord, MonitorState, NewAlert, NewNotificationLog, NotificationLog } from './types';
 
 export interface AlertRepository {
@@ -236,7 +237,8 @@ export function buildConfiguration(input: AlertConfigurationInput): AlertConfigu
 }
 
 /** Compute the analytics summary from an in-memory alert array. */
-export function summarize(alerts: Alert[]): AnalyticsSummary {
+/** Analytics over stored alerts. Days and weeks are IST calendar days (the server runs in UTC). */
+export function summarize(alerts: Alert[], nowMs = Date.now()): AnalyticsSummary {
   const byDay = new Map<string, number>();
   const byWeek = new Map<string, number>();
   const byUnderlying = new Map<string, number>();
@@ -245,10 +247,18 @@ export function summarize(alerts: Alert[]): AnalyticsSummary {
   let s1 = 0;
   let s2 = 0;
 
+  const today = istDate(nowMs);
+  const thisWeek = isoWeek(`${today}T00:00:00Z`);
+  let todayCount = 0;
+  let weekCount = 0;
+
   for (const a of alerts) {
-    const day = a.triggeredAt.slice(0, 10);
+    const day = istDate(Date.parse(a.triggeredAt));
+    const week = isoWeek(`${day}T00:00:00Z`);
     byDay.set(day, (byDay.get(day) ?? 0) + 1);
-    byWeek.set(isoWeek(a.triggeredAt), (byWeek.get(isoWeek(a.triggeredAt)) ?? 0) + 1);
+    byWeek.set(week, (byWeek.get(week) ?? 0) + 1);
+    if (day === today) todayCount++;
+    if (week === thisWeek) weekCount++;
     byUnderlying.set(a.underlying, (byUnderlying.get(a.underlying) ?? 0) + 1);
     byExpiry.set(a.expiry, (byExpiry.get(a.expiry) ?? 0) + 1);
     const sym = `${a.underlying} ${a.strike}`;
@@ -262,6 +272,8 @@ export function summarize(alerts: Alert[]): AnalyticsSummary {
 
   return {
     totalAlerts: alerts.length,
+    alertsToday: todayCount,
+    alertsThisWeek: weekCount,
     scenario1Count: s1,
     scenario2Count: s2,
     alertsPerDay: toBuckets(byDay),

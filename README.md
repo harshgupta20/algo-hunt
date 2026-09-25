@@ -32,7 +32,7 @@ The Future condition (cross vs already) is mutually exclusive, so at most one sc
 ```
 src/
   app/                 Next.js App Router — pages, API route handlers, layout
-    (dashboard)/       Dashboard, Live Alerts, Strategies (Library · Builder · Backtest tabs), History, Analytics, Configuration, Settings
+    (dashboard)/       Dashboard (live monitors + alerts + performance), Alerts (feed + history), Strategies (Library · Builder · Backtest), Configuration, Settings
     api/[...path]/     REST API (dispatches to src/server/api/routes.ts)
     api/cron/tick/     Scheduled live evaluator (CRON_SECRET-protected)
     api/auth/*         Password login / logout
@@ -147,7 +147,7 @@ The login also refreshes the instrument master. If the token is rejected mid-day
 *Not connected* and shows the prompt again.
 
 Then **Configuration** → choose underlying, expiry, strike, timeframe, strategy → **Create Monitor** →
-**Activate**. Alerts appear in **Live Alerts** / **Alert History** / **Analytics** and on Telegram if enabled.
+**Activate**. Alerts appear on the **Dashboard** and in **Alerts** (live feed + searchable history), and on Telegram if enabled.
 
 ---
 
