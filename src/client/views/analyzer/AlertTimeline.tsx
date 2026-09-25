@@ -1,7 +1,9 @@
 import { format, parseISO } from 'date-fns';
 import clsx from 'clsx';
 import type { BacktestAlert } from '@ash/shared';
-import { EmptyState } from '../../components/ui';
+import { EmptyState, Help } from '../../components/ui';
+import { InfoTip } from '../../components/Tooltip';
+import { HELP } from '../../lib/help';
 
 export function AlertTimeline({
   alerts,
@@ -15,7 +17,9 @@ export function AlertTimeline({
   return (
     <div className="card p-0 overflow-hidden flex flex-col">
       <div className="p-3 border-b border-ink-700/60">
-        <h3 className="text-sm font-semibold text-slate-300">Timeline ({alerts.length})</h3>
+        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300">
+          Timeline ({alerts.length}) <InfoTip content={HELP.backtest.timeline} />
+        </h3>
       </div>
       {alerts.length === 0 ? (
         <EmptyState title="No alerts" />
@@ -30,6 +34,14 @@ export function AlertTimeline({
                     a.scenario === 1 ? 'bg-bull border-ink-900' : a.scenario === 2 ? 'bg-ink-900 border-bull' : 'bg-accent border-ink-900',
                   )}
                 />
+                <Help
+                  className="w-full"
+                  side="left"
+                  content={{
+                    title: a.scenario ? `Scenario ${a.scenario} signal` : (a.variant ?? 'Signal'),
+                    body: 'Click to centre the chart on this candle and open the “why it fired” details.',
+                  }}
+                >
                 <button
                   onClick={() => onSelect(a)}
                   className={clsx(
@@ -44,6 +56,7 @@ export function AlertTimeline({
                     </span>
                   </div>
                 </button>
+                </Help>
               </li>
             ))}
           </ol>

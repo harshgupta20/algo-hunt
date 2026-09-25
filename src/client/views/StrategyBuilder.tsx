@@ -5,9 +5,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Save, Sparkles, Rocket } from 'lucide-react';
 import type { BuilderCatalog, ExpiryType, Group, StrategyDef, StrategyDefInput, StrategyScope, StrikeSelection, Timeframe } from '@ash/shared';
 import { api } from '../lib/api';
-import { Card, EmptyState, Spinner } from '../components/ui';
+import { Card, EmptyState, Help, Spinner } from '../components/ui';
 import { RuleTreeEditor, newCondition, newGroup } from './builder/ConditionBuilder';
 import { groupText } from '../lib/strategyText';
+import { FieldLabel, InfoTip } from '../components/Tooltip';
+import { HELP } from '../lib/help';
 
 interface FormState {
   name: string;
@@ -130,23 +132,31 @@ export function StrategyBuilder({ id, fromTemplate, onSaved, onCancel }: Strateg
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-3">
-          <button className="btn-ghost text-xs" onClick={onCancel}>
-            <ArrowLeft className="w-4 h-4" /> Library
-          </button>
+          <Help content={HELP.builder.back}>
+            <button className="btn-ghost text-xs" onClick={onCancel}>
+              <ArrowLeft className="w-4 h-4" /> Library
+            </button>
+          </Help>
           <h2 className="text-fg font-semibold">{id ? `Edit · ${existingQ.data?.name ?? ''}` : 'New strategy'}</h2>
         </div>
         <div className="flex gap-2">
           {!id && (
-            <button className="btn-ghost text-xs" onClick={loadTemplate} title="Replace the rules with the built-in RSI strategy">
-              <Sparkles className="w-4 h-4" /> RSI template
-            </button>
+            <Help content={HELP.builder.template}>
+              <button className="btn-ghost text-xs" onClick={loadTemplate}>
+                <Sparkles className="w-4 h-4" /> RSI template
+              </button>
+            </Help>
           )}
-          <button className="btn-ghost text-xs" onClick={() => save.mutate('draft')} disabled={save.isPending}>
-            <Save className="w-4 h-4" /> Save draft
-          </button>
-          <button className="btn-primary text-xs" onClick={() => save.mutate('active')} disabled={save.isPending}>
-            <Rocket className="w-4 h-4" /> Publish
-          </button>
+          <Help content={HELP.builder.saveDraft}>
+            <button className="btn-ghost text-xs" onClick={() => save.mutate('draft')} disabled={save.isPending}>
+              <Save className="w-4 h-4" /> Save draft
+            </button>
+          </Help>
+          <Help content={HELP.builder.publish}>
+            <button className="btn-primary text-xs" onClick={() => save.mutate('active')} disabled={save.isPending}>
+              <Rocket className="w-4 h-4" /> Publish
+            </button>
+          </Help>
         </div>
       </div>
 
@@ -160,15 +170,15 @@ export function StrategyBuilder({ id, fromTemplate, onSaved, onCancel }: Strateg
             <h2 className="text-sm font-semibold text-slate-300 mb-3">Metadata</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="md:col-span-2">
-                <label className="label">Name</label>
+                <FieldLabel help={HELP.builder.name}>Name</FieldLabel>
                 <input className="input w-full" value={form.name} placeholder="e.g. Momentum Breakout" onChange={(e) => set({ name: e.target.value })} />
               </div>
               <div>
-                <label className="label">Category</label>
+                <FieldLabel help={HELP.builder.category}>Category</FieldLabel>
                 <input className="input w-full" value={form.category} onChange={(e) => set({ category: e.target.value })} />
               </div>
               <div>
-                <label className="label">Scope</label>
+                <FieldLabel help={HELP.builder.scope}>Scope</FieldLabel>
                 <select className="input w-full" value={form.scope} onChange={(e) => set({ scope: e.target.value as StrategyScope })}>
                   {SCOPES.map((s) => (
                     <option key={s.value} value={s.value}>
@@ -178,17 +188,19 @@ export function StrategyBuilder({ id, fromTemplate, onSaved, onCancel }: Strateg
                 </select>
               </div>
               <div className="md:col-span-2">
-                <label className="label">Description</label>
+                <FieldLabel help={HELP.builder.description}>Description</FieldLabel>
                 <input className="input w-full" value={form.description} onChange={(e) => set({ description: e.target.value })} />
               </div>
             </div>
           </Card>
 
           <Card>
-            <h2 className="text-sm font-semibold text-slate-300 mb-3">Scope & Context</h2>
+            <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300 mb-3">
+              Scope & Context <InfoTip content={HELP.builder.context} />
+            </h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div>
-                <label className="label">Underlying</label>
+                <FieldLabel help={HELP.field.underlying}>Underlying</FieldLabel>
                 <select className="input w-full" value={form.underlying} onChange={(e) => set({ underlying: e.target.value })}>
                   {underlyingsQ.data?.map((u) => (
                     <option key={u.symbol} value={u.symbol}>
@@ -198,7 +210,7 @@ export function StrategyBuilder({ id, fromTemplate, onSaved, onCancel }: Strateg
                 </select>
               </div>
               <div>
-                <label className="label">Expiry</label>
+                <FieldLabel help={HELP.field.expiry}>Expiry</FieldLabel>
                 <select className="input w-full" value={form.expiryType} onChange={(e) => set({ expiryType: e.target.value as ExpiryType })}>
                   {metaQ.data?.expiryTypes.map((x) => (
                     <option key={x.type} value={x.type}>
@@ -208,7 +220,7 @@ export function StrategyBuilder({ id, fromTemplate, onSaved, onCancel }: Strateg
                 </select>
               </div>
               <div>
-                <label className="label">Strike</label>
+                <FieldLabel help={HELP.field.strike}>Strike</FieldLabel>
                 <select className="input w-full" value={form.strikeSelection} onChange={(e) => set({ strikeSelection: e.target.value as StrikeSelection })}>
                   {metaQ.data?.strikeSelections.map((s) => (
                     <option key={s} value={s}>
@@ -218,7 +230,7 @@ export function StrategyBuilder({ id, fromTemplate, onSaved, onCancel }: Strateg
                 </select>
               </div>
               <div>
-                <label className="label">Timeframe</label>
+                <FieldLabel help={HELP.field.timeframe}>Timeframe</FieldLabel>
                 <select className="input w-full" value={form.timeframe} onChange={(e) => set({ timeframe: e.target.value as Timeframe })}>
                   {metaQ.data?.timeframes.map((t) => (
                     <option key={t.key} value={t.key}>
@@ -231,14 +243,18 @@ export function StrategyBuilder({ id, fromTemplate, onSaved, onCancel }: Strateg
           </Card>
 
           <Card>
-            <h2 className="text-sm font-semibold text-slate-300 mb-3">Conditions</h2>
+            <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300 mb-3">
+              Conditions <InfoTip content={HELP.builder.conditions} />
+            </h2>
             <RuleTreeEditor root={form.root} catalog={catalogQ.data} onChange={(root) => set({ root })} />
           </Card>
         </div>
 
         <div>
           <Card className="sticky top-4">
-            <h2 className="text-sm font-semibold text-slate-300 mb-3">Preview</h2>
+            <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300 mb-3">
+              Preview <InfoTip content={HELP.builder.preview} />
+            </h2>
             {form.root.children.length === 0 ? (
               <EmptyState title="No conditions" hint="Add conditions to see a readable summary." />
             ) : (

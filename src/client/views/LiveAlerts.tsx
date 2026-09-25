@@ -6,6 +6,16 @@ import { api } from '../lib/api';
 import { useLive, type LiveHealth } from '../context/LiveContext';
 import { Badge, Card, EmptyState, PageHeader, Spinner } from '../components/ui';
 import { AlertItem } from '../components/AlertItem';
+import { Tooltip, type TooltipContent } from '../components/Tooltip';
+import { HELP } from '../lib/help';
+
+const HEALTH_HELP: Record<LiveHealth, TooltipContent> = {
+  live: HELP.topbar.live,
+  stale: HELP.topbar.stale,
+  'market-closed': HELP.topbar.marketClosed,
+  'kite-offline': HELP.topbar.kiteOffline,
+  unknown: HELP.topbar.connecting,
+};
 
 const HEALTH: Record<LiveHealth, { label: string; tone: 'bull' | 'warn' | 'bear' | 'default' }> = {
   live: { label: 'monitoring', tone: 'bull' },
@@ -25,9 +35,11 @@ export function LiveAlerts() {
         title="Live Alerts"
         subtitle="Newest first. Each combined alert represents the full strategy firing — never a single leg."
         actions={
-          <Badge tone={HEALTH[health].tone}>
-            <Radio className="w-3 h-3 mr-1" /> {HEALTH[health].label}
-          </Badge>
+          <Tooltip content={HEALTH_HELP[health]} side="left">
+            <Badge tone={HEALTH[health].tone}>
+              <Radio className="w-3 h-3 mr-1" /> {HEALTH[health].label}
+            </Badge>
+          </Tooltip>
         }
       />
 

@@ -8,6 +8,8 @@ import { formatDistanceToNowStrict } from 'date-fns';
 import clsx from 'clsx';
 import { LEG_ORDER } from '../lib/signals';
 import { SignalLegend } from '../components/signal';
+import { Tooltip } from '../components/Tooltip';
+import { HELP } from '../lib/help';
 import { Card, EmptyState, PageHeader, Spinner, StatCard } from '../components/ui';
 import { RsiGauge } from '../components/RsiGauge';
 import { AlertItem } from '../components/AlertItem';
@@ -27,13 +29,16 @@ function ActiveConfigCard({ snap }: { snap: ConfigRuntimeSnapshot }) {
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <span
-              className={clsx(
-                'w-2 h-2 rounded-full',
-                status === 'live' ? 'bg-bull' : status === 'error' ? 'bg-bear' : 'bg-slate-500 animate-pulse',
-              )}
-              title={status === 'live' ? 'Monitoring' : status === 'error' ? 'Last evaluation failed' : 'Awaiting first evaluation'}
-            />
+            <Tooltip content={HELP.monitor[status]}>
+              <span
+                tabIndex={0}
+                aria-label={HELP.monitor[status].title}
+                className={clsx(
+                  'w-2.5 h-2.5 rounded-full cursor-help',
+                  status === 'live' ? 'bg-bull' : status === 'error' ? 'bg-bear' : 'bg-slate-500 animate-pulse',
+                )}
+              />
+            </Tooltip>
             <span className="text-fg font-semibold">{snap.underlying}</span>
             <span className="text-xs text-slate-400">
               {snap.strike || '—'} · {snap.timeframe} · exp {snap.expiry || '—'}
@@ -41,18 +46,27 @@ function ActiveConfigCard({ snap }: { snap: ConfigRuntimeSnapshot }) {
           </div>
           <div className="mt-1 text-[11px] text-slate-500">
             {snap.evaluatedAt ? `updated ${formatDistanceToNowStrict(snap.evaluatedAt)} ago` : 'awaiting first evaluation'}
-            {legs.future.ltp != null && <> · FUT {legs.future.ltp.toFixed(2)}</>}
+            {legs.future.ltp != null && (
+              <>
+                {' · '}
+                <Tooltip content={HELP.monitor.ltp}>
+                  <span className="cursor-help">FUT {legs.future.ltp.toFixed(2)}</span>
+                </Tooltip>
+              </>
+            )}
           </div>
         </div>
-        <span
-          className={clsx(
-            'shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums',
-            metCount === 3 ? 'bg-bull/15 text-bull' : 'bg-ink-800 text-slate-400',
-          )}
-          title="Legs currently meeting their condition"
-        >
-          {metCount}/3 met
-        </span>
+        <Tooltip content={HELP.monitor.metCount} className="shrink-0">
+          <span
+            tabIndex={0}
+            className={clsx(
+              'rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums cursor-help',
+              metCount === 3 ? 'bg-bull/15 text-bull' : 'bg-ink-800 text-slate-400',
+            )}
+          >
+            {metCount}/3 met
+          </span>
+        </Tooltip>
       </div>
       {snap.lastError && <div className="text-xs text-bear -mt-2">{snap.lastError}</div>}
       <div className="space-y-3">
@@ -83,10 +97,10 @@ export function Dashboard() {
       <PageHeader title="Dashboard" subtitle="Live synchronized-RSI monitoring across Future, Call and Put." />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Active Monitors" value={active.length} tone="accent" />
-        <StatCard label="Total Alerts" value={analytics.data?.totalAlerts ?? '—'} />
-        <StatCard label="Scenario 1" value={analytics.data?.scenario1Count ?? '—'} tone="bull" />
-        <StatCard label="Scenario 2" value={analytics.data?.scenario2Count ?? '—'} tone="bull" />
+        <StatCard label="Active Monitors" value={active.length} tone="accent" help={HELP.stats.activeMonitors} />
+        <StatCard label="Total Alerts" value={analytics.data?.totalAlerts ?? '—'} help={HELP.stats.totalAlerts} />
+        <StatCard label="Scenario 1" value={analytics.data?.scenario1Count ?? '—'} tone="bull" help={HELP.scenario[1]} />
+        <StatCard label="Scenario 2" value={analytics.data?.scenario2Count ?? '—'} tone="bull" help={HELP.scenario[2]} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

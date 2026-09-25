@@ -12,6 +12,8 @@ import clsx from 'clsx';
 import type { ChartWindow } from '@ash/shared';
 import { EmptyState, Spinner } from '../../components/ui';
 import { useChartPalette, type ChartPalette } from '../../lib/chartTheme';
+import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
+import { HELP } from '../../lib/help';
 
 // Candle times are UTC epoch seconds; NSE trades in IST (UTC+5:30). Format the
 // axis + crosshair in IST so candles read as 09:15–15:30, not 03:45–10:00.
@@ -140,10 +142,12 @@ export function TradingChart({ data, loading }: { data: ChartWindow | null; load
   return (
     <div className="card p-0 overflow-hidden">
       <div className="flex items-center justify-between p-3 border-b border-ink-700/60">
-        <h3 className="text-sm font-semibold text-slate-300">Chart {data ? `· ${data.candles.length} candles` : ''}</h3>
+        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300">
+          Chart {data ? `· ${data.candles.length} candles` : ''} <InfoTip content={HELP.backtest.chart} />
+        </h3>
         <div className="flex gap-2">
-          <Toggle on={showRsi} onClick={() => setShowRsi((v) => !v)} label="RSI" />
-          <Toggle on={showVolume} onClick={() => setShowVolume((v) => !v)} label="Volume" />
+          <Toggle on={showRsi} onClick={() => setShowRsi((v) => !v)} label="RSI" help={HELP.backtest.rsiPane} />
+          <Toggle on={showVolume} onClick={() => setShowVolume((v) => !v)} label="Volume" help={HELP.backtest.volume} />
         </div>
       </div>
       {loading ? (
@@ -169,11 +173,13 @@ export function TradingChart({ data, loading }: { data: ChartWindow | null; load
   );
 }
 
-function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
+function Toggle({ on, onClick, label, help }: { on: boolean; onClick: () => void; label: string; help: TooltipContent }) {
   return (
-    <button className={clsx('btn-ghost py-1 px-2 text-xs', on && 'text-accent-soft')} onClick={onClick}>
-      {on ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />} {label}
-    </button>
+    <Tooltip content={{ ...help, note: on ? 'Currently shown — click to hide.' : 'Currently hidden — click to show.' }}>
+      <button className={clsx('btn-ghost py-1 px-2 text-xs', on && 'text-accent-soft')} onClick={onClick} aria-pressed={on}>
+        {on ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />} {label}
+      </button>
+    </Tooltip>
   );
 }
 

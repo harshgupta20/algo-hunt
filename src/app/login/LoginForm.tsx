@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Activity, Loader2, Lock } from 'lucide-react';
+import { Tooltip } from '@/client/components/Tooltip';
 
 export function LoginForm() {
   const params = useSearchParams();
@@ -59,9 +60,11 @@ export function LoginForm() {
           />
         </div>
         {error && <div className="text-sm text-bear">{error}</div>}
-        <button type="submit" className="btn-primary w-full justify-center" disabled={pending || !password}>
-          {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />} Sign in
-        </button>
+        <Tooltip content={{ title: 'Sign in', body: 'Unlock the dashboard on this browser for 30 days.', note: 'The password is the APP_PASSWORD set on the server.' }} className="w-full">
+          <button type="submit" className="btn-primary w-full justify-center" disabled={pending || !password}>
+            {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />} Sign in
+          </button>
+        </Tooltip>
       </form>
     </div>
   );

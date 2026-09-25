@@ -9,7 +9,9 @@ import type { KiteAuthState } from '@ash/shared';
 import { api } from '../lib/api';
 import { fmtTime } from '../lib/format';
 import { useKiteStatus } from '../hooks/useKiteStatus';
-import { Card } from './ui';
+import { Card, Help } from './ui';
+import { InfoTip } from './Tooltip';
+import { HELP } from '../lib/help';
 
 const STATE_META: Record<KiteAuthState, { label: string; text: string; dot: string }> = {
   connected: { label: 'Connected', text: 'text-bull', dot: 'bg-bull' },
@@ -111,14 +113,18 @@ export function KiteConnectionCard() {
         </div>
         <div className="flex gap-2">
           {connected && (
-            <button className="btn-ghost text-xs" onClick={() => logout.mutate()} disabled={logout.isPending}>
-              <LogOut className="w-4 h-4" /> Disconnect
-            </button>
+            <Help content={HELP.settings.disconnect}>
+              <button className="btn-ghost text-xs" onClick={() => logout.mutate()} disabled={logout.isPending}>
+                <LogOut className="w-4 h-4" /> Disconnect
+              </button>
+            </Help>
           )}
-          <button className={connected ? 'btn-ghost text-xs' : 'btn-primary text-xs'} onClick={connect}>
-            {connected ? <RefreshCw className="w-4 h-4" /> : <Link2 className="w-4 h-4" />}
-            {connected ? 'Reconnect' : 'Connect Kite'}
-          </button>
+          <Help content={connected ? HELP.settings.reconnect : HELP.settings.connect}>
+            <button className={connected ? 'btn-ghost text-xs' : 'btn-primary text-xs'} onClick={connect}>
+              {connected ? <RefreshCw className="w-4 h-4" /> : <Link2 className="w-4 h-4" />}
+              {connected ? 'Reconnect' : 'Connect Kite'}
+            </button>
+          </Help>
         </div>
       </div>
 
@@ -140,14 +146,16 @@ export function KiteConnectionCard() {
         <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-400">
           <span className="flex items-center gap-2">
             <Database className="w-3.5 h-3.5 text-slate-500" />
-            Instrument master:{' '}
+            <InfoTip content={HELP.settings.instruments} /> Instrument master:{' '}
             {instruments.data
               ? `${instruments.data.count.toLocaleString()} contracts${instruments.data.syncedAt ? ` · synced ${fmtTime(instruments.data.syncedAt)}` : ''}`
               : '…'}
           </span>
-          <button className="btn-ghost text-xs" onClick={() => sync.mutate()} disabled={sync.isPending}>
-            {sync.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Refresh
-          </button>
+          <Help content={HELP.settings.refresh}>
+            <button className="btn-ghost text-xs" onClick={() => sync.mutate()} disabled={sync.isPending}>
+              {sync.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Refresh
+            </button>
+          </Help>
         </div>
       )}
 

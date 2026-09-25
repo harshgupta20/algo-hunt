@@ -122,6 +122,16 @@ describe('MonitorService (cron evaluator: Kite candles → RSI → strategy → 
     expect(store.alertRows[0]!.conditions?.length).toBeGreaterThan(0);
   });
 
+  it('pauses monitors whose custom strategy was disabled after activation', async () => {
+    const { store, monitors, config } = await setup(1, { strategy: 'custom-rsi' });
+    await monitors.activate(config, LAST_OPEN - 86_400_000);
+    const def = await store.strategies.get('custom-rsi');
+    def!.status = 'disabled';
+    const [r] = await monitors.runAll(LAST_CLOSE + 5_000);
+    expect(r?.error).toMatch(/disabled/);
+    expect(store.alertRows).toHaveLength(0);
+  });
+
   it('shares one candle fetch per instrument across monitors in a run', async () => {
     const { store, monitors, config, historical } = await setup(1);
     const second = await store.configs.create({ ...config, params: config.params });

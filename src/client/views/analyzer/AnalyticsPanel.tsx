@@ -2,13 +2,17 @@ import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recha
 import type { BacktestStats, CountBucket } from '@ash/shared';
 import { Card, EmptyState } from '../../components/ui';
 import { useChartPalette } from '../../lib/chartTheme';
+import { InfoTip, type TooltipContent } from '../../components/Tooltip';
+import { HELP } from '../../lib/help';
 
-function Bars({ title, data, color }: { title: string; data: CountBucket[]; color: string }) {
+function Bars({ title, data, color, help }: { title: string; data: CountBucket[]; color: string; help: TooltipContent }) {
   const chart = useChartPalette();
   const axis = { fill: chart.axis, fontSize: 11 };
   return (
     <Card>
-      <h3 className="text-sm font-semibold text-slate-300 mb-3">{title}</h3>
+      <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300 mb-3">
+        {title} <InfoTip content={help} />
+      </h3>
       {data.length === 0 ? (
         <EmptyState title="No data" />
       ) : (
@@ -31,10 +35,10 @@ export function AnalyticsPanel({ stats }: { stats: BacktestStats }) {
   const chart = useChartPalette();
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <Bars title="Alerts per Day" data={stats.byDay} color={chart.series} />
-      <Bars title="Alerts per Week" data={stats.byWeek} color={chart.seriesSoft} />
-      <Bars title="Alerts by Scenario" data={stats.byScenario} color={chart.bull} />
-      <Bars title="Alerts by Timeframe" data={stats.byTimeframe} color={chart.series} />
+      <Bars title="Alerts per Day" data={stats.byDay} color={chart.series} help={HELP.analytics.perDay} />
+      <Bars title="Alerts per Week" data={stats.byWeek} color={chart.seriesSoft} help={HELP.analytics.perWeek} />
+      <Bars title="Alerts by Scenario" data={stats.byScenario} color={chart.bull} help={HELP.analytics.byScenario} />
+      <Bars title="Alerts by Timeframe" data={stats.byTimeframe} color={chart.series} help={HELP.analytics.byTimeframe} />
     </div>
   );
 }

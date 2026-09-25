@@ -16,13 +16,17 @@ import type { CountBucket } from '@ash/shared';
 import { api } from '../lib/api';
 import { Card, EmptyState, PageHeader, Spinner, StatCard } from '../components/ui';
 import { useChartPalette } from '../lib/chartTheme';
+import { InfoTip, type TooltipContent } from '../components/Tooltip';
+import { HELP } from '../lib/help';
 
-function BarPanel({ title, data, color }: { title: string; data: CountBucket[]; color: string }) {
+function BarPanel({ title, data, color, help }: { title: string; data: CountBucket[]; color: string; help: TooltipContent }) {
   const chart = useChartPalette();
   const axis = { fill: chart.axis, fontSize: 11 };
   return (
     <Card>
-      <h3 className="text-sm font-semibold text-slate-300 mb-3">{title}</h3>
+      <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300 mb-3">
+        {title} <InfoTip content={help} />
+      </h3>
       {data.length === 0 ? (
         <EmptyState title="No data yet" />
       ) : (
@@ -61,19 +65,21 @@ export function Analytics() {
       <PageHeader title="Analytics" subtitle="Alert distribution across time, underlyings, expiries and scenarios." />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Total Alerts" value={data.totalAlerts} tone="accent" />
-        <StatCard label="Scenario 1" value={data.scenario1Count} tone="bull" />
-        <StatCard label="Scenario 2" value={data.scenario2Count} tone="bull" />
-        <StatCard label="Active Symbols" value={data.mostActiveSymbols.length} />
+        <StatCard label="Total Alerts" value={data.totalAlerts} tone="accent" help={HELP.stats.totalAlerts} />
+        <StatCard label="Scenario 1" value={data.scenario1Count} tone="bull" help={HELP.scenario[1]} />
+        <StatCard label="Scenario 2" value={data.scenario2Count} tone="bull" help={HELP.scenario[2]} />
+        <StatCard label="Active Symbols" value={data.mostActiveSymbols.length} help={HELP.stats.activeSymbols} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <BarPanel title="Alerts per Day" data={data.alertsPerDay} color={chart.series} />
-        <BarPanel title="Alerts per Underlying" data={data.alertsPerUnderlying} color={chart.series} />
-        <BarPanel title="Alerts per Week" data={data.alertsPerWeek} color={chart.seriesSoft} />
+        <BarPanel title="Alerts per Day" data={data.alertsPerDay} color={chart.series} help={HELP.analytics.perDay} />
+        <BarPanel title="Alerts per Underlying" data={data.alertsPerUnderlying} color={chart.series} help={HELP.analytics.perUnderlying} />
+        <BarPanel title="Alerts per Week" data={data.alertsPerWeek} color={chart.seriesSoft} help={HELP.analytics.perWeek} />
 
         <Card>
-          <h3 className="text-sm font-semibold text-slate-300 mb-3">Scenario Split</h3>
+          <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300 mb-3">
+            Scenario Split <InfoTip content={HELP.analytics.scenarioSplit} />
+          </h3>
           {data.totalAlerts === 0 ? (
             <EmptyState title="No data yet" />
           ) : (
@@ -94,7 +100,9 @@ export function Analytics() {
       </div>
 
       <Card className="mt-6">
-        <h3 className="text-sm font-semibold text-slate-300 mb-3">Most Active Symbols</h3>
+        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300 mb-3">
+          Most Active Symbols <InfoTip content={HELP.analytics.mostActive} />
+        </h3>
         {data.mostActiveSymbols.length === 0 ? (
           <EmptyState title="No data yet" />
         ) : (

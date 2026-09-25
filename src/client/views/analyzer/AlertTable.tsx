@@ -3,9 +3,11 @@ import { ChevronDown, ChevronUp, Search } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import clsx from 'clsx';
 import type { BacktestAlert } from '@ash/shared';
-import { EmptyState, RuleBadge } from '../../components/ui';
+import { EmptyState, Help, RuleBadge } from '../../components/ui';
 import { btLegValue } from '../../lib/alertView';
 import { LegTag, RsiValue } from '../../components/signal';
+import { InfoTip } from '../../components/Tooltip';
+import { HELP } from '../../lib/help';
 
 type SortKey = 'time' | 'scenario' | 'future' | 'call' | 'put';
 const PAGE_SIZE = 12;
@@ -80,7 +82,9 @@ export function AlertTable({
   return (
     <div className="card overflow-hidden">
       <div className="flex items-center justify-between gap-3 p-3 border-b border-ink-700/60">
-        <h3 className="text-sm font-semibold text-slate-300">Historical Alerts ({filtered.length})</h3>
+        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300">
+          Historical Alerts ({filtered.length}) <InfoTip content={HELP.backtest.table} />
+        </h3>
         <div className="relative">
           <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
@@ -142,12 +146,16 @@ export function AlertTable({
               Page {clampedPage + 1} of {pages}
             </span>
             <div className="flex gap-2">
-              <button className="btn-ghost py-1 px-2" disabled={clampedPage === 0} onClick={() => setPage(clampedPage - 1)}>
-                Prev
-              </button>
-              <button className="btn-ghost py-1 px-2" disabled={clampedPage >= pages - 1} onClick={() => setPage(clampedPage + 1)}>
-                Next
-              </button>
+              <Help content={{ title: 'Previous page', body: `Show the previous ${PAGE_SIZE} signals.` }}>
+                <button className="btn-ghost py-1 px-2" disabled={clampedPage === 0} onClick={() => setPage(clampedPage - 1)}>
+                  Prev
+                </button>
+              </Help>
+              <Help content={{ title: 'Next page', body: `Show the next ${PAGE_SIZE} signals.` }}>
+                <button className="btn-ghost py-1 px-2" disabled={clampedPage >= pages - 1} onClick={() => setPage(clampedPage + 1)}>
+                  Next
+                </button>
+              </Help>
             </div>
           </div>
         </>

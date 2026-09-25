@@ -332,6 +332,8 @@ export class MonitorService {
   ): Promise<void> {
     const def = await this.deps.store.strategies.get(config.strategy);
     if (!def) throw new Error(`Custom strategy not found: ${config.strategy}`);
+    // Disabling a strategy pauses every monitor running it (surfaced as the monitor's error).
+    if (def.status === 'disabled') throw new Error(`Strategy "${def.name}" is disabled — publish it to resume this monitor.`);
     const evaluator = new CustomStrategyEvaluator(def);
     const referenced = new Set(evaluator.instruments());
     const instruments = LEGS.filter((l) => referenced.has(l));

@@ -154,11 +154,16 @@ export interface IndicatorParamSpec {
   default: number;
   min?: number;
   max?: number;
+  /** Tooltip: what the parameter controls. */
+  help?: string;
 }
 
 export interface IndicatorSpec {
   kind: IndicatorKind;
   label: string;
+  /** Tooltip: what the indicator measures and how traders read it. */
+  description?: string;
+  example?: string;
   params: IndicatorParamSpec[];
   fields?: Array<{ value: string; label: string }>;
   /** Whether the indicator returns a value comparable to a numeric level. */
@@ -172,12 +177,17 @@ export interface OperatorSpec {
   label: string;
   arity: OperatorArity;
   group: string;
+  /** Tooltip: exactly when the condition is true. */
+  description?: string;
+  example?: string;
 }
 
 export interface InstrumentSpec {
   value: BuilderInstrument;
   label: string;
   enabled: boolean;
+  /** Tooltip: which contract this leg resolves to. */
+  description?: string;
 }
 
 export interface BuilderCatalog {

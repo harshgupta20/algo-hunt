@@ -4,7 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, LineChart, Lock, Pencil, Plus, Power, Sparkles, Trash2 } from 'lucide-react';
 import type { StrategyDef } from '@ash/shared';
 import { api } from '../lib/api';
-import { Badge, Card, EmptyState, ScenarioBadge, Spinner, StrategyStatusBadge } from '../components/ui';
+import { Badge, Card, EmptyState, Help, IconButton, ScenarioBadge, Spinner, StrategyStatusBadge } from '../components/ui';
+import { InfoTip } from '../components/Tooltip';
+import { HELP } from '../lib/help';
 import { LegTag } from '../components/signal';
 import { fmtRelative } from '../lib/format';
 
@@ -27,20 +29,26 @@ function BuiltinCard({ onBacktest, onCustomizeBuiltin }: Pick<LibraryActions, 'o
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-fg font-semibold">{s.name}</h2>
-                <Badge tone="accent">
-                  <Lock className="w-3 h-3 mr-1" /> Built-in
-                </Badge>
+                <Help content={HELP.strategies.builtin}>
+                  <Badge tone="accent">
+                    <Lock className="w-3 h-3 mr-1" /> Built-in
+                  </Badge>
+                </Help>
                 <StrategyStatusBadge status="active" />
               </div>
               <p className="text-sm text-slate-400 mt-1">{s.description}</p>
             </div>
             <div className="flex gap-2 shrink-0">
-              <button className="btn-primary text-xs" onClick={() => onBacktest(s.key)}>
-                <LineChart className="w-4 h-4" /> Backtest
-              </button>
-              <button className="btn-ghost text-xs" onClick={onCustomizeBuiltin} title="Copy into the builder and change the rules">
-                <Sparkles className="w-4 h-4" /> Customize a copy
-              </button>
+              <Help content={HELP.strategies.runBacktest}>
+                <button className="btn-primary text-xs" onClick={() => onBacktest(s.key)}>
+                  <LineChart className="w-4 h-4" /> Backtest
+                </button>
+              </Help>
+              <Help content={HELP.strategies.customize}>
+                <button className="btn-ghost text-xs" onClick={onCustomizeBuiltin}>
+                  <Sparkles className="w-4 h-4" /> Customize a copy
+                </button>
+              </Help>
             </div>
           </div>
 
@@ -95,9 +103,11 @@ export function StrategyLibrary({ onNew, onEdit, onBacktest, onCustomizeBuiltin 
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-slate-300">Your strategies</h2>
-          <button className="btn-primary text-xs" onClick={onNew}>
-            <Plus className="w-4 h-4" /> New strategy
-          </button>
+          <Help content={HELP.strategies.newStrategy}>
+            <button className="btn-primary text-xs" onClick={onNew}>
+              <Plus className="w-4 h-4" /> New strategy
+            </button>
+          </Help>
         </div>
 
         {strategies.isLoading ? (
@@ -117,7 +127,11 @@ export function StrategyLibrary({ onNew, onEdit, onBacktest, onCustomizeBuiltin 
                   <tr>
                     <th className="px-4 py-3">Strategy</th>
                     <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Runs on</th>
+                    <th className="px-4 py-3">
+                      <span className="inline-flex items-center gap-1">
+                        Runs on <InfoTip content={HELP.strategies.runsOn} />
+                      </span>
+                    </th>
                     <th className="px-4 py-3">Updated</th>
                     <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
@@ -126,9 +140,11 @@ export function StrategyLibrary({ onNew, onEdit, onBacktest, onCustomizeBuiltin 
                   {strategies.data!.map((s) => (
                     <tr key={s.id} className="hover:bg-ink-850/60">
                       <td className="px-4 py-3">
-                        <button className="text-fg font-medium hover:text-accent-soft text-left" onClick={() => onEdit(s.id)}>
-                          {s.name}
-                        </button>
+                        <Help content={HELP.strategies.edit}>
+                          <button className="text-fg font-medium hover:text-accent-soft text-left" onClick={() => onEdit(s.id)}>
+                            {s.name}
+                          </button>
+                        </Help>
                         <div className="text-xs text-slate-500">
                           {s.description || s.category || '—'} · v{s.version}
                         </div>
@@ -142,25 +158,29 @@ export function StrategyLibrary({ onNew, onEdit, onBacktest, onCustomizeBuiltin 
                       <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{fmtRelative(s.updatedAt)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button className="btn-ghost py-1 px-2 text-xs" onClick={() => onBacktest(s.id)}>
-                            <LineChart className="w-3.5 h-3.5" /> Backtest
-                          </button>
-                          <button className="btn-ghost py-1 px-2 text-xs" onClick={() => onEdit(s.id)}>
-                            <Pencil className="w-3.5 h-3.5" /> Edit
-                          </button>
-                          <button title="Duplicate" className="btn-ghost py-1 px-2" onClick={() => dup.mutate(s.id)}>
+                          <Help content={HELP.strategies.runBacktest}>
+                            <button className="btn-ghost py-1 px-2 text-xs" onClick={() => onBacktest(s.id)}>
+                              <LineChart className="w-3.5 h-3.5" /> Backtest
+                            </button>
+                          </Help>
+                          <Help content={HELP.strategies.edit}>
+                            <button className="btn-ghost py-1 px-2 text-xs" onClick={() => onEdit(s.id)}>
+                              <Pencil className="w-3.5 h-3.5" /> Edit
+                            </button>
+                          </Help>
+                          <IconButton help={HELP.strategies.duplicate} onClick={() => dup.mutate(s.id)}>
                             <Copy className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            title={s.status === 'active' ? 'Disable (stop using in monitors)' : 'Publish (usable by monitors)'}
+                          </IconButton>
+                          <IconButton
+                            help={s.status === 'active' ? HELP.strategies.disable : HELP.strategies.publish}
                             className={s.status === 'active' ? 'btn-ghost py-1 px-2 hover:text-warn' : 'btn-ghost py-1 px-2 text-bull'}
                             onClick={() => (s.status === 'active' ? disable : publish).mutate(s.id)}
                           >
                             <Power className="w-3.5 h-3.5" />
-                          </button>
-                          <button title="Delete" className="btn-ghost py-1 px-2 hover:text-bear" onClick={() => remove(s)}>
+                          </IconButton>
+                          <IconButton help={HELP.strategies.delete} className="btn-ghost py-1 px-2 hover:text-bear" onClick={() => remove(s)}>
                             <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          </IconButton>
                         </div>
                       </td>
                     </tr>

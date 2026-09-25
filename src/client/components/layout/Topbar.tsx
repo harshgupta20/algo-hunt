@@ -9,6 +9,17 @@ import { useKiteStatus } from '../../hooks/useKiteStatus';
 import { api } from '../../lib/api';
 import { canNotify, requestNotificationPermission } from '../../lib/notify';
 import { useThemePreference } from '../../theme/useThemePreference';
+import { Tooltip, type TooltipContent } from '../Tooltip';
+import { IconButton } from '../ui';
+import { HELP } from '../../lib/help';
+
+const HEALTH_HELP: Record<LiveHealth, TooltipContent> = {
+  live: HELP.topbar.live,
+  stale: HELP.topbar.stale,
+  'market-closed': HELP.topbar.marketClosed,
+  'kite-offline': HELP.topbar.kiteOffline,
+  unknown: HELP.topbar.connecting,
+};
 
 const HEALTH_STYLE: Record<LiveHealth, { label: string; dot: string; text: string }> = {
   live: { label: 'Live', dot: 'bg-bull', text: 'text-bull' },
@@ -41,43 +52,51 @@ export function Topbar() {
   return (
     <header className="h-16 shrink-0 border-b border-ink-700/60 bg-ink-900/60 backdrop-blur flex items-center justify-end gap-3 px-6">
       {needsKiteLogin && (
-        <button
-          className="btn bg-warn/15 text-warn border border-warn/30 hover:bg-warn/25 text-xs"
-          onClick={() => {
-            window.location.href = api.kiteLoginUrl;
-          }}
-        >
-          <Link2 className="w-4 h-4" /> Connect Kite
-        </button>
+        <Tooltip content={HELP.topbar.connectKite} side="bottom">
+          <button
+            className="btn bg-warn/15 text-warn border border-warn/30 hover:bg-warn/25 text-xs"
+            onClick={() => {
+              window.location.href = api.kiteLoginUrl;
+            }}
+          >
+            <Link2 className="w-4 h-4" /> Connect Kite
+          </button>
+        </Tooltip>
       )}
-      <div className="flex items-center gap-2 text-xs" title={lastRun}>
-        <Wifi className="w-4 h-4 text-slate-500" />
-        <span className={clsx('flex items-center gap-1.5 font-medium', s.text)}>
-          <span className={clsx('w-2 h-2 rounded-full', s.dot)} />
-          {s.label}
-        </span>
-        {status && status.activeMonitors > 0 && <span className="text-slate-500 hidden md:inline">· {lastRun}</span>}
-      </div>
+      <Tooltip content={{ ...HEALTH_HELP[health], note: status?.activeMonitors ? `Active monitors: ${status.activeMonitors} · ${lastRun}.` : HEALTH_HELP[health].note }} side="bottom">
+        <div className="flex items-center gap-2 text-xs cursor-help" tabIndex={0}>
+          <Wifi className="w-4 h-4 text-slate-500" />
+          <span className={clsx('flex items-center gap-1.5 font-medium', s.text)}>
+            <span className={clsx('w-2 h-2 rounded-full', s.dot)} />
+            {s.label}
+          </span>
+          {status && status.activeMonitors > 0 && <span className="text-slate-500 hidden md:inline">· {lastRun}</span>}
+        </div>
+      </Tooltip>
       {perm === 'granted' ? (
-        <span className="flex items-center gap-1.5 text-xs text-bull">
-          <Bell className="w-4 h-4" /> Notifications on
-        </span>
+        <Tooltip content={HELP.topbar.notificationsOn} side="bottom">
+          <span className="flex items-center gap-1.5 text-xs text-bull cursor-help" tabIndex={0}>
+            <Bell className="w-4 h-4" /> Notifications on
+          </span>
+        </Tooltip>
       ) : (
-        <button className="btn-ghost text-xs" onClick={enable}>
-          <BellOff className="w-4 h-4" /> Enable notifications
-        </button>
+        <Tooltip content={HELP.topbar.notificationsOff} side="bottom">
+          <button className="btn-ghost text-xs" onClick={enable}>
+            <BellOff className="w-4 h-4" /> Enable notifications
+          </button>
+        </Tooltip>
       )}
-      <button
+      <IconButton
+        help={theme === 'dark' ? HELP.topbar.toLight : HELP.topbar.toDark}
+        side="bottom"
         className="btn-ghost text-xs"
         onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-        title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
       >
         {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-      </button>
-      <button className="btn-ghost text-xs" onClick={signOut} title="Sign out">
+      </IconButton>
+      <IconButton help={HELP.topbar.signOut} side="bottom" className="btn-ghost text-xs" onClick={signOut}>
         <LogOut className="w-4 h-4" />
-      </button>
+      </IconButton>
     </header>
   );
 }

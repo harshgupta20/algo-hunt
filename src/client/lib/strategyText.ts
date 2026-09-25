@@ -41,9 +41,10 @@ export function indicatorLabel(ref: IndicatorRef): string {
 export function conditionText(c: Condition): string {
   const lhs = `${instrumentLabel(c.instrument)} ${indicatorLabel(c.indicator)}`;
   const phrase = OP_PHRASE[c.operator];
-  if (c.operator === 'rising' || c.operator === 'falling') return `${lhs} ${phrase}`;
+  const bars = `over ${c.lookback ?? 1} bar${(c.lookback ?? 1) === 1 ? '' : 's'}`;
+  if (c.operator === 'rising' || c.operator === 'falling') return `${lhs} ${phrase} ${bars}`;
   if (c.operator === 'between' || c.operator === 'outside') return `${lhs} ${phrase} ${c.value ?? '?'} and ${c.value2 ?? '?'}`;
-  if (c.operator === 'increasedByPct' || c.operator === 'decreasedByPct') return `${lhs} ${phrase} ${c.value ?? '?'}%`;
+  if (c.operator === 'increasedByPct' || c.operator === 'decreasedByPct') return `${lhs} ${phrase} ${c.value ?? '?'}% ${bars}`;
   const rhs = c.compareTo ? `${instrumentLabel(c.compareInstrument ?? c.instrument)} ${indicatorLabel(c.compareTo)}` : `${c.value ?? '?'}`;
   return `${lhs} ${phrase} ${rhs}`;
 }

@@ -6,13 +6,14 @@ import { PageHeader, Tabs } from '../components/ui';
 import { StrategyLibrary } from './StrategyLibrary';
 import { StrategyBuilder } from './StrategyBuilder';
 import { StrategyAnalyzer } from './StrategyAnalyzer';
+import { HELP } from '../lib/help';
 
 type Tab = 'library' | 'builder' | 'backtest';
 
-const TABS: Array<{ value: Tab; label: string; icon: typeof Library }> = [
-  { value: 'library', label: 'Library', icon: Library },
-  { value: 'builder', label: 'Builder', icon: Blocks },
-  { value: 'backtest', label: 'Backtest', icon: CandlestickChart },
+const TABS = [
+  { value: 'library' as const, label: 'Library', icon: Library, help: HELP.strategies.library },
+  { value: 'builder' as const, label: 'Builder', icon: Blocks, help: HELP.strategies.builder },
+  { value: 'backtest' as const, label: 'Backtest', icon: CandlestickChart, help: HELP.strategies.backtest },
 ];
 
 /**

@@ -7,8 +7,11 @@ import clsx from 'clsx';
 import type { AlertConfiguration, AlertConfigurationInput, ExpiryType, StrikeSelection, Timeframe } from '@ash/shared';
 import { DEFAULT_RSI_SYNC_PARAMS, BUILTIN_STRATEGY_NAME } from '@ash/shared';
 import { api } from '../lib/api';
-import { Badge, Card, EmptyState, PageHeader, Spinner } from '../components/ui';
+import { Badge, Card, EmptyState, Help, IconButton, PageHeader, Spinner } from '../components/ui';
+import { InfoTip } from '../components/Tooltip';
 import { GroupsManager } from '../components/GroupsManager';
+import { FieldLabel } from '../components/Tooltip';
+import { HELP } from '../lib/help';
 
 const DEFAULT_FORM = {
   mode: 'single' as 'single' | 'group',
@@ -117,7 +120,9 @@ export function Configuration() {
       {notice && (
         <div className="mb-4 rounded-lg border border-accent/30 bg-accent/10 px-4 py-2 text-sm text-accent-soft flex justify-between">
           <span>{notice}</span>
-          <button onClick={() => setNotice(null)}>✕</button>
+          <IconButton help={{ title: 'Dismiss', body: 'Hide this message.' }} onClick={() => setNotice(null)} className="px-1">
+            ✕
+          </IconButton>
         </div>
       )}
 
@@ -125,23 +130,37 @@ export function Configuration() {
         {/* Form + groups */}
         <div className="lg:col-span-1 space-y-6">
         <Card>
-          <h2 className="text-sm font-semibold text-slate-300 mb-4">New Monitor</h2>
+          <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-300 mb-4">
+            New Monitor
+            <InfoTip content={{ title: 'Monitor', body: 'A monitor watches one underlying’s Future, ATM Call and ATM Put with a strategy and fires alerts on closed candles.' }} />
+          </h2>
           <div className="space-y-4">
             <div>
-              <div className="flex rounded-lg overflow-hidden border border-ink-700 text-xs mb-2 w-fit">
-                {(['single', 'group'] as const).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => setForm({ ...form, mode: m })}
-                    className={clsx('px-3 py-1 capitalize', form.mode === m ? 'bg-accent text-white' : 'bg-ink-800 text-slate-400')}
-                  >
-                    {m}
-                  </button>
-                ))}
+              <div className="flex items-center gap-1.5 mb-2">
+                <div className="flex rounded-lg overflow-hidden border border-ink-700 text-xs w-fit">
+                  {(['single', 'group'] as const).map((m) => (
+                    <Help
+                      key={m}
+                      content={
+                        m === 'single'
+                          ? { title: 'Single', body: 'One monitor for one underlying.' }
+                          : { title: 'Group', body: 'One monitor per member of a saved underlying group, created and switched together.' }
+                      }
+                    >
+                      <button
+                        onClick={() => setForm({ ...form, mode: m })}
+                        className={clsx('px-3 py-1 capitalize', form.mode === m ? 'bg-accent text-white' : 'bg-ink-800 text-slate-400')}
+                      >
+                        {m}
+                      </button>
+                    </Help>
+                  ))}
+                </div>
+                <InfoTip content={HELP.config.mode} />
               </div>
               {form.mode === 'single' ? (
                 <>
-                  <label className="label">Underlying</label>
+                  <FieldLabel help={HELP.field.underlying}>Underlying</FieldLabel>
                   <select className="input w-full" value={form.underlying} onChange={(e) => setForm({ ...form, underlying: e.target.value })}>
                     {underlyings.data?.map((u) => (
                       <option key={u.symbol} value={u.symbol}>
@@ -157,7 +176,7 @@ export function Configuration() {
                 </>
               ) : (
                 <>
-                  <label className="label">Group</label>
+                  <FieldLabel help={HELP.config.group}>Group</FieldLabel>
                   <select className="input w-full" value={form.groupId} onChange={(e) => setForm({ ...form, groupId: e.target.value })}>
                     <option value="">Select a group…</option>
                     {groups.data?.map((g) => (
@@ -170,7 +189,7 @@ export function Configuration() {
               )}
             </div>
             <div>
-              <label className="label">Expiry</label>
+              <FieldLabel help={HELP.field.expiry}>Expiry</FieldLabel>
               <select className="input w-full" value={form.expiryType} onChange={(e) => setForm({ ...form, expiryType: e.target.value as ExpiryType })}>
                 {meta.data?.expiryTypes.map((x) => (
                   <option key={x.type} value={x.type}>
@@ -181,7 +200,7 @@ export function Configuration() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="label">Strike</label>
+                <FieldLabel help={HELP.field.strike}>Strike</FieldLabel>
                 <select className="input w-full" value={form.strikeSelection} onChange={(e) => setForm({ ...form, strikeSelection: e.target.value as StrikeSelection })}>
                   {meta.data?.strikeSelections.map((s) => (
                     <option key={s} value={s}>
@@ -191,7 +210,7 @@ export function Configuration() {
                 </select>
               </div>
               <div>
-                <label className="label">Timeframe</label>
+                <FieldLabel help={HELP.field.timeframe}>Timeframe</FieldLabel>
                 <select className="input w-full" value={form.timeframe} onChange={(e) => setForm({ ...form, timeframe: e.target.value as Timeframe })}>
                   {meta.data?.timeframes.map((t) => (
                     <option key={t.key} value={t.key}>
@@ -203,7 +222,7 @@ export function Configuration() {
             </div>
 
             <div>
-              <label className="label">Strategy</label>
+              <FieldLabel help={HELP.field.strategy}>Strategy</FieldLabel>
               <select className="input w-full" value={form.strategy} onChange={(e) => setForm({ ...form, strategy: e.target.value })}>
                 <option value="rsi-sync">{BUILTIN_STRATEGY_NAME} (built-in)</option>
                 {customStrategies.data
@@ -217,12 +236,13 @@ export function Configuration() {
             </div>
 
             <div className={form.strategy === 'rsi-sync' ? 'border-t border-ink-700/60 pt-4' : 'hidden'}>
-              <div className="label">RSI Levels</div>
+              <FieldLabel help={HELP.config.rsiLevels}>RSI Levels</FieldLabel>
               <div className="grid grid-cols-4 gap-2">
                 {(['rsiPeriod', 'futureLevel', 'callLevel', 'putLevel'] as const).map((k) => (
                   <div key={k}>
-                    <div className="text-[10px] text-slate-500 mb-1">
+                    <div className="flex items-center gap-1 text-[10px] text-slate-500 mb-1">
                       {k === 'rsiPeriod' ? 'Period' : k === 'futureLevel' ? 'Future' : k === 'callLevel' ? 'Call' : 'Put'}
+                      <InfoTip content={HELP.config[k === 'rsiPeriod' ? 'period' : k]} />
                     </div>
                     <input
                       type="number"
@@ -235,9 +255,11 @@ export function Configuration() {
               </div>
             </div>
 
-            <button className="btn-primary w-full justify-center" onClick={submit} disabled={createMut.isPending || createGroupMut.isPending}>
-              <Zap className="w-4 h-4" /> {form.mode === 'group' ? 'Create Group Monitor' : 'Create Monitor'}
-            </button>
+            <Help content={HELP.config.create} className="w-full">
+              <button className="btn-primary w-full justify-center" onClick={submit} disabled={createMut.isPending || createGroupMut.isPending}>
+                <Zap className="w-4 h-4" /> {form.mode === 'group' ? 'Create Group Monitor' : 'Create Monitor'}
+              </button>
+            </Help>
           </div>
         </Card>
         <GroupsManager />
@@ -273,8 +295,12 @@ export function Configuration() {
                       <Card key={gid} className="flex flex-col gap-3 border-accent/20">
                         <div className="flex items-center gap-2">
                           <span className="text-fg font-semibold">{head.groupName ?? 'Group'}</span>
-                          <Badge tone={activeCount > 0 ? 'bull' : 'default'}>{activeCount}/{members.length} active</Badge>
-                          <Badge tone="accent">group</Badge>
+                          <Help content={{ title: 'Active members', body: `${activeCount} of ${members.length} monitors in this group are running.` }}>
+                            <Badge tone={activeCount > 0 ? 'bull' : 'default'}>{activeCount}/{members.length} active</Badge>
+                          </Help>
+                          <Help content={HELP.config.groupBadge}>
+                            <Badge tone="accent">group</Badge>
+                          </Help>
                         </div>
                         <div className="text-xs text-slate-400 -mt-1">
                           {stratName(head.strategy)} · {head.strikeSelection} · {head.timeframe} · {head.expiryType}
@@ -295,18 +321,29 @@ export function Configuration() {
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {activeCount < members.length && (
-                            <button className="btn-primary text-xs" onClick={() => activateGroupMut.mutate(gid)}>
-                              <Play className="w-3.5 h-3.5" /> Activate All
-                            </button>
+                            <Help content={HELP.config.activateAll}>
+                              <button className="btn-primary text-xs" onClick={() => activateGroupMut.mutate(gid)}>
+                                <Play className="w-3.5 h-3.5" /> Activate All
+                              </button>
+                            </Help>
                           )}
                           {activeCount > 0 && (
-                            <button className="btn-ghost text-xs" onClick={() => deactivateGroupMut.mutate(gid)}>
-                              <Power className="w-3.5 h-3.5" /> Deactivate All
-                            </button>
+                            <Help content={HELP.config.deactivateAll}>
+                              <button className="btn-ghost text-xs" onClick={() => deactivateGroupMut.mutate(gid)}>
+                                <Power className="w-3.5 h-3.5" /> Deactivate All
+                              </button>
+                            </Help>
                           )}
-                          <button className="btn-ghost text-xs text-bear ml-auto" onClick={() => deleteGroupMut.mutate(gid)}>
-                            <Trash2 className="w-3.5 h-3.5" /> Delete Group
-                          </button>
+                          <Help content={HELP.config.deleteGroup} className="ml-auto">
+                            <button
+                              className="btn-ghost text-xs text-bear"
+                              onClick={() => {
+                                if (window.confirm(`Delete the "${head.groupName ?? 'group'}" monitors and all their alerts?`)) deleteGroupMut.mutate(gid);
+                              }}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" /> Delete Group
+                            </button>
+                          </Help>
                         </div>
                       </Card>
                     );
@@ -321,11 +358,17 @@ export function Configuration() {
                             <div className="flex items-center gap-2">
                               <span className="text-fg font-semibold">{c.underlying}</span>
                               {active && snapOf(c.id)?.lastError ? (
-                                <Badge tone="bear">● Error</Badge>
+                                <Help content={HELP.monitor.error}>
+                                  <Badge tone="bear">● Error</Badge>
+                                </Help>
                               ) : active ? (
-                                <Badge tone="bull">● Live</Badge>
+                                <Help content={HELP.monitor.live}>
+                                  <Badge tone="bull">● Live</Badge>
+                                </Help>
                               ) : (
-                                <Badge>○ Idle</Badge>
+                                <Help content={HELP.monitor.idle}>
+                                  <Badge>○ Idle</Badge>
+                                </Help>
                               )}
                             </div>
                             <div className="text-xs text-slate-400 mt-1">
@@ -339,17 +382,28 @@ export function Configuration() {
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {active ? (
-                            <button className="btn-ghost text-xs" onClick={() => deactivateMut.mutate(c.id)}>
-                              <Power className="w-3.5 h-3.5" /> Deactivate
-                            </button>
+                            <Help content={HELP.config.deactivate}>
+                              <button className="btn-ghost text-xs" onClick={() => deactivateMut.mutate(c.id)}>
+                                <Power className="w-3.5 h-3.5" /> Deactivate
+                              </button>
+                            </Help>
                           ) : (
-                            <button className="btn-primary text-xs" onClick={() => activateMut.mutate(c.id)}>
-                              <Play className="w-3.5 h-3.5" /> Activate
-                            </button>
+                            <Help content={HELP.config.activate}>
+                              <button className="btn-primary text-xs" onClick={() => activateMut.mutate(c.id)}>
+                                <Play className="w-3.5 h-3.5" /> Activate
+                              </button>
+                            </Help>
                           )}
-                          <button className="btn-ghost text-xs text-bear ml-auto" onClick={() => deleteMut.mutate(c.id)}>
-                            <Trash2 className="w-3.5 h-3.5" /> Delete
-                          </button>
+                          <Help content={HELP.config.delete} className="ml-auto">
+                            <button
+                              className="btn-ghost text-xs text-bear"
+                              onClick={() => {
+                                if (window.confirm(`Delete the ${c.underlying} monitor and all of its alerts?`)) deleteMut.mutate(c.id);
+                              }}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" /> Delete
+                            </button>
+                          </Help>
                         </div>
                       </Card>
                     );

@@ -3,6 +3,7 @@ import { BUILTIN_STRATEGY_NAME } from '@ash/shared';
 import { ArrowDownRight, ArrowRight, ArrowUpRight, CheckCircle2 } from 'lucide-react';
 import clsx from 'clsx';
 import { Card, RuleBadge } from './ui';
+import { Tooltip } from './Tooltip';
 import { LegTag, RsiValue } from './signal';
 import { fmtRelative, fmtRsi, fmtTime } from '../lib/format';
 import { TONE_TEXT, isLeg, moveTone, withoutLegName } from '../lib/signals';
@@ -16,7 +17,14 @@ function RsiCell({ leg, prev, curr }: { leg: Leg; prev?: number; curr: number })
       <LegTag leg={leg} />
       <span className="flex items-center gap-1 text-sm">
         {prev != null && <span className="text-slate-500 tabular-nums">{fmtRsi(prev)}</span>}
-        <Icon className={clsx('w-3.5 h-3.5', TONE_TEXT[dir])} />
+        <Tooltip
+          content={{
+            title: dir === 'bull' ? 'RSI rising' : dir === 'bear' ? 'RSI falling' : 'RSI unchanged',
+            body: `Previous closed candle ${prev != null ? fmtRsi(prev) : '—'} → trigger candle ${fmtRsi(curr)}. Green arrow = up, red = down.`,
+          }}
+        >
+          <Icon className={clsx('w-3.5 h-3.5', TONE_TEXT[dir])} />
+        </Tooltip>
         <RsiValue value={curr} className="font-semibold" />
       </span>
     </div>

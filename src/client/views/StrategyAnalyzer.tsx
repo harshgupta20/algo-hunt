@@ -8,7 +8,9 @@ import { api } from '../lib/api';
 import { exportCsv, exportJson, exportXlsx } from '../lib/export';
 import { fmtRelative } from '../lib/format';
 import { groupText } from '../lib/strategyText';
-import { Card, EmptyState, Spinner, StrategyStatusBadge } from '../components/ui';
+import { Card, EmptyState, Help, Spinner, StrategyStatusBadge } from '../components/ui';
+import { InfoTip } from '../components/Tooltip';
+import { HELP } from '../lib/help';
 import { SignalLegend } from '../components/signal';
 import { FilterBar } from './analyzer/FilterBar';
 import { SummaryCards } from './analyzer/SummaryCards';
@@ -33,11 +35,16 @@ function StrategyInsight({ def, onEdit }: { def: StrategyDef; onEdit: (id: strin
           </div>
           <pre className="mt-2 whitespace-pre-wrap text-xs text-slate-300 font-mono leading-relaxed">{groupText(def.root)}</pre>
         </div>
-        <button className="btn-ghost text-xs shrink-0" onClick={() => onEdit(def.id)}>
-          <Pencil className="w-4 h-4" /> Edit rules
-        </button>
+        <Help content={HELP.backtest.editRules} className="shrink-0">
+          <button className="btn-ghost text-xs" onClick={() => onEdit(def.id)}>
+            <Pencil className="w-4 h-4" /> Edit rules
+          </button>
+        </Help>
       </div>
-      <div className="mt-3 pt-3 border-t border-ink-700/60 grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
+      <div className="mt-3 pt-3 border-t border-ink-700/60 flex items-center gap-1 text-[10px] uppercase tracking-wide text-slate-500">
+        Live stats <InfoTip content={HELP.backtest.liveStats} />
+      </div>
+      <div className="mt-2 grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
         <Stat label="Live alerts today" value={s?.alertsToday} accent />
         <Stat label="This week" value={s?.alertsThisWeek} />
         <Stat label="This month" value={s?.alertsThisMonth} />
@@ -153,15 +160,21 @@ export function StrategyAnalyzer({ strategyId, onEdit }: StrategyAnalyzerProps) 
             <SignalLegend />
             {result.alerts.length > 0 && (
               <div className="flex gap-2">
-                <button className="btn-ghost text-xs" onClick={() => exportCsv(result)}>
-                  <FileText className="w-4 h-4" /> CSV
-                </button>
-                <button className="btn-ghost text-xs" onClick={() => exportJson(result)}>
-                  <FileJson className="w-4 h-4" /> JSON
-                </button>
-                <button className="btn-ghost text-xs" onClick={() => void exportXlsx(result)}>
-                  <FileSpreadsheet className="w-4 h-4" /> Excel
-                </button>
+                <Help content={HELP.backtest.csv}>
+                  <button className="btn-ghost text-xs" onClick={() => exportCsv(result)}>
+                    <FileText className="w-4 h-4" /> CSV
+                  </button>
+                </Help>
+                <Help content={HELP.backtest.json}>
+                  <button className="btn-ghost text-xs" onClick={() => exportJson(result)}>
+                    <FileJson className="w-4 h-4" /> JSON
+                  </button>
+                </Help>
+                <Help content={HELP.backtest.xlsx}>
+                  <button className="btn-ghost text-xs" onClick={() => void exportXlsx(result)}>
+                    <FileSpreadsheet className="w-4 h-4" /> Excel
+                  </button>
+                </Help>
               </div>
             )}
           </div>

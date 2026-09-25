@@ -4,6 +4,8 @@ import type { Leg } from '@ash/shared';
 import { RSI_LOWER, RSI_UPPER, TONE_BG, TONE_TEXT, rsiZone } from '../lib/signals';
 import { fmtRsi } from '../lib/format';
 import { LegTag } from './signal';
+import { Tooltip } from './Tooltip';
+import { HELP } from '../lib/help';
 
 interface Props {
   leg: Leg;
@@ -34,11 +36,15 @@ export function RsiGauge({ leg, detail, rsi, level, triggerSide }: Props) {
         </span>
         <span className="flex items-center gap-2">
           {met && (
-            <span className="inline-flex items-center gap-0.5 rounded bg-bull/15 px-1.5 py-px text-[10px] font-semibold text-bull">
-              <Check className="w-3 h-3" /> met
-            </span>
+            <Tooltip content={HELP.monitor.met}>
+              <span className="inline-flex items-center gap-0.5 rounded bg-bull/15 px-1.5 py-px text-[10px] font-semibold text-bull">
+                <Check className="w-3 h-3" /> met
+              </span>
+            </Tooltip>
           )}
-          <span className={clsx('text-sm font-semibold tabular-nums', TONE_TEXT[tone])}>{fmtRsi(rsi)}</span>
+          <Tooltip content={{ ...HELP.zones[tone], title: `RSI ${fmtRsi(rsi)} · ${HELP.zones[tone].title}` }}>
+            <span className={clsx('text-sm font-semibold tabular-nums', TONE_TEXT[tone])}>{fmtRsi(rsi)}</span>
+          </Tooltip>
         </span>
       </div>
       <div className="relative h-2 rounded-full bg-ink-800 overflow-hidden">
@@ -54,9 +60,11 @@ export function RsiGauge({ leg, detail, rsi, level, triggerSide }: Props) {
       </div>
       <div className="flex justify-between text-[10px] text-slate-500">
         <span>0</span>
-        <span>
-          {triggerSide === 'above' ? `needs ≥ ${level}` : `needs ≤ ${level}`}
-        </span>
+        <Tooltip content={HELP.monitor.level}>
+          <span className="cursor-help underline decoration-dotted underline-offset-2">
+            {triggerSide === 'above' ? `needs ≥ ${level}` : `needs ≤ ${level}`}
+          </span>
+        </Tooltip>
         <span>100</span>
       </div>
     </div>

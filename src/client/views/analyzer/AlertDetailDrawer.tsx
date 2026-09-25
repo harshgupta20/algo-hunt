@@ -3,7 +3,8 @@ import { format, parseISO } from 'date-fns';
 import clsx from 'clsx';
 import type { BacktestAlert, ConditionTrace, CrossCondition, LegExplanation } from '@ash/shared';
 import { BUILTIN_STRATEGY_NAME } from '@ash/shared';
-import { RuleBadge } from '../../components/ui';
+import { IconButton, RuleBadge } from '../../components/ui';
+import { HELP } from '../../lib/help';
 import { fmtRsi } from '../../lib/format';
 import { LegTag } from '../../components/signal';
 import { isLeg, withoutLegName } from '../../lib/signals';
@@ -59,9 +60,9 @@ export function AlertDetailDrawer({ alert, onClose }: { alert: BacktestAlert | n
             <div className="text-fg font-semibold">{alert.underlying} Strategy Triggered</div>
             <div className="text-xs text-slate-400">{format(parseISO(alert.timestamp), 'dd MMM yyyy · HH:mm:ss')}</div>
           </div>
-          <button className="btn-ghost p-2" onClick={onClose}>
+          <IconButton help={HELP.analytics.close} onClick={onClose} className="btn-ghost p-2" side="left">
             <X className="w-4 h-4" />
-          </button>
+          </IconButton>
         </div>
 
         <div className="p-4 space-y-4">

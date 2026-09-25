@@ -45,7 +45,15 @@ function legLabel(instrument: string): string {
 
 const fmt = (n: number | undefined): string => (n === undefined || Number.isNaN(n) ? '—' : n.toFixed(2));
 
-function applyOp(cond: Condition, curr: number, prev1: number | undefined, lookN: number | undefined, rhs: number | undefined): boolean {
+function applyOp(
+  cond: Condition,
+  curr: number,
+  prev1: number | undefined,
+  lookN: number | undefined,
+  rhs: number | undefined,
+  /** Right-hand side on the previous candle (equals `rhs` for a fixed number). */
+  rhsPrev: number | undefined,
+): boolean {
   const r = rhs;
   switch (cond.operator) {
     case 'gt':
@@ -64,10 +72,12 @@ function applyOp(cond: Condition, curr: number, prev1: number | undefined, lookN
       return r !== undefined && curr >= r;
     case 'below':
       return r !== undefined && curr <= r;
+    // A cross compares both sides on both candles, so a moving comparison line
+    // (e.g. EMA 20 vs EMA 50) only counts when the order actually flips.
     case 'crossAbove':
-      return r !== undefined && prev1 !== undefined && prev1 < r && curr >= r;
+      return r !== undefined && rhsPrev !== undefined && prev1 !== undefined && prev1 < rhsPrev && curr >= r;
     case 'crossBelow':
-      return r !== undefined && prev1 !== undefined && prev1 > r && curr <= r;
+      return r !== undefined && rhsPrev !== undefined && prev1 !== undefined && prev1 > rhsPrev && curr <= r;
     case 'rising':
       return lookN !== undefined && curr > lookN;
     case 'falling':
@@ -101,9 +111,11 @@ export function evaluateCondition(cond: Condition, resolve: Resolve): ConditionT
   const curr = resolve(cond.instrument, cond.indicator, 0);
   const prev1 = resolve(cond.instrument, cond.indicator, 1);
   const lookN = resolve(cond.instrument, cond.indicator, cond.lookback ?? 1);
-  const rhs = cond.compareTo ? resolve(cond.compareInstrument ?? cond.instrument, cond.compareTo, 0) : cond.value;
+  const rhsInstrument = cond.compareInstrument ?? cond.instrument;
+  const rhs = cond.compareTo ? resolve(rhsInstrument, cond.compareTo, 0) : cond.value;
+  const rhsPrev = cond.compareTo ? resolve(rhsInstrument, cond.compareTo, 1) : cond.value;
 
-  const passed = curr !== undefined && applyOp(cond, curr, prev1, lookN, rhs);
+  const passed = curr !== undefined && applyOp(cond, curr, prev1, lookN, rhs, rhsPrev);
 
   return {
     label: `${legLabel(cond.instrument)} ${indicatorLabel(cond.indicator)}`,

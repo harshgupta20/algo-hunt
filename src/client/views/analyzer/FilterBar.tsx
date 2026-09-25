@@ -5,7 +5,9 @@ import { format, subDays } from 'date-fns';
 import type { AnalyzerParams, DateRangePreset, ExpiryType, StrikeSelection, Timeframe } from '@ash/shared';
 import { BUILTIN_STRATEGY_NAME } from '@ash/shared';
 import { api } from '../../lib/api';
-import { Card } from '../../components/ui';
+import { Card, Help } from '../../components/ui';
+import { FieldLabel } from '../../components/Tooltip';
+import { HELP } from '../../lib/help';
 
 const PRESETS: Array<{ value: DateRangePreset; label: string }> = [
   { value: 'today', label: 'Today' },
@@ -95,7 +97,7 @@ export function FilterBar({
     <Card className="mb-6">
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
         <div>
-          <label className="label">Date Range</label>
+          <FieldLabel help={HELP.backtest.dateRange}>Date Range</FieldLabel>
           <select className="input w-full" value={preset} onChange={(e) => setPreset(e.target.value as DateRangePreset)}>
             {PRESETS.map((p) => (
               <option key={p.value} value={p.value}>
@@ -105,7 +107,7 @@ export function FilterBar({
           </select>
         </div>
         <div>
-          <label className="label">Underlying / Group</label>
+          <FieldLabel help={HELP.backtest.underlyingGroup}>Underlying / Group</FieldLabel>
           <select className="input w-full" value={underlying} onChange={(e) => setUnderlying(e.target.value)}>
             <optgroup label="Underlyings">
               {underlyings.data?.map((u) => (
@@ -126,7 +128,7 @@ export function FilterBar({
           </select>
         </div>
         <div>
-          <label className="label">Expiry</label>
+          <FieldLabel help={HELP.field.expiry}>Expiry</FieldLabel>
           <select className="input w-full" value={expiryType} onChange={(e) => setExpiryType(e.target.value as ExpiryType)}>
             {meta.data?.expiryTypes.map((x) => (
               <option key={x.type} value={x.type}>
@@ -136,7 +138,7 @@ export function FilterBar({
           </select>
         </div>
         <div>
-          <label className="label">Strike</label>
+          <FieldLabel help={HELP.field.strike}>Strike</FieldLabel>
           <select className="input w-full" value={strikeSelection} onChange={(e) => setStrikeSelection(e.target.value as StrikeSelection)}>
             {meta.data?.strikeSelections.map((s) => (
               <option key={s} value={s}>
@@ -146,7 +148,7 @@ export function FilterBar({
           </select>
         </div>
         <div>
-          <label className="label">Timeframe</label>
+          <FieldLabel help={HELP.field.timeframe}>Timeframe</FieldLabel>
           <select className="input w-full" value={timeframe} onChange={(e) => setTimeframe(e.target.value as Timeframe)}>
             {meta.data?.timeframes.map((t) => (
               <option key={t.key} value={t.key}>
@@ -156,7 +158,7 @@ export function FilterBar({
           </select>
         </div>
         <div>
-          <label className="label">Strategy</label>
+          <FieldLabel help={HELP.field.strategy}>Strategy</FieldLabel>
           <select className="input w-full" value={strategy} onChange={(e) => chooseStrategy(e.target.value)}>
             <option value="rsi-sync">{BUILTIN_STRATEGY_NAME} (built-in)</option>
             {strategies.data?.map((s) => (
@@ -170,20 +172,22 @@ export function FilterBar({
         {preset === 'custom' && (
           <>
             <div>
-              <label className="label">From</label>
+              <FieldLabel help={HELP.backtest.from}>From</FieldLabel>
               <input type="date" className="input w-full" value={from} onChange={(e) => setFrom(e.target.value)} />
             </div>
             <div>
-              <label className="label">To</label>
+              <FieldLabel help={HELP.backtest.to}>To</FieldLabel>
               <input type="date" className="input w-full" value={to} onChange={(e) => setTo(e.target.value)} />
             </div>
           </>
         )}
 
         <div className="col-span-2 md:col-span-1 lg:col-start-6">
-          <button className="btn-primary w-full justify-center" onClick={analyze} disabled={loading}>
-            <Play className="w-4 h-4" /> {loading ? 'Analyzing…' : 'Analyze'}
-          </button>
+          <Help content={HELP.backtest.analyze} className="w-full">
+            <button className="btn-primary w-full justify-center" onClick={analyze} disabled={loading}>
+              <Play className="w-4 h-4" /> {loading ? 'Analyzing…' : 'Analyze'}
+            </button>
+          </Help>
         </div>
       </div>
     </Card>

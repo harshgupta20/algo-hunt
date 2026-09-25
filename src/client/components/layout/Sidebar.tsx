@@ -2,18 +2,20 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { Tooltip } from '../Tooltip';
+import { HELP } from '../../lib/help';
 import clsx from 'clsx';
 import { Activity, BarChart3, BellRing, History, LayoutDashboard, Settings, SlidersHorizontal, Workflow } from 'lucide-react';
 
 const NAV = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  { to: '/alerts', label: 'Live Alerts', icon: BellRing },
+  { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true, help: HELP.nav.dashboard },
+  { to: '/alerts', label: 'Live Alerts', icon: BellRing, help: HELP.nav.alerts },
   // Library, Builder and Backtest live together on one page (tabs).
-  { to: '/strategies', label: 'Strategies', icon: Workflow },
-  { to: '/history', label: 'Alert History', icon: History },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3 },
-  { to: '/configuration', label: 'Configuration', icon: SlidersHorizontal },
-  { to: '/settings', label: 'Settings', icon: Settings },
+  { to: '/strategies', label: 'Strategies', icon: Workflow, help: HELP.nav.strategies },
+  { to: '/history', label: 'Alert History', icon: History, help: HELP.nav.history },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3, help: HELP.nav.analytics },
+  { to: '/configuration', label: 'Configuration', icon: SlidersHorizontal, help: HELP.nav.configuration },
+  { to: '/settings', label: 'Settings', icon: Settings, help: HELP.nav.settings },
 ];
 
 export function Sidebar() {
@@ -31,18 +33,19 @@ export function Sidebar() {
         </div>
       </div>
       <nav className="flex-1 p-3 space-y-1">
-        {NAV.map(({ to, label, icon: Icon, end }) => (
+        {NAV.map(({ to, label, icon: Icon, end, help }) => (
+          <Tooltip key={to} content={help} side="right" className="flex">
           <Link
-            key={to}
             href={to}
             className={clsx(
-              'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+              'flex-1 flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
               isActive(to, end) ? 'bg-accent/15 text-fg' : 'text-slate-400 hover:bg-ink-800 hover:text-slate-200',
             )}
           >
             <Icon className="w-4 h-4" />
             {label}
           </Link>
+          </Tooltip>
         ))}
       </nav>
       <div className="p-4 text-[10px] text-slate-600 border-t border-ink-700/60">

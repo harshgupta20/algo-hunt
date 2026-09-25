@@ -6,9 +6,11 @@ import { Download } from 'lucide-react';
 import type { Alert, AlertHistoryFilters, ScenarioId, Timeframe } from '@ash/shared';
 import { BUILTIN_STRATEGY_NAME, TIMEFRAMES } from '@ash/shared';
 import { api } from '../lib/api';
-import { Card, EmptyState, PageHeader, RuleBadge, Spinner } from '../components/ui';
+import { Card, EmptyState, Help, PageHeader, RuleBadge, Spinner } from '../components/ui';
 import { fmtTime } from '../lib/format';
 import { LegTag, RsiValue, SignalLegend } from '../components/signal';
+import { FieldLabel } from '../components/Tooltip';
+import { HELP } from '../lib/help';
 
 function toCsv(alerts: Alert[]): string {
   const header = [
@@ -85,16 +87,18 @@ export function AlertHistory() {
         title="Alert History"
         subtitle="Filter and export every persisted strategy alert."
         actions={
-          <button className="btn-ghost" onClick={download} disabled={(alerts.data?.length ?? 0) === 0}>
-            <Download className="w-4 h-4" /> Export CSV
-          </button>
+          <Help content={HELP.history.exportCsv} side="left">
+            <button className="btn-ghost" onClick={download} disabled={(alerts.data?.length ?? 0) === 0}>
+              <Download className="w-4 h-4" /> Export CSV
+            </button>
+          </Help>
         }
       />
 
       <Card className="mb-4">
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
           <div>
-            <label className="label">Underlying</label>
+            <FieldLabel help={HELP.field.underlying}>Underlying</FieldLabel>
             <select className="input w-full" value={underlying} onChange={(e) => setUnderlying(e.target.value)}>
               <option value="">All</option>
               {underlyings.data?.map((u) => (
@@ -105,7 +109,7 @@ export function AlertHistory() {
             </select>
           </div>
           <div>
-            <label className="label">Timeframe</label>
+            <FieldLabel help={HELP.field.timeframe}>Timeframe</FieldLabel>
             <select className="input w-full" value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
               <option value="">All</option>
               {TIMEFRAMES.map((t) => (
@@ -116,7 +120,7 @@ export function AlertHistory() {
             </select>
           </div>
           <div>
-            <label className="label">Scenario</label>
+            <FieldLabel help={HELP.history.scenario}>Scenario</FieldLabel>
             <select className="input w-full" value={scenario} onChange={(e) => setScenario(e.target.value)}>
               <option value="">All</option>
               <option value="1">Scenario 1</option>
@@ -124,16 +128,18 @@ export function AlertHistory() {
             </select>
           </div>
           <div>
-            <label className="label">From</label>
+            <FieldLabel help={HELP.history.from}>From</FieldLabel>
             <input type="date" className="input w-full" value={from} onChange={(e) => setFrom(e.target.value)} />
           </div>
           <div>
-            <label className="label">To</label>
+            <FieldLabel help={HELP.history.to}>To</FieldLabel>
             <input type="date" className="input w-full" value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
-          <button className="btn-ghost" onClick={reset}>
-            Reset
-          </button>
+          <Help content={HELP.history.reset} className="self-end">
+            <button className="btn-ghost w-full justify-center" onClick={reset}>
+              Reset
+            </button>
+          </Help>
         </div>
       </Card>
 
