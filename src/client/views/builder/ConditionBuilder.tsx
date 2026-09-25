@@ -6,12 +6,9 @@ import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip'
 import { IconButton } from '../../components/ui';
 import { HELP } from '../../lib/help';
 import { conditionText } from '../../lib/strategyText';
+import { SCALE_LABEL, adaptComparison, defaultComparison, defaultLevel, newIndicatorRef, priceLevelLooksWrong, scaleOf } from './comparison';
 
-export function newIndicatorRef(catalog: BuilderCatalog, kind?: string, params?: Record<string, number>): IndicatorRef {
-  const spec = catalog.indicators.find((i) => i.kind === kind) ?? catalog.indicators[0]!;
-  const defaults = Object.fromEntries(spec.params.map((p) => [p.name, p.default]));
-  return { kind: spec.kind, params: { ...defaults, ...params }, field: spec.fields?.[0]?.value };
-}
+export { newIndicatorRef };
 
 export function newCondition(catalog: BuilderCatalog): Condition {
   return {
@@ -26,50 +23,6 @@ export function newCondition(catalog: BuilderCatalog): Condition {
 
 export function newGroup(logic: 'AND' | 'OR' = 'AND'): Group {
   return { type: 'group', id: crypto.randomUUID(), logic, children: [] };
-}
-
-type Scale = 'price' | 'oscillator' | 'macd' | 'direction' | 'volume' | 'oi' | 'boolean';
-
-/** What unit an indicator output is in — comparing different units rarely makes sense. */
-function scaleOf(ref: IndicatorRef): Scale {
-  switch (ref.kind) {
-    case 'RSI':
-    case 'ADX':
-    case 'DMI':
-      return 'oscillator';
-    case 'PATTERN':
-      return 'boolean';
-    case 'MACD':
-      return 'macd';
-    case 'SUPERTREND':
-      return ref.field === 'direction' ? 'direction' : 'price';
-    case 'VOLUME':
-      return 'volume';
-    case 'OI':
-      return 'oi';
-    default:
-      return 'price'; // EMA, SMA, VWAP, Bollinger, Price
-  }
-}
-
-const SCALE_LABEL: Record<Scale, string> = {
-  price: 'a price',
-  oscillator: 'an oscillator (0–100)',
-  macd: 'a MACD value (around 0)',
-  direction: 'a direction (+1 / −1)',
-  volume: 'a volume',
-  oi: 'an open-interest count',
-  boolean: 'a yes/no pattern',
-};
-
-const NEXT_LEG: Record<string, Condition['instrument']> = { future: 'call', call: 'put', put: 'call' };
-
-/** Sensible right-hand side when switching to “Compare to: Indicator”. */
-function defaultComparison(catalog: BuilderCatalog, cond: Condition): Pick<Condition, 'compareTo' | 'compareInstrument'> {
-  // Price-type → the classic crossover against a slower EMA on the same leg.
-  if (scaleOf(cond.indicator) === 'price') return { compareTo: newIndicatorRef(catalog, 'EMA', { period: 50 }), compareInstrument: cond.instrument };
-  // Oscillators etc. → the same indicator on another leg (e.g. Call RSI vs Put RSI).
-  return { compareTo: { ...cond.indicator }, compareInstrument: NEXT_LEG[cond.instrument] ?? cond.instrument };
 }
 
 /** A captioned control: small label + ⓘ explanation above the input. */
@@ -147,7 +100,15 @@ function IndicatorInputs({
         </Cell>
       )}
       {spec?.fields && !spec.boolean && (
-        <Cell label="Output" help={{ ...HELP.builder.field, note: `${spec.label} outputs: ${spec.fields.map((f) => f.label).join(' · ')}` }}>
+        <Cell
+          label="Output"
+          help={{
+            ...HELP.builder.field,
+            title: `Output — ${spec.fields.find((f) => f.value === value.field)?.label ?? ''}`,
+            body: spec.fields.find((f) => f.value === value.field)?.description ?? HELP.builder.field.body,
+            note: `${spec.label} outputs: ${spec.fields.map((f) => f.label).join(' · ')}`,
+          }}
+        >
           <select className="input py-1 text-xs" value={value.field} onChange={(e) => onChange({ ...value, field: e.target.value })}>
             {spec.fields.map((f) => (
               <option key={f.value} value={f.value}>
@@ -179,18 +140,23 @@ function ConditionEditor({
   const grouped = groupByGroup(operatorsFor(catalog, indSpec));
   const candleSpec = catalog.candles.find((c) => c.value === (cond.candle ?? 'normal'));
 
-  /** Switching between a pattern and a numeric indicator also switches to an operator that fits it. */
-  const changeIndicator = (kind: string) => {
-    const indicator = newIndicatorRef(catalog, kind);
+  /**
+   * Switching between a pattern and a numeric indicator also switches to an
+   * operator that fits it; otherwise the comparison adapts to the new scale.
+   */
+  const changeIndicatorRef = (indicator: IndicatorRef) => {
     const spec = catalog.indicators.find((i) => i.kind === indicator.kind);
     if (spec?.boolean) {
       set({ indicator, operator: 'detected', value: undefined, value2: undefined, compareTo: undefined, compareInstrument: undefined, compareTimeframe: undefined });
     } else if (opSpec?.arity === 'flag') {
-      set({ indicator, operator: 'crossAbove', value: 60 });
+      // From a pattern: adapt from the pattern's (yes/no) scale with a level-style operator.
+      const base: Condition = { ...cond, operator: 'crossAbove', value: defaultLevel(indicator) ?? 60 };
+      set({ indicator, operator: 'crossAbove', value: base.value, ...adaptComparison(catalog, base, indicator) });
     } else {
-      set({ indicator });
+      set({ indicator, ...adaptComparison(catalog, cond, indicator) });
     }
   };
+  const changeIndicator = (kind: string) => changeIndicatorRef(newIndicatorRef(catalog, kind));
   const isTrend = cond.operator === 'rising' || cond.operator === 'falling' || cond.operator.includes('Pct');
   const compareSpec = cond.compareTo ? catalog.indicators.find((i) => i.kind === cond.compareTo!.kind) : undefined;
   const compareInstSpec = catalog.instruments.find((i) => i.value === (cond.compareInstrument ?? cond.instrument));
@@ -198,6 +164,7 @@ function ConditionEditor({
   const setCompareMode = (mode: 'number' | 'indicator') =>
     set(mode === 'indicator' ? defaultComparison(catalog, cond) : { compareTo: undefined, compareInstrument: undefined });
   const scaleMismatch = cond.compareTo && scaleOf(cond.indicator) !== scaleOf(cond.compareTo);
+  const levelLooksWrong = priceLevelLooksWrong(cond, opSpec?.arity);
 
   return (
     <div className="rounded-lg bg-ink-850 border border-ink-700/60 p-3">
@@ -256,7 +223,11 @@ function ConditionEditor({
             ))}
           </select>
         </Cell>
-        <IndicatorInputs spec={indSpec} value={cond.indicator} onChange={(indicator) => set({ indicator })} />
+        <IndicatorInputs
+          spec={indSpec}
+          value={cond.indicator}
+          onChange={(indicator) => (indicator.field !== cond.indicator.field ? changeIndicatorRef(indicator) : set({ indicator }))}
+        />
 
         <Cell
           label="Condition"
@@ -404,6 +375,16 @@ function ConditionEditor({
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
           {cond.indicator.kind} is {SCALE_LABEL[scaleOf(cond.indicator)]} but {cond.compareTo!.kind} is {SCALE_LABEL[scaleOf(cond.compareTo!)]} — they
           are on different scales, so this comparison will rarely mean anything.
+        </p>
+      )}
+      {levelLooksWrong && (
+        <p className="mt-1 flex items-start gap-1.5 text-[11px] text-warn">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+          <span>
+            {indSpec?.label ?? cond.indicator.kind} is a price, but {cond.value} looks like an oscillator level — the future trades far above it, so this
+            will rarely trigger. Compare with an indicator instead (e.g. Close crosses above Bollinger Upper), type a real price level, or use
+            Bollinger %B / Bandwidth for a number.
+          </span>
         </p>
       )}
     </div>

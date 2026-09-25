@@ -298,7 +298,11 @@ export const HELP = {
     indicator: { title: 'Indicator', body: 'What to measure on that instrument’s candles.' },
     field: { title: 'Output', body: 'Which line of a multi-line indicator to use (e.g. MACD Histogram, Bollinger Upper).' },
     operator: { title: 'Condition', body: 'How the value is tested.' },
-    value: { title: 'Value', body: 'The fixed number to compare with.' },
+    value: {
+      title: 'Value',
+      body: 'The fixed number to compare with.',
+      note: 'For price-type indicators (Bollinger Upper/Middle/Lower, EMA, SMA, VWAP, Price) the number is a price level. To compare with a band or an average, choose Compare to → Indicator.',
+    },
     range: { title: 'Range', body: 'Low and high ends of the range (both included).' },
     percent: { title: 'Percent', body: 'Minimum percentage change versus “Lookback” candles ago.' },
     lookback: {

@@ -25,11 +25,14 @@ export function indicatorSignature(ref: IndicatorRef): string {
 }
 
 /** Short human label for an indicator ref, e.g. "RSI(14)", "MACD hist" or "Hammer". */
+/** Readable names for outputs whose field id isn't self-explanatory. */
+const FIELD_LABEL: Record<string, string> = { percentB: '%B', bandwidth: 'bandwidth %' };
+
 export function indicatorLabel(ref: IndicatorRef): string {
   if (ref.kind === 'PATTERN') return PATTERN_BY_ID[ref.field ?? '']?.label ?? 'Pattern';
   const p = ref.params ? Object.values(ref.params).join(',') : '';
   const base = p ? `${ref.kind}(${p})` : ref.kind;
-  return ref.field ? `${base} ${ref.field}` : base;
+  return ref.field ? `${base} ${FIELD_LABEL[ref.field] ?? ref.field}` : base;
 }
 
 export const INDICATOR_SPECS: IndicatorSpec[] = [
@@ -86,16 +89,27 @@ export const INDICATOR_SPECS: IndicatorSpec[] = [
     kind: 'BBANDS',
     label: 'Bollinger Bands',
     numeric: true,
-    description: 'Middle = SMA(period); Upper/Lower = middle ± Std Dev × standard deviation. A close beyond a band marks a stretched move.',
-    example: 'Future Close cross above Future Bollinger Upper',
+    description:
+      'Middle = SMA(period); Upper/Lower = middle ± Std Dev × standard deviation. Upper / Middle / Lower are PRICES — compare them with Price (Close), not a fixed number. %B and Bandwidth are the readings you compare with a number.',
+    example: 'Future Close cross above Future Bollinger Upper · Future Bollinger %B > 1 · Future Bollinger Bandwidth < 2',
     params: [
       { name: 'period', label: 'Period', default: 20, help: 'Candles in the middle SMA and the deviation.' },
       { name: 'mult', label: 'Std Dev', default: 2, help: 'Band width in standard deviations (2 is standard).' },
     ],
     fields: [
-      { value: 'upper', label: 'Upper' },
-      { value: 'mid', label: 'Middle' },
-      { value: 'lower', label: 'Lower' },
+      { value: 'upper', label: 'Upper', description: 'Upper band (a price). Typical: Close crosses above Upper = breakout.' },
+      { value: 'mid', label: 'Middle', description: 'Middle band = SMA(period) (a price). Typical: Close crosses the Middle = mean reversion / trend change.' },
+      { value: 'lower', label: 'Lower', description: 'Lower band (a price). Typical: Close crosses below Lower = breakdown.' },
+      {
+        value: 'percentB',
+        label: '%B',
+        description: 'Where the close sits in the band: 0 = on the lower band, 0.5 = middle, 1 = on the upper band; above 1 / below 0 = outside the bands. Compare with a number, e.g. %B > 1.',
+      },
+      {
+        value: 'bandwidth',
+        label: 'Bandwidth %',
+        description: 'Band width as a percentage of the middle band. Low values mean the bands are squeezed (quiet market, often before a big move). Compare with a number, e.g. Bandwidth < 2.',
+      },
     ],
   },
   {

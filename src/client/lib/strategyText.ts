@@ -46,6 +46,9 @@ const PATTERN_LABEL: Record<string, string> = {
 
 const DMI_FIELD: Record<string, string> = { plus: '+DI', minus: '−DI' };
 
+/** Readable names for outputs whose field id isn't self-explanatory. */
+const FIELD_LABEL: Record<string, string> = { percentB: '%B', bandwidth: 'bandwidth %' };
+
 /** "Daily HA " — the timeframe / candle-type prefix of an operand (empty for the run timeframe, normal candles). */
 function seriesText(timeframe?: Timeframe, candle?: CandleType): string {
   const parts: string[] = [];
@@ -72,7 +75,7 @@ export function indicatorLabel(ref: IndicatorRef): string {
   const p = ref.params ? Object.values(ref.params).join(',') : '';
   if (ref.kind === 'DMI') return `DMI(${p}) ${DMI_FIELD[ref.field ?? 'plus'] ?? ref.field}`;
   const base = p ? `${ref.kind}(${p})` : ref.kind;
-  return ref.field ? `${base} ${ref.field}` : base;
+  return ref.field ? `${base} ${FIELD_LABEL[ref.field] ?? ref.field}` : base;
 }
 
 export function conditionText(c: Condition): string {

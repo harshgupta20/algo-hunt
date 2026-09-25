@@ -79,8 +79,14 @@ class BollingerIndicator extends BaseIndicator {
     const mean = this.window.reduce((a, b) => a + b, 0) / this.period;
     const variance = this.window.reduce((a, b) => a + (b - mean) ** 2, 0) / this.period;
     const std = Math.sqrt(variance);
-    if (this.field === 'upper') return mean + this.mult * std;
-    if (this.field === 'lower') return mean - this.mult * std;
+    const upper = mean + this.mult * std;
+    const lower = mean - this.mult * std;
+    if (this.field === 'upper') return upper;
+    if (this.field === 'lower') return lower;
+    // %B: where the close sits in the band — 0 = lower band, 1 = upper band, >1 above it.
+    if (this.field === 'percentB') return upper === lower ? undefined : (bar.close - lower) / (upper - lower);
+    // Bandwidth: band width as a % of the middle band (low values = a squeeze).
+    if (this.field === 'bandwidth') return mean === 0 ? undefined : ((upper - lower) / mean) * 100;
     return mean;
   }
 }
