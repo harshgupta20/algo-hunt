@@ -139,6 +139,7 @@ export const v2Api = {
     return request<V2Product[]>(`/products?${p}`);
   },
   syncProducts: () => post<{ instruments: number; products: number; syncedAt: string }>('/products/sync'),
+  productCounts: (search?: string) => request<{ INDEX: number; STOCK: number; COMMODITY: number; total: number }>(`/products/counts${search ? `?search=${encodeURIComponent(search)}` : ''}`),
 
   strategies: () => request<StrategyRow[]>('/strategies'),
   strategy: (id: string) => request<V2Strategy>(`/strategies/${id}`),

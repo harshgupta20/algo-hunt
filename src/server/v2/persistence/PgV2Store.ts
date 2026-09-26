@@ -8,6 +8,7 @@ import type {
   CalendarEntry,
   ConnectionConfig,
   Delivery,
+  ProductKind,
   ScanRun,
   StrategyDefinition,
   UnitState,
@@ -202,31 +203,42 @@ export class PgV2Store implements V2Store {
     syncedAt: async () => iso((await this.pool.query('SELECT max(synced_at) AS at FROM v2_instruments')).rows[0]?.at),
   };
 
+  /** WHERE clause for product filters (shared by list and counts). */
+  private productWhere(f: ProductFilters, vals: unknown[]): string {
+    const where: string[] = [];
+    if (f.ids) {
+      vals.push(f.ids);
+      where.push(`id = ANY($${vals.length}::text[])`);
+    }
+    if (f.kind) {
+      vals.push(f.kind);
+      where.push(`kind = $${vals.length}`);
+    }
+    if (f.market) {
+      vals.push(f.market);
+      where.push(`market = $${vals.length}`);
+    }
+    if (f.search) {
+      vals.push(`%${f.search.toUpperCase()}%`);
+      where.push(`(upper(symbol) LIKE $${vals.length} OR upper(name) LIKE $${vals.length})`);
+    }
+    return where.length ? `WHERE ${where.join(' AND ')}` : '';
+  }
+
   products = {
     list: async (f: ProductFilters = {}) => {
-      const where: string[] = [];
       const vals: unknown[] = [];
-      if (f.ids) {
-        vals.push(f.ids);
-        where.push(`id = ANY($${vals.length}::text[])`);
-      }
-      if (f.kind) {
-        vals.push(f.kind);
-        where.push(`kind = $${vals.length}`);
-      }
-      if (f.market) {
-        vals.push(f.market);
-        where.push(`market = $${vals.length}`);
-      }
-      if (f.search) {
-        vals.push(`%${f.search.toUpperCase()}%`);
-        where.push(`(upper(symbol) LIKE $${vals.length} OR upper(name) LIKE $${vals.length})`);
-      }
+      const where = this.productWhere(f, vals);
       vals.push(Math.min(f.limit ?? 5000, 5000));
       const order = `CASE kind WHEN 'INDEX' THEN 0 WHEN 'COMMODITY' THEN 1 ELSE 2 END, has_options DESC, symbol`;
-      return (await this.pool.query(`SELECT * FROM v2_products ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order} LIMIT $${vals.length}`, vals)).rows.map(
-        mapProduct,
-      );
+      return (await this.pool.query(`SELECT * FROM v2_products ${where} ORDER BY ${order} LIMIT $${vals.length}`, vals)).rows.map(mapProduct);
+    },
+    countByKind: async (f: Pick<ProductFilters, 'search' | 'market'> = {}) => {
+      const vals: unknown[] = [];
+      const rows = (await this.pool.query(`SELECT kind, count(*)::int AS n FROM v2_products ${this.productWhere(f, vals)} GROUP BY kind`, vals)).rows as Array<{ kind: ProductKind; n: number }>;
+      const out: Record<ProductKind, number> = { INDEX: 0, STOCK: 0, COMMODITY: 0 };
+      for (const r of rows) out[r.kind] = Number(r.n);
+      return out;
     },
     get: async (id: string) => {
       const r = (await this.pool.query('SELECT * FROM v2_products WHERE id = $1', [id])).rows[0];

@@ -12,11 +12,19 @@ import { ProductLegs, Segmented } from './components';
 import { shortDate } from './format';
 import { H } from './help';
 
+/** Rows listed at once (the rest via search / filters). */
+const SHOWN = 300;
+
 export function ProductsTab() {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<'' | ProductKind>('');
-  const list = useQuery({ queryKey: ['v2-products', search, kind, 'tab'], queryFn: () => v2Api.products({ search: search || undefined, kind: kind || undefined, limit: 300 }) });
+  const list = useQuery({ queryKey: ['v2-products', search, kind, 'tab'], queryFn: () => v2Api.products({ search: search || undefined, kind: kind || undefined, limit: SHOWN }) });
+  const counts = useQuery({ queryKey: ['v2-products', 'counts', search], queryFn: () => v2Api.productCounts(search || undefined) });
+  const c = counts.data;
+  const n = (v: number | undefined) => (v === undefined ? '' : ` (${v.toLocaleString('en-IN')})`);
+  const matching = c ? (kind ? c[kind] : c.total) : undefined;
+  const shown = list.data?.length ?? 0;
   const sync = useMutation({
     mutationFn: v2Api.syncProducts,
     onSuccess: () => {
@@ -47,13 +55,30 @@ export function ProductsTab() {
           value={kind}
           onChange={setKind}
           options={[
-            { value: '' as const, label: 'All', help: { title: 'All', body: 'Every product.' } },
-            { value: 'INDEX' as const, label: 'Indices', help: { title: 'Indices', body: 'NSE / BSE indices.' } },
-            { value: 'STOCK' as const, label: 'Stocks', help: { title: 'Stocks', body: 'NSE stocks (cash, and F&O where listed).' } },
-            { value: 'COMMODITY' as const, label: 'Commodities', help: { title: 'Commodities', body: 'MCX commodities.' } },
+            { value: '' as const, label: `All${n(c?.total)}`, help: { title: 'All', body: 'Every product.', note: search ? `Counts include only products matching “${search}”.` : undefined } },
+            { value: 'INDEX' as const, label: `Indices${n(c?.INDEX)}`, help: { title: 'Indices', body: 'NSE / BSE indices.' } },
+            { value: 'STOCK' as const, label: `Stocks${n(c?.STOCK)}`, help: { title: 'Stocks', body: 'NSE stocks (cash, and F&O where listed).' } },
+            { value: 'COMMODITY' as const, label: `Commodities${n(c?.COMMODITY)}`, help: { title: 'Commodities', body: 'MCX commodities.' } },
           ]}
         />
       </div>
+      {matching !== undefined && list.data && (
+        <Tooltip content={{ title: 'Products shown', body: `The table lists up to ${SHOWN} products at a time. Use the search or a type filter to find the rest.` }}>
+          <p className="text-xs text-slate-400 -mb-2">
+            {shown < matching ? (
+              <>
+                Showing <span className="font-semibold text-slate-200">{shown.toLocaleString('en-IN')}</span> of{' '}
+                <span className="font-semibold text-slate-200">{matching.toLocaleString('en-IN')}</span> products — search to narrow the list
+              </>
+            ) : (
+              <>
+                <span className="font-semibold text-slate-200">{matching.toLocaleString('en-IN')}</span> product{matching === 1 ? '' : 's'}
+                {search ? ` matching “${search}”` : ''}
+              </>
+            )}
+          </p>
+        </Tooltip>
+      )}
       <Card className="p-0 overflow-hidden">
         {list.isLoading ? (
           <div className="p-4">

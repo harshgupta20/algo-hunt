@@ -39,6 +39,7 @@ export function v2Controller(ctx: AppContext) {
         limit: num(req.query.get('limit')),
       }),
     product: (req) => svc().product(req.params.id!),
+    productCounts: (req) => svc().productCounts({ search: str(req.query.get('search')), market: str(req.query.get('market')) }),
     syncProducts: () => svc().syncProducts(),
 
     listStrategies: () => svc().listStrategies(),

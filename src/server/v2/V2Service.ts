@@ -101,6 +101,12 @@ export class V2Service {
     return this.deps.store.products.list(f);
   }
 
+  /** Products per type (and in total) matching the search — for the filter buttons. */
+  async productCounts(f: Pick<ProductFilters, 'search' | 'market'>) {
+    const byKind = await this.deps.store.products.countByKind(f);
+    return { ...byKind, total: byKind.INDEX + byKind.STOCK + byKind.COMMODITY };
+  }
+
   async product(id: string): Promise<V2Product> {
     const p = await this.deps.store.products.get(id);
     if (!p) throw new V2ServiceError(404, `Product ${id} not found — sync products`);

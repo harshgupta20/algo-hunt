@@ -4,7 +4,7 @@
  * Search-and-pick products (indices, stocks, commodities). With a strategy,
  * products lacking a leg it needs are marked and can't be picked.
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { X } from 'lucide-react';
@@ -36,6 +36,28 @@ export function ProductPicker({
   const [kind, setKind] = useState<'' | ProductKind>('');
   const list = useQuery({ queryKey: ['v2-products', search, kind], queryFn: () => v2Api.products({ search: search || undefined, kind: kind || undefined, limit: 150 }), staleTime: 60_000 });
   const chosen = useQuery({ queryKey: ['v2-products-ids', selected], queryFn: () => v2Api.products({ ids: selected }), enabled: selected.length > 0, staleTime: 60_000 });
+  const [limitNote, setLimitNote] = useState<string | null>(null);
+  const allRef = useRef<HTMLInputElement>(null);
+  // Products shown right now that the strategy can run on (what "Select all" acts on).
+  const selectable = (list.data ?? []).filter((p) => !definition || incompatibility(definition, p).length === 0);
+  const shownOn = selectable.filter((p) => selected.includes(p.id)).length;
+  const allOn = selectable.length > 0 && shownOn === selectable.length;
+  useEffect(() => {
+    if (allRef.current) allRef.current.indeterminate = shownOn > 0 && !allOn;
+  }, [shownOn, allOn]);
+  useEffect(() => setLimitNote(null), [search, kind]);
+  const toggleAll = () => {
+    const ids = new Set(selectable.map((p) => p.id));
+    if (allOn) {
+      setLimitNote(null);
+      onChange(selected.filter((id) => !ids.has(id)));
+      return;
+    }
+    const missing = selectable.map((p) => p.id).filter((id) => !selected.includes(id));
+    const room = Math.max(0, max - selected.length);
+    setLimitNote(missing.length > room ? `Only ${room} more could be added — the limit here is ${max} products.` : null);
+    onChange([...selected, ...missing.slice(0, room)]);
+  };
   const toggle = (p: V2Product) => {
     if (selected.includes(p.id)) onChange(selected.filter((x) => x !== p.id));
     else if (!multiple) onChange([p.id]);
@@ -78,6 +100,23 @@ export function ProductPicker({
         />
         {multiple && <span className="text-[11px] text-slate-500">{selected.length} selected</span>}
       </div>
+      {multiple && selectable.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Tooltip
+            content={{
+              title: allOn ? 'Clear the shown products' : 'Select all shown products',
+              body: `Ticks every product in the list below (${selectable.length}) that this strategy can run on — use the search or the Indices / Stocks / Commodities filter first to choose which. Products marked “can’t run” are skipped.`,
+              note: `At most ${max} products can be selected here.`,
+            }}
+          >
+            <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-300 cursor-pointer">
+              <input ref={allRef} type="checkbox" checked={allOn} onChange={toggleAll} aria-label="Select all shown products" />
+              Select all shown ({selectable.length})
+            </label>
+          </Tooltip>
+          {limitNote && <span className="text-[11px] text-warn">{limitNote}</span>}
+        </div>
+      )}
       <div className="max-h-64 overflow-y-auto rounded-lg border border-ink-700/60 divide-y divide-ink-700/40">
         {list.isLoading && (
           <div className="p-3">

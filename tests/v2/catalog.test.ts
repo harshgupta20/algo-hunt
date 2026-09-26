@@ -105,3 +105,14 @@ describe('named groups', () => {
     expect(text).toMatch(/AND Option conditions: \(\[B · CE ATM\]/);
   });
 });
+
+describe('product counts', () => {
+  it('counts products per type, following the search', async () => {
+    const { MemoryV2Store } = await import('../helpers/v2Fakes');
+    const store = new MemoryV2Store();
+    const list = [spot('NSE:NIFTY', 'NIFTY 50'), spot('NSE:ITC', 'ITC'), spot('NSE:INFY', 'INFY'), fut('MCX:GOLD', '2026-12-04', 'MCX')];
+    await store.instruments.replaceAll(list, buildProducts(list, { ITC: 'ITC LTD', INFY: 'INFOSYS LTD' }));
+    expect(await store.products.countByKind()).toEqual({ INDEX: 1, STOCK: 2, COMMODITY: 1 });
+    expect(await store.products.countByKind({ search: 'inf' })).toEqual({ INDEX: 0, STOCK: 1, COMMODITY: 0 });
+  });
+});

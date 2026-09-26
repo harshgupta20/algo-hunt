@@ -112,6 +112,7 @@ export function createRouter(ctx: AppContext): Router {
   r.get('/v2/status', v2.status);
   r.get('/v2/products', v2.products);
   r.post('/v2/products/sync', v2.syncProducts);
+  r.get('/v2/products/counts', v2.productCounts); // before /v2/products/:id
   r.get('/v2/products/:id', v2.product);
   r.get('/v2/strategies', v2.listStrategies);
   r.post('/v2/strategies', v2.createStrategy);

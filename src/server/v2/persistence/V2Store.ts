@@ -6,6 +6,7 @@
 import type {
   CalendarEntry,
   ConnectionConfig,
+  ProductKind,
   Delivery,
   ScanRun,
   StrategyDefinition,
@@ -46,6 +47,8 @@ export interface V2Store {
     list(f?: ProductFilters): Promise<V2Product[]>;
     get(id: string): Promise<V2Product | null>;
     count(): Promise<number>;
+    /** Products per type matching the search / market (for filter counts). */
+    countByKind(f?: Pick<ProductFilters, 'search' | 'market'>): Promise<Record<ProductKind, number>>;
   };
   calendar: {
     list(): Promise<CalendarEntry[]>;

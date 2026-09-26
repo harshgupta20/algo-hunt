@@ -55,7 +55,56 @@ export function exampleStrategies(): Array<{ key: string; label: string; descrip
   const B = legSeries('B');
   const C = legSeries('C');
   const D = legSeries('D');
+  const A5 = legSeries('A', '5m');
+  const B5 = legSeries('B', '5m');
+  const C5 = legSeries('C', '5m');
+  const band = (s: SeriesSpec, output: 'upper' | 'lower'): Operand => ({ ...indicatorOperand(s, 'BB'), params: { period: 20, stdDev: 2 }, output });
   return [
+    {
+      key: 'rsi-bb-bull-bear',
+      label: 'RSI + Bollinger · bullish (CE) OR bearish (PE)',
+      description:
+        'Group 1 (bullish): FUT and CE ATM RSI(14) cross above 60, and both close above their upper Bollinger band (20, 2). OR Group 2 (bearish): FUT RSI(14) crosses below 40 and closes below its lower band, while PE ATM RSI(14) crosses above 60 and closes above its upper band. All on 5-minute candles.',
+      definition: {
+        schemaVersion: 1,
+        name: 'RSI + Bollinger — bullish OR bearish',
+        description: 'Group 1 = bullish (future + call), Group 2 = bearish (future + put). Alerts when either group is fully true on a closed 5-minute candle.',
+        legs: [
+          { id: 'A', kind: 'FUT' },
+          { id: 'B', kind: 'CE', strikeOffset: 0 },
+          { id: 'C', kind: 'PE', strikeOffset: 0 },
+        ],
+        evaluation: { mode: 'COMPLETED_CANDLE', triggerTimeframe: '5m' },
+        expression: {
+          type: 'OR',
+          id: uid(),
+          children: [
+            {
+              type: 'AND',
+              id: uid(),
+              label: 'Group 1 · Bullish (CE)',
+              children: [
+                cond(rsi(A5), 'CROSSED_ABOVE', num(60)),
+                cond(rsi(B5), 'CROSSED_ABOVE', num(60)),
+                cond(close(A5), 'GT', band(A5, 'upper')),
+                cond(close(B5), 'GT', band(B5, 'upper')),
+              ],
+            },
+            {
+              type: 'AND',
+              id: uid(),
+              label: 'Group 2 · Bearish (PE)',
+              children: [
+                cond(rsi(A5), 'CROSSED_BELOW', num(40)),
+                cond(rsi(C5), 'CROSSED_ABOVE', num(60)),
+                cond(close(A5), 'LT', band(A5, 'lower')),
+                cond(close(C5), 'GT', band(C5, 'upper')),
+              ],
+            },
+          ],
+        },
+      },
+    },
     {
       key: 'fut-leads-call',
       label: 'Future leads the call (2 legs)',

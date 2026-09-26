@@ -12,6 +12,7 @@ import type {
   LegDef,
   LegId,
   Operand,
+  ProductKind,
   ScanRun,
   SeriesSpec,
   StrategyDefinition,
@@ -88,6 +89,11 @@ export class MemoryV2Store implements V2Store {
       ),
     get: async (id: string) => clone(this.data.products.find((p) => p.id === id) ?? null),
     count: async () => this.data.products.length,
+    countByKind: async (f: Pick<ProductFilters, 'search' | 'market'> = {}) => {
+      const out: Record<ProductKind, number> = { INDEX: 0, STOCK: 0, COMMODITY: 0 };
+      for (const p of await this.products.list(f)) out[p.kind]++;
+      return out;
+    },
   };
 
   calendar = {
