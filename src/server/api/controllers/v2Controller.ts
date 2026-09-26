@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import type { ConnectionConfig, StrategyDefinition } from '@/shared/v2';
-import { calendarSchema, connectionConfigSchema, settingsSchema, strategyDefinitionSchema } from '@/shared/v2';
+import type { ConnectionConfig, LegKind, StrategyDefinition } from '@/shared/v2';
+import { LEG_KINDS, MAX_CONNECT, calendarSchema, connectionConfigSchema, settingsSchema, strategyDefinitionSchema } from '@/shared/v2';
 import type { AppContext } from '../context';
 import { created, type Handler } from '../http';
 import { parse } from '../schemas';
@@ -27,6 +27,10 @@ export function v2Controller(ctx: AppContext) {
   const svc = () => ctx.v2.service;
   const num = (v: string | null) => (v ? Number(v) : undefined);
   const str = (v: string | null) => v ?? undefined;
+  const needs = (v: string | null) => {
+    const kinds = v?.split(',').filter((k): k is LegKind => LEG_KINDS.some((l) => l.kind === k));
+    return kinds?.length ? kinds : undefined;
+  };
 
   const handlers = {
     status: () => svc().status(),
@@ -36,10 +40,11 @@ export function v2Controller(ctx: AppContext) {
         kind: str(req.query.get('kind')),
         market: str(req.query.get('market')),
         ids: req.query.get('ids')?.split(',').filter(Boolean),
+        needs: needs(req.query.get('needs')),
         limit: num(req.query.get('limit')),
       }),
     product: (req) => svc().product(req.params.id!),
-    productCounts: (req) => svc().productCounts({ search: str(req.query.get('search')), market: str(req.query.get('market')) }),
+    productCounts: (req) => svc().productCounts({ search: str(req.query.get('search')), market: str(req.query.get('market')), needs: needs(req.query.get('needs')) }),
     syncProducts: () => svc().syncProducts(),
 
     listStrategies: () => svc().listStrategies(),
@@ -55,7 +60,7 @@ export function v2Controller(ctx: AppContext) {
 
     listConnections: (req) => svc().listConnections(str(req.query.get('strategyId'))),
     createConnections: async (req) => {
-      const b = parse(z.object({ strategyId: z.string().uuid(), productIds: z.array(z.string()).min(1).max(50), config }), req.body);
+      const b = parse(z.object({ strategyId: z.string().uuid(), productIds: z.array(z.string()).min(1).max(MAX_CONNECT), config }), req.body);
       return created(await svc().createConnections(b.strategyId, b.productIds, b.config));
     },
     validateConnection: (req) => {

@@ -26,7 +26,7 @@ import type {
   V2Strategy,
   V2StrategyVersion,
 } from '../../src/shared/v2';
-import { DEFAULT_V2_SETTINGS } from '../../src/shared/v2';
+import { DEFAULT_V2_SETTINGS, offersKinds } from '../../src/shared/v2';
 import type { ChannelFactory, ChannelName, Channel, Message } from '../../src/server/v2/alerts/notifications';
 import type { RawCandle } from '../../src/server/v2/engine/candles';
 import type { CandleQuery, InstrumentDump, Quote, V2DataProvider } from '../../src/server/v2/data/DataProvider';
@@ -84,12 +84,13 @@ export class MemoryV2Store implements V2Store {
             (!f.ids || f.ids.includes(p.id)) &&
             (!f.kind || p.kind === f.kind) &&
             (!f.market || p.market === f.market) &&
+            (!f.needs || offersKinds(p, f.needs)) &&
             (!f.search || p.symbol.includes(f.search.toUpperCase()) || p.name.toUpperCase().includes(f.search.toUpperCase())),
         ),
       ),
     get: async (id: string) => clone(this.data.products.find((p) => p.id === id) ?? null),
     count: async () => this.data.products.length,
-    countByKind: async (f: Pick<ProductFilters, 'search' | 'market'> = {}) => {
+    countByKind: async (f: Pick<ProductFilters, 'search' | 'market' | 'needs'> = {}) => {
       const out: Record<ProductKind, number> = { INDEX: 0, STOCK: 0, COMMODITY: 0 };
       for (const p of await this.products.list(f)) out[p.kind]++;
       return out;

@@ -119,7 +119,12 @@ export const H = {
   connection: {
     new: { title: 'New connection', body: 'Connect a strategy to one or more products.' },
     strategy: { title: 'Strategy', body: 'The strategy to run. Its legs decide which products it can connect to.' },
-    products: { title: 'Products', body: 'Pick one or many. Products that lack a leg the strategy needs (e.g. options) are marked and can’t be chosen.' },
+    products: { title: 'Products', body: 'Pick one or many. Only products offering every leg the strategy needs are listed (e.g. options → F&O stocks, not cash-only ones).' },
+    load: {
+      title: 'Scanner load',
+      body: 'Each product costs one candle request per leg (option legs once per strike position) every trigger candle. Kite allows about 3 requests a second, so the scanner fetches up to “Requests per cycle” (Settings) each minute — products beyond that are checked in the following minutes.',
+      note: 'Your other switched-on connections share the same budget.',
+    },
     expiry: { title: 'Expiry', body: 'Option expiry when the strategy has CE / PE legs (Current = nearest; NSE indices are weekly), otherwise the futures expiry.' },
     shifts: {
       title: 'Strike positions',

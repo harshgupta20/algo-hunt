@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { StrategyDefinition } from '../../src/shared/v2';
-import { incompatibility, legName, strategyDefinitionSchema, strategySummary, validateConnection, validateStrategy } from '../../src/shared/v2';
+import { candleRequestsPerProduct, incompatibility, legName, strategyDefinitionSchema, strategySummary, validateConnection, validateStrategy } from '../../src/shared/v2';
 import { MarketCalendar } from '../../src/server/v2/calendar/MarketCalendar';
 import { mapRow } from '../../src/server/v2/data/KiteDataProvider';
 import { buildProducts } from '../../src/server/v2/data/ProductService';
@@ -114,5 +114,31 @@ describe('product counts', () => {
     await store.instruments.replaceAll(list, buildProducts(list, { ITC: 'ITC LTD', INFY: 'INFOSYS LTD' }));
     expect(await store.products.countByKind()).toEqual({ INDEX: 1, STOCK: 2, COMMODITY: 1 });
     expect(await store.products.countByKind({ search: 'inf' })).toEqual({ INDEX: 0, STOCK: 1, COMMODITY: 0 });
+  });
+
+  it('lists and counts only products offering the legs a strategy needs', async () => {
+    const { MemoryV2Store } = await import('../helpers/v2Fakes');
+    const store = new MemoryV2Store();
+    const list = [spot('NSE:ITC', 'ITC'), spot('NSE:INFY', 'INFY'), fut('NSE:INFY', '2026-10-27'), ...ladder('NSE:INFY', '2026-10-27', 1500, 1520, 10), fut('MCX:GOLD', '2026-12-04', 'MCX')];
+    await store.instruments.replaceAll(list, buildProducts(list, { ITC: 'ITC LTD', INFY: 'INFOSYS LTD' }));
+    expect((await store.products.list({ needs: ['FUT', 'CE', 'PE'] })).map((p) => p.id)).toEqual(['NSE:INFY']); // cash-only ITC and option-less GOLD drop out
+    expect(await store.products.countByKind({ needs: ['FUT'] })).toEqual({ INDEX: 0, STOCK: 1, COMMODITY: 1 });
+    expect(await store.products.countByKind({ needs: ['SPOT'] })).toEqual({ INDEX: 0, STOCK: 2, COMMODITY: 0 });
+  });
+});
+
+describe('scanner load estimate', () => {
+  it('costs one candle request per leg and interval, option legs once per strike position', () => {
+    const legs = [
+      { id: 'A' as const, kind: 'FUT' as const },
+      { id: 'B' as const, kind: 'CE' as const, strikeOffset: 0 },
+    ];
+    // RSI and Close on A share one 15-min fetch; B adds one.
+    const d = strategy(legs, and(cond(ind(legSeries('A'), 'RSI', { period: 14 }), 'GT', num(60)), cond(field(legSeries('A')), 'GT', num(1)), cond(ind(legSeries('B'), 'RSI', { period: 14 }), 'GT', num(60))));
+    expect(candleRequestsPerProduct(d)).toBe(2);
+    expect(candleRequestsPerProduct(d, 3)).toBe(1 + 3); // ATM ± 1 → three CE contracts, one future
+    // 2 hours is built from 1-hour candles (one fetch); 15 min on A is another.
+    const multi = strategy(legs, and(cond(ind(legSeries('A', '1h'), 'RSI', { period: 14 }), 'GT', num(60)), cond(ind(legSeries('A', '2h'), 'RSI', { period: 14 }), 'GT', num(60)), cond(field(legSeries('A')), 'GT', num(1)), cond(field(legSeries('B')), 'GT', num(1))));
+    expect(candleRequestsPerProduct(multi)).toBe(3);
   });
 });

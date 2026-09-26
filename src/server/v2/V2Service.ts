@@ -102,7 +102,7 @@ export class V2Service {
   }
 
   /** Products per type (and in total) matching the search — for the filter buttons. */
-  async productCounts(f: Pick<ProductFilters, 'search' | 'market'>) {
+  async productCounts(f: Pick<ProductFilters, 'search' | 'market' | 'needs'>) {
     const byKind = await this.deps.store.products.countByKind(f);
     return { ...byKind, total: byKind.INDEX + byKind.STOCK + byKind.COMMODITY };
   }

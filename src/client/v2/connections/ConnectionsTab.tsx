@@ -9,7 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Link2, Loader2, Pencil, PlayCircle, Plus, Power, PowerOff, RefreshCw, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
 import type { ConnectionConfig, StrategyDefinition, V2Strategy } from '@/shared/v2';
-import { expiryText, legName, policyText } from '@/shared/v2';
+import { TIMEFRAME, candleRequestsPerProduct, expiryText, legName, policyText } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { Badge, Card, EmptyState, IconButton, Spinner } from '../../components/ui';
 import { V2ApiError, v2Api, type ConnectionRow, type ExplainResult } from '../api';
@@ -83,7 +83,46 @@ function Preview({ definition, strategyId, productId, config }: { definition: St
   );
 }
 
-function NewConnection({ strategies, strategyId, onStrategy, onDone }: { strategies: V2Strategy[]; strategyId: string; onStrategy: (id: string) => void; onDone: () => void }) {
+/** How long the scanner needs to check this selection each trigger candle (Kite rate limit → request budget). */
+function LoadEstimate({ definition, products, config }: { definition: StrategyDefinition; products: number; config: ConnectionConfig }) {
+  const settings = useQuery({ queryKey: ['v2-settings'], queryFn: v2Api.settings, staleTime: 60_000 });
+  if (!products || !settings.data) return null;
+  const hasOptions = definition.legs.some((l) => l.kind === 'CE' || l.kind === 'PE');
+  const requests = products * candleRequestsPerProduct(definition, hasOptions ? new Set(config.strikeShifts).size : 1);
+  const live = definition.evaluation.mode === 'LIVE_CANDLE';
+  const tf = TIMEFRAME[definition.evaluation.triggerTimeframe];
+  const minutes = live ? 1 : tf.minutes;
+  const every = live ? 'every minute' : `each ${tf.label} candle`;
+  const budget = settings.data.requestBudget;
+  const cycles = Math.ceil(requests / budget);
+  const fmt = (v: number) => v.toLocaleString('en-IN');
+  const text =
+    cycles <= 1
+      ? `≈${fmt(requests)} candle requests ${every} — all checked within about a minute of the close.`
+      : cycles <= minutes
+        ? `≈${fmt(requests)} candle requests ${every}. The scanner fetches up to ${fmt(budget)} a minute, so the last products are checked up to ~${cycles} min after the candle closes.`
+        : `≈${fmt(requests)} candle requests ${every} — more than the scanner can fetch before the next candle (${fmt(budget * minutes)}). Some products would be checked late or skipped. Pick fewer products or a longer timeframe.`;
+  return (
+    <Tooltip content={H.connection.load}>
+      <p className={clsx('text-[11px] self-start', cycles <= 1 ? 'text-slate-500' : 'text-warn')}>{text}</p>
+    </Tooltip>
+  );
+}
+
+function NewConnection({
+  strategies,
+  strategyId,
+  connected,
+  onStrategy,
+  onDone,
+}: {
+  strategies: V2Strategy[];
+  strategyId: string;
+  /** Products already connected to the chosen strategy. */
+  connected: string[];
+  onStrategy: (id: string) => void;
+  onDone: () => void;
+}) {
   const qc = useQueryClient();
   const [products, setProducts] = useState<string[]>([]);
   const [config, setConfig] = useState<ConnectionConfig>(DEFAULT_CONFIG);
@@ -128,7 +167,7 @@ function NewConnection({ strategies, strategyId, onStrategy, onDone }: { strateg
           <>
             <div>
               <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500 mb-1.5">Products</p>
-              <ProductPicker selected={products} onChange={(ids) => (setProducts(ids), setError(null))} definition={strategy.definition} />
+              <ProductPicker selected={products} onChange={(ids) => (setProducts(ids), setError(null))} definition={strategy.definition} connected={connected} />
             </div>
             <ConfigEditor
               value={config}
@@ -136,6 +175,7 @@ function NewConnection({ strategies, strategyId, onStrategy, onDone }: { strateg
               definition={strategy.definition}
               expiries={products.length === 1 ? (hasOptions ? single.data?.[0]?.optionExpiries : single.data?.[0]?.futureExpiries) : undefined}
             />
+            <LoadEstimate definition={strategy.definition} products={products.length} config={config} />
             {products[0] && <Preview definition={strategy.definition} strategyId={strategy.id} productId={products[0]} config={config} />}
             {error && (
               <div className="text-xs text-bear">
@@ -313,7 +353,13 @@ export function ConnectionsTab({ initialStrategyId }: { initialStrategyId?: stri
         </Tooltip>
       )}
       {!strategies.data?.length && <EmptyState title="No strategies yet" hint="Create a strategy first (Strategies tab), then connect it to products here." />}
-      {showNew && !!strategies.data?.length && <NewConnection strategies={strategies.data} strategyId={strategyId} onStrategy={setStrategyId} onDone={() => setShowNew(false)} />}
+      {showNew && !!strategies.data?.length && <NewConnection
+          strategies={strategies.data}
+          strategyId={strategyId}
+          connected={list.filter((c) => c.strategyId === strategyId).map((c) => c.productId)}
+          onStrategy={setStrategyId}
+          onDone={() => setShowNew(false)}
+        />}
       {byStrategy.length === 0 && !!strategies.data?.length && <EmptyState title="No connections yet" hint="Connect a strategy to one or more products to start getting alerts." />}
       {byStrategy.map(({ s, rows }) => (
         <Card key={s.id} className="p-0 overflow-hidden">

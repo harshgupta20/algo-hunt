@@ -144,6 +144,38 @@ export function requiredKinds(d: StrategyDefinition): LegKind[] {
   return [...new Set(d.legs.map((l) => l.kind))];
 }
 
+/** Whether a product offers every leg kind in the list. */
+export function offersKinds(p: Pick<V2Product, 'hasSpot' | 'hasFutures' | 'hasOptions'>, kinds: LegKind[]): boolean {
+  return kinds.every((k) => (k === 'SPOT' ? p.hasSpot : k === 'FUT' ? p.hasFutures : p.hasOptions));
+}
+
+/**
+ * Candle requests one connected product costs each trigger candle: one per distinct (leg, native interval) the
+ * conditions read. SPOT / FUT legs are fetched once; CE / PE legs once per strike position.
+ */
+export function candleRequestsPerProduct(d: StrategyDefinition, strikePositions = 1): number {
+  const feeds = new Set<string>();
+  const add = (s: { leg: LegId; timeframe: keyof typeof TIMEFRAME }) => feeds.add(`${s.leg}|${TIMEFRAME[s.timeframe].native}`);
+  const visit = (n: ExprNode): void => {
+    switch (n.type) {
+      case 'AND':
+      case 'OR':
+        return n.children.forEach(visit);
+      case 'NOT':
+        return visit(n.child);
+      case 'PATTERN':
+        return void add(n.series);
+      case 'CONDITION':
+        for (const o of [n.left, n.right]) if (o.kind !== 'CONSTANT') add(o.series);
+    }
+  };
+  visit(d.expression);
+  const optionLegs = new Set(d.legs.filter((l) => l.kind === 'CE' || l.kind === 'PE').map((l) => l.id));
+  let n = 0;
+  for (const f of feeds) n += optionLegs.has(f.slice(0, f.indexOf('|')) as LegId) ? Math.max(1, strikePositions) : 1;
+  return n;
+}
+
 /** Why a strategy can't run on a product (empty = compatible). */
 export function incompatibility(d: StrategyDefinition, p: Pick<V2Product, 'hasSpot' | 'hasFutures' | 'hasOptions' | 'symbol'>): string[] {
   const out: string[] = [];

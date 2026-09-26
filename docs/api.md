@@ -319,14 +319,15 @@ Validation failures return `400` with `{ error, issues: [{ path, message, severi
 | Method | Path | Params / body | Response |
 | --- | --- | --- | --- |
 | GET | `/api/v2/status` | — | Markets (NSE, MCX), Kite, instruments / products, strategies, connections, last scan, channels |
-| GET | `/api/v2/products` | `search`, `kind` (`INDEX`\|`STOCK`\|`COMMODITY`), `market`, `ids` (comma-separated), `limit` | `V2Product[]` (legs available, expiries, strike gap, lot) |
+| GET | `/api/v2/products` | `search`, `kind` (`INDEX`\|`STOCK`\|`COMMODITY`), `market`, `ids` (comma-separated), `needs` (leg kinds a strategy uses, e.g. `FUT,CE,PE` — only products offering all of them), `limit` (max 5000) | `V2Product[]` (legs available, expiries, strike gap, lot) |
+| GET | `/api/v2/products/counts` | `search`, `market`, `needs` | `{ INDEX, STOCK, COMMODITY, total }` — products per type matching the filters (filter-button counts) |
 | GET | `/api/v2/products/:id` | — | `V2Product` |
 | POST | `/api/v2/products/sync` | — | `{ instruments, products, syncedAt }` (NSE, BSE, NFO, BFO, MCX; needs Kite) |
 | GET / POST | `/api/v2/strategies` | POST `{ definition }` (1–4 legs) | list with connection counts · `201` strategy |
 | POST | `/api/v2/strategies/validate` | `{ definition }` | `{ issues, valid, summary }` |
 | GET / PUT / DELETE | `/api/v2/strategies/:id` | PUT `{ definition }` → new version | strategy · `204` |
 | POST | `/api/v2/strategies/:id/duplicate` · GET `/versions` | — | copy · versions |
-| GET / POST | `/api/v2/connections` | GET `?strategyId=` · POST `{ strategyId, productIds[], config }` | rows with product + strategy name · `201` one connection per product (switched off) |
+| GET / POST | `/api/v2/connections` | GET `?strategyId=` · POST `{ strategyId, productIds[] (1–500), config }` | rows with product + strategy name · `201` one connection per product (switched off); `400` if any product is already connected or can’t run the strategy |
 | POST | `/api/v2/connections/validate` · `/preview` | `{ strategyId \| definition, productId, config }` | issues · contracts per leg now (units, ATM reference, quotes) |
 | POST | `/api/v2/connections/explain` | `{ definition, productId, config? }` | Explain an unsaved strategy on a product now |
 | PUT / DELETE | `/api/v2/connections/:id` | PUT `{ config }` | connection · `204` |

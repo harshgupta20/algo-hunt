@@ -64,6 +64,9 @@ Open **V2 · beta** in the sidebar. Every control has an ⓘ or a hover tooltip 
 ## 3. Connect and switch on (Connections tab)
 
 1. Click **New connection**, pick the strategy, then tick one or more products.
+   - Only products that have every leg the strategy uses are listed. A FUT + CE + PE strategy lists the F&O stocks, the indices and the MCX commodities, not cash-only stocks. The type buttons show how many there are, e.g. **Stocks (210)**.
+   - **Select all listed** ticks everything in the list, up to 500 per Connect. Click it again to untick them. Products already connected to the strategy are marked "connected" and skipped.
+   - The amber line under the settings estimates the scanner load. Each product costs one candle request per leg each candle, and option legs cost one per strike position. Kite allows about 3 requests a second, so the scanner fetches up to 150 a minute (Settings → Requests per cycle). With 210 F&O stocks on a 3-leg, 5-min strategy (≈630 requests), the last stocks are checked up to about 5 minutes after the candle closes.
 2. Settings:
    - **Expiry:** for strategies with CE / PE legs this is the option expiry. NSE indices are weekly, so "Current" means this week.
    - **Strike positions:** "Around ATM only", or also ±1 / ±2 / ±3 strikes. Each position alerts separately.

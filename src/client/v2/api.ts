@@ -80,6 +80,8 @@ export interface V2Status {
   channels: ChannelStatus;
 }
 
+export type ProductCounts = { INDEX: number; STOCK: number; COMMODITY: number; total: number };
+
 export type StrategyRow = V2Strategy & { connections: number; enabledConnections: number };
 export type ConnectionRow = V2Connection & { strategyName: string; product: V2Product | null };
 
@@ -129,17 +131,23 @@ export interface CompareInput {
 
 export const v2Api = {
   status: () => request<V2Status>('/status'),
-  products: (q: { search?: string; kind?: string; market?: string; ids?: string[]; limit?: number } = {}) => {
+  products: (q: { search?: string; kind?: string; market?: string; ids?: string[]; needs?: string[]; limit?: number } = {}) => {
     const p = new URLSearchParams();
     if (q.search) p.set('search', q.search);
     if (q.kind) p.set('kind', q.kind);
     if (q.market) p.set('market', q.market);
     if (q.ids?.length) p.set('ids', q.ids.join(','));
+    if (q.needs?.length) p.set('needs', q.needs.join(','));
     if (q.limit) p.set('limit', String(q.limit));
     return request<V2Product[]>(`/products?${p}`);
   },
   syncProducts: () => post<{ instruments: number; products: number; syncedAt: string }>('/products/sync'),
-  productCounts: (search?: string) => request<{ INDEX: number; STOCK: number; COMMODITY: number; total: number }>(`/products/counts${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  productCounts: (q: { search?: string; needs?: string[] } = {}) => {
+    const p = new URLSearchParams();
+    if (q.search) p.set('search', q.search);
+    if (q.needs?.length) p.set('needs', q.needs.join(','));
+    return request<ProductCounts>(`/products/counts?${p}`);
+  },
 
   strategies: () => request<StrategyRow[]>('/strategies'),
   strategy: (id: string) => request<V2Strategy>(`/strategies/${id}`),

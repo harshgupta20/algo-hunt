@@ -222,6 +222,7 @@ export class PgV2Store implements V2Store {
       vals.push(`%${f.search.toUpperCase()}%`);
       where.push(`(upper(symbol) LIKE $${vals.length} OR upper(name) LIKE $${vals.length})`);
     }
+    for (const k of new Set(f.needs ?? [])) where.push(k === 'SPOT' ? 'has_spot' : k === 'FUT' ? 'has_futures' : 'has_options');
     return where.length ? `WHERE ${where.join(' AND ')}` : '';
   }
 
@@ -233,7 +234,7 @@ export class PgV2Store implements V2Store {
       const order = `CASE kind WHEN 'INDEX' THEN 0 WHEN 'COMMODITY' THEN 1 ELSE 2 END, has_options DESC, symbol`;
       return (await this.pool.query(`SELECT * FROM v2_products ${where} ORDER BY ${order} LIMIT $${vals.length}`, vals)).rows.map(mapProduct);
     },
-    countByKind: async (f: Pick<ProductFilters, 'search' | 'market'> = {}) => {
+    countByKind: async (f: Pick<ProductFilters, 'search' | 'market' | 'needs'> = {}) => {
       const vals: unknown[] = [];
       const rows = (await this.pool.query(`SELECT kind, count(*)::int AS n FROM v2_products ${this.productWhere(f, vals)} GROUP BY kind`, vals)).rows as Array<{ kind: ProductKind; n: number }>;
       const out: Record<ProductKind, number> = { INDEX: 0, STOCK: 0, COMMODITY: 0 };

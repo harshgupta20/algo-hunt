@@ -20,7 +20,7 @@ export function ProductsTab() {
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<'' | ProductKind>('');
   const list = useQuery({ queryKey: ['v2-products', search, kind, 'tab'], queryFn: () => v2Api.products({ search: search || undefined, kind: kind || undefined, limit: SHOWN }) });
-  const counts = useQuery({ queryKey: ['v2-products', 'counts', search], queryFn: () => v2Api.productCounts(search || undefined) });
+  const counts = useQuery({ queryKey: ['v2-products', 'counts', search], queryFn: () => v2Api.productCounts({ search: search || undefined }) });
   const c = counts.data;
   const n = (v: number | undefined) => (v === undefined ? '' : ` (${v.toLocaleString('en-IN')})`);
   const matching = c ? (kind ? c[kind] : c.total) : undefined;

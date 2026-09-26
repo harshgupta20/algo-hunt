@@ -58,6 +58,8 @@ export const PRODUCT_KIND_LABEL: Record<ProductKind, string> = { INDEX: 'Index',
 
 export const LEG_IDS = ['A', 'B', 'C', 'D'] as const;
 export const MAX_LEGS = 4;
+/** Products one "Connect" can link at once (covers every F&O stock, index and commodity). */
+export const MAX_CONNECT = 500;
 export const MAX_STRIKE_OFFSET = 20;
 
 export const LEG_KINDS: Array<{ kind: LegKind; label: string; name: string; description: string }> = [

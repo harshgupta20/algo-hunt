@@ -6,6 +6,7 @@
 import type {
   CalendarEntry,
   ConnectionConfig,
+  LegKind,
   ProductKind,
   Delivery,
   ScanRun,
@@ -33,6 +34,8 @@ export interface ProductFilters {
   kind?: string;
   market?: string;
   ids?: string[];
+  /** Only products offering every one of these legs (what a strategy needs). */
+  needs?: LegKind[];
   limit?: number;
 }
 
@@ -48,7 +51,7 @@ export interface V2Store {
     get(id: string): Promise<V2Product | null>;
     count(): Promise<number>;
     /** Products per type matching the search / market (for filter counts). */
-    countByKind(f?: Pick<ProductFilters, 'search' | 'market'>): Promise<Record<ProductKind, number>>;
+    countByKind(f?: Pick<ProductFilters, 'search' | 'market' | 'needs'>): Promise<Record<ProductKind, number>>;
   };
   calendar: {
     list(): Promise<CalendarEntry[]>;
