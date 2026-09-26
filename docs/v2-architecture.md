@@ -37,6 +37,10 @@ A strategy has 1–4 legs (`A`–`D`), each optionally named. Conditions compare
 number), each value on its own timeframe and candle type — e.g. `A · FUT RSI(14) > B · CE ATM RSI(14)`. The operand
 model leaves room for arithmetic operands later (differences, % gaps, strike levels).
 
+In the editor, every Leg list ends with **+ Add FUT / CE ATM / PE ATM / SPOT leg** (adds the leg and assigns it), a
+hint with the same buttons appears while a strategy has a single leg, and groups can be named (shown in the preview,
+explain view and traces).
+
 A product can run a strategy only if it has every leg type the strategy uses; the UI marks the rest "can't run" and
 the server refuses them.
 
@@ -104,7 +108,7 @@ Deleting a strategy cascades to its connections, their unit states, signals and 
 
 ## 8. Verification
 
-- `tests/v2/` — 23 tests: product mapping from Kite dumps, NSE calendar, leg resolution (spot-based ATM on NSE,
+- `tests/v2/` — 24 tests: product mapping from Kite dumps, NSE calendar, leg resolution (spot-based ATM on NSE,
   future-based on MCX, strike positions, missing legs, spot / futures-only), validation, the boundary guard, and an
   end-to-end suite with one FUT-vs-CE strategy connected to NIFTY, BANKNIFTY and GOLD (alerts only where both
   conditions hold, market gating, no re-alerting, compatibility refusal, channel check on switch-on, explain, compare).

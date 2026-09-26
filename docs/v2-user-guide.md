@@ -35,7 +35,16 @@ Open **V2 · beta** in the sidebar. Every control has an ⓘ or a hover tooltip 
 3. **When.** Choose the evaluation clock, e.g. every closed 15-minute candle.
 4. **Conditions.** Compare any leg with any other leg, or with a number. Each value has its own timeframe and candle type (Normal, Heikin Ashi, Volume).
    - Examples: *A · FUT RSI(14) > B · CE ATM RSI(14)*, *B · CE ATM Close crossed above B · CE ATM SMA(20)*.
-   - Combine conditions with AND / OR groups and NOT.
+   - **Future AND options:** click **+ Condition** once per rule and pick the leg for each row:
+     ```
+     AND
+       A · FUT    RSI(14) crossed above 60
+       A · FUT    Close > SMA(20)
+       B · CE ATM RSI(14) crossed above 60
+       C · PE ATM RSI(14) < 40
+     ```
+   - **Need a leg you haven't added?** Pick **+ Add FUT / CE ATM / PE ATM / SPOT leg** at the bottom of any Leg list. The leg is added to section 1 and used by that condition. With only one leg, a hint above the conditions offers the same buttons.
+   - Combine conditions with AND / OR groups and NOT. Name a group (e.g. "Future conditions", "Option conditions") so the preview and alerts read clearly.
 5. Check the **Preview** and **Validation** on the right.
 6. **Try on a product.** Pick one product and press Run. You'll see every condition's current value and whether it would alert now. Nothing is saved or sent.
 7. **Save.** Every save is a new version, and alerts show which version fired.

@@ -83,3 +83,25 @@ describe('strategy + connection validation', () => {
     expect(validateConnection(s, nifty, config({ expiry: { mode: 'SPECIFIC', date: '2030-01-01' } })).map((i) => i.message).join()).toMatch(/no option expiry on 2030-01-01/);
   });
 });
+
+describe('named groups', () => {
+  it('shows nested group names in the strategy text', () => {
+    const d = strategy(
+      [
+        { id: 'A', kind: 'FUT' },
+        { id: 'B', kind: 'CE', strikeOffset: 0 },
+      ],
+      {
+        type: 'AND',
+        id: 'root',
+        children: [
+          { type: 'AND', id: 'f', label: 'Future conditions', children: [cond(ind(legSeries('A'), 'RSI', { period: 14 }), 'GT', num(60))] },
+          { type: 'OR', id: 'o', label: 'Option conditions', children: [cond(ind(legSeries('B'), 'RSI', { period: 14 }), 'CROSSED_ABOVE', num(60))] },
+        ],
+      },
+    );
+    const text = strategySummary(d);
+    expect(text).toMatch(/Future conditions: \(\[A · FUT\] \[15 min\] \[Normal\] RSI\(14\) > 60\)/);
+    expect(text).toMatch(/AND Option conditions: \(\[B · CE ATM\]/);
+  });
+});

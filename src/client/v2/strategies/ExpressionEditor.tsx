@@ -8,11 +8,12 @@
  */
 import clsx from 'clsx';
 import { AlertTriangle, ArrowDown, ArrowUp, Ban, CandlestickChart, FolderPlus, Plus, Trash2, Undo2 } from 'lucide-react';
-import type { ConditionNode, ExprNode, GroupNode, LegDef, PatternNode, SeriesSpec } from '@/shared/v2';
-import { OPERATORS, PATTERNS, conditionText, nodeText, operandUnit } from '@/shared/v2';
+import type { ConditionNode, ExprNode, GroupNode, LegDef, LegId, LegKind, PatternNode, SeriesSpec } from '@/shared/v2';
+import { OPERATORS, PATTERNS, conditionText, legName, nodeText, operandUnit } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { IconButton } from '../../components/ui';
 import { Cell } from '../components';
+import { LEG_KIND_TEXT } from '../format';
 import { H } from '../help';
 import { newCondition, newGroup, newPattern, wrapNot } from './defaults';
 import { OperandEditor, SeriesPicker } from './OperandEditor';
@@ -20,6 +21,7 @@ import { OperandEditor, SeriesPicker } from './OperandEditor';
 interface Ctx {
   defaultSeries: SeriesSpec;
   legs: LegDef[];
+  onAddLeg?: (kind: LegKind) => LegId | undefined;
 }
 
 function Toolbar({ index, count, onMove, onRemove, onNot, isNot }: { index: number; count: number; onMove: (d: -1 | 1) => void; onRemove: () => void; onNot: () => void; isNot: boolean }) {
@@ -60,7 +62,7 @@ function ConditionEditor({ node, ctx, onChange }: { node: ConditionNode; ctx: Ct
   const opSpec = OPERATORS.find((o) => o.value === node.operator);
   return (
     <div className="flex flex-col gap-3">
-      <OperandEditor side="Left" value={node.left} onChange={(left) => onChange({ ...node, left })} defaultSeries={ctx.defaultSeries} legs={ctx.legs} allowConstant={false} />
+      <OperandEditor side="Left" value={node.left} onChange={(left) => onChange({ ...node, left })} defaultSeries={ctx.defaultSeries} legs={ctx.legs} onAddLeg={ctx.onAddLeg} allowConstant={false} />
       <div className="flex flex-wrap items-end gap-3">
         <Cell label="Operator" help={{ ...H.editor.operator, title: `Operator — ${opSpec?.label ?? ''}` }}>
           <select aria-label="Operator" className="input py-1 text-xs" value={node.operator} onChange={(e) => onChange({ ...node, operator: e.target.value as ConditionNode['operator'] })}>
@@ -78,6 +80,7 @@ function ConditionEditor({ node, ctx, onChange }: { node: ConditionNode; ctx: Ct
         onChange={(right) => onChange({ ...node, right })}
         defaultSeries={node.left.kind === 'CONSTANT' ? ctx.defaultSeries : node.left.series}
         legs={ctx.legs}
+        onAddLeg={ctx.onAddLeg}
       />
       <p className="text-[11px] text-slate-500">
         Reads as: <span className="font-mono text-slate-300">{conditionText(node, ctx.legs)}</span>
@@ -110,7 +113,7 @@ function PatternEditor({ node, ctx, onChange }: { node: PatternNode; ctx: Ctx; o
             ))}
           </select>
         </Cell>
-        <SeriesPicker label="Pattern" value={node.series} onChange={(series) => onChange({ ...node, series })} legs={ctx.legs} />
+        <SeriesPicker label="Pattern" value={node.series} onChange={(series) => onChange({ ...node, series })} legs={ctx.legs} onAddLeg={ctx.onAddLeg} />
       </div>
       <p className="text-[11px] text-slate-500">
         Reads as: <span className="font-mono text-slate-300">{nodeText(node, ctx.legs)}</span>
@@ -200,6 +203,15 @@ export function GroupEditor({ group, ctx, onChange, depth = 0, embedded }: { gro
             </Tooltip>
           ))}
         </div>
+        <Tooltip content={H.editor.groupLabel}>
+          <input
+            aria-label="Group name"
+            className="input py-1 text-xs w-44"
+            placeholder={depth === 0 ? 'Name (optional)' : 'e.g. Option conditions'}
+            value={group.label ?? ''}
+            onChange={(e) => onChange({ ...group, label: e.target.value || undefined })}
+          />
+        </Tooltip>
         <span className="text-[11px] text-slate-500">
           {group.children.length} item{group.children.length === 1 ? '' : 's'} · {group.type === 'AND' ? 'all must be true' : 'any one is enough'}
         </span>
@@ -242,8 +254,46 @@ export function GroupEditor({ group, ctx, onChange, depth = 0, embedded }: { gro
   );
 }
 
+/** With a single leg, point out how to bring the other instruments into the conditions. */
+function OneLegHint({ legs, onAddLeg }: { legs: LegDef[]; onAddLeg?: Ctx['onAddLeg'] }) {
+  if (legs.length !== 1 || !onAddLeg) return null;
+  const only = legs[0]!;
+  const offer = (['FUT', 'CE', 'PE'] as const).filter((k) => k !== only.kind);
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-slate-300">
+      <span>
+        Only leg <span className="font-semibold">{legName(only)}</span> exists, so every condition reads it. To combine the future with options, add legs:
+      </span>
+      {offer.map((k) => (
+        <Tooltip key={k} content={{ ...H.legs.add, title: `Add a ${k === 'FUT' ? 'FUT' : `${k} ATM`} leg`, body: `Adds leg ${k === 'FUT' ? 'FUT' : `${k} ATM`} to section 1 so conditions can use it.` }}>
+          <button type="button" className={clsx('btn-ghost py-0.5 text-xs font-semibold', LEG_KIND_TEXT[k])} onClick={() => onAddLeg(k)}>
+            <Plus className="w-3 h-3" /> {k === 'FUT' ? 'FUT' : `${k} ATM`}
+          </button>
+        </Tooltip>
+      ))}
+    </div>
+  );
+}
+
 /** Root editor: the root is always a group (a single condition is wrapped). */
-export function ExpressionEditor({ expression, onChange, defaultSeries, legs }: { expression: ExprNode; onChange: (root: ExprNode) => void; defaultSeries: SeriesSpec; legs: LegDef[] }) {
+export function ExpressionEditor({
+  expression,
+  onChange,
+  defaultSeries,
+  legs,
+  onAddLeg,
+}: {
+  expression: ExprNode;
+  onChange: (root: ExprNode) => void;
+  defaultSeries: SeriesSpec;
+  legs: LegDef[];
+  onAddLeg?: Ctx['onAddLeg'];
+}) {
   const root: GroupNode = expression.type === 'AND' || expression.type === 'OR' ? expression : newGroup('AND', [expression]);
-  return <GroupEditor group={root} ctx={{ defaultSeries, legs }} onChange={onChange} />;
+  return (
+    <>
+      <OneLegHint legs={legs} onAddLeg={onAddLeg} />
+      <GroupEditor group={root} ctx={{ defaultSeries, legs, onAddLeg }} onChange={onChange} />
+    </>
+  );
 }

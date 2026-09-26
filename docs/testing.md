@@ -61,7 +61,7 @@ Postgres, Kite or the network.
 | [mcx2/validate.test.ts](../tests/mcx2/validate.test.ts) | 7 | Schema, unit mismatch, empty groups / params, synced products, cap, channels for enabling, CE / PE legs on futures, products without options, summary text |
 | [mcx2/scanner.test.ts](../tests/mcx2/scanner.test.ts) | 11 | Both Definition-of-Done strategies end to end; FUT + CE + PE of one strike combined; no re-evaluation of a candle; identity dedupe; enable floor; series and channel failure isolation; request budget; skip reasons; explain and replay |
 | [v2/resolve.test.ts](../tests/v2/resolve.test.ts) | 5 | V2 legs → contracts: spot-based ATM (NSE), future-based ATM (MCX), FUT = the future options expire into, strike positions, legs outside the ladder, spot / futures-only |
-| [v2/catalog.test.ts](../tests/v2/catalog.test.ts) | 6 | Kite dump rows → V2 instruments and products; NSE calendar; strategy / connection validation and product compatibility |
+| [v2/catalog.test.ts](../tests/v2/catalog.test.ts) | 7 | Kite dump rows → V2 instruments and products; NSE calendar; strategy / connection validation and product compatibility; named groups in the strategy text |
 | [v2/scanner.test.ts](../tests/v2/scanner.test.ts) | 8 | One FUT-vs-CE strategy on NIFTY, BANKNIFTY and GOLD: alerts, market gating, no re-alerting, refusals, explain, compare, spot-only on stocks |
 | [v2/boundary.test.ts](../tests/v2/boundary.test.ts) | 4 | V2 never imports MCX V2 or V1 business modules; the app imports V2 only at the wiring points |
 | [mcx2/boundary.test.ts](../tests/mcx2/boundary.test.ts) | 4 | MCX V2 never imports V1 business modules; V1 imports V2 only at the wiring points |

@@ -6,8 +6,8 @@
  * [B · CE ATM] [15 min] [Normal] RSI(14). Any leg can be compared with any other.
  */
 import clsx from 'clsx';
-import type { CandleSpec, LegDef, LegId, Operand, SeriesSpec, SourceField } from '@/shared/v2';
-import { CANDLE_TYPES, INDICATOR, INDICATORS, TIMEFRAMES, legName } from '@/shared/v2';
+import type { CandleSpec, LegDef, LegId, LegKind, Operand, SeriesSpec, SourceField } from '@/shared/v2';
+import { CANDLE_TYPES, INDICATOR, INDICATORS, MAX_LEGS, TIMEFRAMES, legName } from '@/shared/v2';
 import { Cell } from '../components';
 import { LEG_KIND_TEXT } from '../format';
 import { H } from '../help';
@@ -22,16 +22,27 @@ const FIELDS: Array<{ value: SourceField; label: string }> = [
   { value: 'oi', label: 'OI' },
 ];
 
+/** Quick-add choices offered at the bottom of every Leg list. */
+const QUICK_LEGS: Array<{ kind: LegKind; label: string }> = [
+  { kind: 'FUT', label: '+ Add FUT leg' },
+  { kind: 'CE', label: '+ Add CE ATM leg' },
+  { kind: 'PE', label: '+ Add PE ATM leg' },
+  { kind: 'SPOT', label: '+ Add SPOT leg' },
+];
+
 export function SeriesPicker({
   value,
   onChange,
   legs,
+  onAddLeg,
   label = 'Series',
 }: {
   value: SeriesSpec;
   onChange: (s: SeriesSpec) => void;
   /** The strategy's legs. */
   legs: LegDef[];
+  /** Adds a leg to the strategy and returns its id (quick add from this list). */
+  onAddLeg?: (kind: LegKind) => LegId | undefined;
   label?: string;
 }) {
   const setCandle = (type: CandleSpec['type']) => onChange({ ...value, candle: type === 'VOLUME' ? { type, volumePerCandle: 10_000 } : { type } });
@@ -43,7 +54,15 @@ export function SeriesPicker({
           aria-label={`${label} leg`}
           className={clsx('input py-1 text-xs font-semibold', current ? LEG_KIND_TEXT[current.kind] : 'text-warn')}
           value={value.leg}
-          onChange={(e) => onChange({ ...value, leg: e.target.value as LegId })}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v.startsWith('add:')) {
+              const id = onAddLeg?.(v.slice(4) as LegKind);
+              if (id) onChange({ ...value, leg: id });
+              return;
+            }
+            onChange({ ...value, leg: v as LegId });
+          }}
         >
           {!current && <option value={value.leg}>{value.leg} · (removed leg)</option>}
           {legs.map((l) => (
@@ -51,6 +70,15 @@ export function SeriesPicker({
               {legName(l)}
             </option>
           ))}
+          {onAddLeg && legs.length < MAX_LEGS && (
+            <optgroup label={`Add a leg (${legs.length}/${MAX_LEGS})`}>
+              {QUICK_LEGS.map((q) => (
+                <option key={q.kind} value={`add:${q.kind}`}>
+                  {q.label}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
       </Cell>
       <Cell label="Timeframe" help={H.editor.timeframe}>
@@ -93,6 +121,7 @@ export function OperandEditor({
   side,
   defaultSeries,
   legs,
+  onAddLeg,
   allowConstant = true,
 }: {
   value: Operand;
@@ -100,6 +129,7 @@ export function OperandEditor({
   side: 'Left' | 'Right';
   defaultSeries: SeriesSpec;
   legs: LegDef[];
+  onAddLeg?: (kind: LegKind) => LegId | undefined;
   allowConstant?: boolean;
 }) {
   const series = value.kind === 'CONSTANT' ? defaultSeries : value.series;
@@ -129,7 +159,7 @@ export function OperandEditor({
         </Cell>
       )}
 
-      {value.kind !== 'CONSTANT' && <SeriesPicker label={side} value={value.series} onChange={(s) => onChange({ ...value, series: s } as Operand)} legs={legs} />}
+      {value.kind !== 'CONSTANT' && <SeriesPicker label={side} value={value.series} onChange={(s) => onChange({ ...value, series: s } as Operand)} legs={legs} onAddLeg={onAddLeg} />}
 
       {value.kind === 'FIELD' && (
         <Cell label="Field" help={H.editor.field}>

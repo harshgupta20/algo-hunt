@@ -81,7 +81,9 @@ export function nodeText(n: ExprNode, legs: LegDef[], depth = 0): string {
     default: {
       const parts = n.children.map((c) => nodeText(c, legs, depth + 1));
       const joined = parts.join(`\n${'  '.repeat(depth + 1)}${n.type} `);
-      return depth === 0 ? joined : `(${joined})`;
+      // Nested groups show their name; the top level is named by the strategy itself.
+      const name = n.label?.trim() ? `${n.label.trim()}: ` : '';
+      return depth === 0 ? joined : `${name}(${joined})`;
     }
   }
 }

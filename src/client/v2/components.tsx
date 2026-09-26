@@ -220,6 +220,7 @@ export function TraceView({ trace, depth = 0 }: { trace: ExprTrace; depth?: numb
     <div className={clsx(depth > 0 && 'ml-3 pl-3 border-l border-ink-700')}>
       <div className="flex items-center gap-2 py-1">
         <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">{trace.type}</span>
+        {trace.label && <span className="text-xs font-medium text-slate-300">{trace.label}</span>}
         <TriBadge value={trace.result} />
       </div>
       {trace.children?.map((c) => <TraceView key={c.id} trace={c} depth={depth + 1} />)}

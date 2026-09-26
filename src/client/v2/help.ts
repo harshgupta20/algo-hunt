@@ -78,6 +78,11 @@ export const H = {
       example: 'A · FUT RSI(14) > B · CE ATM RSI(14) AND B · CE ATM RSI(14) crossed above 60',
     },
     group: { title: 'Group', body: 'AND: every item must be true. OR: at least one. Groups can be nested.' },
+    groupLabel: {
+      title: 'Group name',
+      body: 'Optional label for this group, shown in the preview, explanations and alerts — e.g. “Future conditions” and “Option conditions”.',
+      example: 'Future conditions AND Option conditions',
+    },
     not: { title: 'NOT', body: 'Inverts the wrapped item. Unknown (not enough data) stays unknown.' },
     addCondition: { title: 'Add condition', body: 'Compare two values — e.g. a leg’s indicator against another leg’s indicator, or a number.' },
     addPattern: { title: 'Add candlestick pattern', body: 'True on the candle that completes the pattern, on the leg / timeframe / candle type you choose.' },
@@ -87,7 +92,10 @@ export const H = {
     remove: { title: 'Remove', body: 'Remove this item.' },
     wrapNot: { title: 'Wrap in NOT', body: 'True only when its content is false.' },
     unwrapNot: { title: 'Remove NOT', body: 'Unwrap this item.' },
-    leg: { title: 'Leg', body: 'Which of the strategy’s legs this value reads.' },
+    leg: {
+      title: 'Leg',
+      body: 'Which of the strategy’s legs this value reads. Use “+ Add … leg” at the bottom of the list to add a FUT, CE, PE or SPOT leg without leaving the condition.',
+    },
     timeframe: { title: 'Timeframe', body: 'Candle size for this value. 2h / 4h are built from 1h candles and Weekly from daily, aligned to each market’s session.' },
     candle: { title: 'Candle type', body: 'Normal, Heikin Ashi (smoothed), or Volume candles (close each time the given volume trades; restart daily).' },
     volumePerCandle: { title: 'Volume per candle', body: 'A volume candle closes when its traded volume reaches this many units.' },

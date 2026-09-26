@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, Loader2, PlayCircle, Save, X, XCircle } from 'lucide-react';
 import clsx from 'clsx';
-import type { ExprNode, StrategyDefinition, V2Strategy } from '@/shared/v2';
+import type { ExprNode, LegId, LegKind, StrategyDefinition, V2Strategy } from '@/shared/v2';
 import { TIMEFRAMES, strategySummary } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { V2ApiError, v2Api, type ExplainResult } from '../api';
@@ -19,7 +19,7 @@ import { Cell, Section, Segmented } from '../components';
 import { ExplainView } from '../ExplainView';
 import { H } from '../help';
 import { ProductPicker } from '../ProductPicker';
-import { dominantSeries, legSeries, usedLegs } from './defaults';
+import { dominantSeries, legSeries, nextLegId, usedLegs } from './defaults';
 import { ExpressionEditor } from './ExpressionEditor';
 import { LegsEditor } from './LegsEditor';
 
@@ -45,6 +45,14 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: V2St
     setDef((d) => ({ ...d, ...patch }));
   };
   const used = usedLegs(def.expression);
+  /** Quick add from a condition's Leg list or the one-leg hint; returns the new leg's id. */
+  const addLeg = (kind: LegKind): LegId | undefined => {
+    const id = nextLegId(def.legs);
+    if (!id) return undefined;
+    setServerError(null);
+    setDef((d) => ({ ...d, legs: [...d.legs, kind === 'CE' || kind === 'PE' ? { id, kind, strikeOffset: 0 } : { id, kind }] }));
+    return id;
+  };
   const defaultSeries = dominantSeries(def.expression, legSeries(def.legs[0]?.id ?? 'A', def.evaluation.triggerTimeframe));
 
   const save = useMutation({
@@ -125,7 +133,7 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: V2St
           </Section>
 
           <Section step="3 · Conditions" title="When should it alert?" help={H.editor.conditions}>
-            <ExpressionEditor expression={def.expression} onChange={(expression: ExprNode) => set({ expression })} defaultSeries={defaultSeries} legs={def.legs} />
+            <ExpressionEditor expression={def.expression} onChange={(expression: ExprNode) => set({ expression })} defaultSeries={defaultSeries} legs={def.legs} onAddLeg={addLeg} />
           </Section>
         </div>
 
