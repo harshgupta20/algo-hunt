@@ -6,10 +6,11 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import type { ScanRun } from '@/shared/v2';
 import { InfoTip, Tooltip } from '../components/Tooltip';
-import { Badge, Card, EmptyState, Spinner } from '../components/ui';
+import { Badge, Card, EmptyState } from '../components/ui';
 import { v2Api } from './api';
 import { istStampIso } from './format';
 import { H } from './help';
+import { SkeletonRows } from '../components/loaders';
 
 const TONE: Record<ScanRun['status'], 'bull' | 'warn' | 'bear' | 'default'> = { OK: 'bull', PARTIAL: 'warn', FAILED: 'bear', SKIPPED: 'default' };
 const STATUS_HELP: Record<ScanRun['status'], string> = {
@@ -40,9 +41,7 @@ export function ScannerTab() {
       </div>
       <Card className="p-0 overflow-hidden">
         {runs.isLoading ? (
-          <div className="p-4">
-            <Spinner />
-          </div>
+          <SkeletonRows rows={6} dense />
         ) : list.length === 0 ? (
           <EmptyState title="No scanner cycles recorded" hint="Cycles run every minute during market hours once a connection is switched on." />
         ) : (

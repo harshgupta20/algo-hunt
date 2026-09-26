@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Link2, Loader2, LogOut, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Link2, LogOut, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
 import type { KiteAuthState } from '@ash/shared';
 import { api } from '../lib/api';
@@ -11,6 +11,7 @@ import { fmtTime } from '../lib/format';
 import { useKiteStatus } from '../hooks/useKiteStatus';
 import { Card, Help } from './ui';
 import { HELP } from '../lib/help';
+import { InlineSpinner } from './loaders';
 
 const STATE_META: Record<KiteAuthState, { label: string; text: string; dot: string }> = {
   connected: { label: 'Connected', text: 'text-bull', dot: 'bg-bull' },
@@ -89,7 +90,7 @@ export function KiteConnectionCard() {
         <div className="flex items-center gap-2 text-sm">
           <span className={clsx('w-2.5 h-2.5 rounded-full', meta.dot)} />
           <span className={clsx('font-medium', meta.text)}>{meta.label}</span>
-          {data.state === 'connecting' && <Loader2 className="w-4 h-4 animate-spin text-warn" />}
+          {data.state === 'connecting' && <InlineSpinner className="w-4 h-4 text-warn" />}
           {connected && data.userName && (
             <span className="text-slate-400">
               · {data.userName} {data.userId ? `(${data.userId})` : ''}

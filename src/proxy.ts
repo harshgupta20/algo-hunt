@@ -32,5 +32,6 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg).*)'],
+  // App icons (icon.png, apple-icon.png) stay public so the login page and browser tab can show them.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon|apple-icon).*)'],
 };

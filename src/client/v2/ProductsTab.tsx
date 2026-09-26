@@ -2,15 +2,16 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import type { ProductKind } from '@/shared/v2';
 import { PRODUCT_KIND_LABEL } from '@/shared/v2';
 import { Tooltip } from '../components/Tooltip';
-import { Card, EmptyState, Spinner } from '../components/ui';
+import { Card, EmptyState } from '../components/ui';
 import { v2Api } from './api';
 import { ProductLegs, Segmented } from './components';
 import { shortDate } from './format';
 import { H } from './help';
+import { InlineSpinner, SkeletonRows } from '../components/loaders';
 
 /** Rows listed at once (the rest via search / filters). */
 const SHOWN = 300;
@@ -38,7 +39,7 @@ export function ProductsTab() {
       <div className="flex flex-wrap items-center gap-3">
         <Tooltip content={H.products.sync}>
           <button type="button" className="btn-ghost" disabled={sync.isPending} onClick={() => sync.mutate()}>
-            {sync.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Sync from Kite
+            {sync.isPending ? <InlineSpinner /> : <RefreshCw className="w-4 h-4" />} Sync from Kite
           </button>
         </Tooltip>
         {sync.data && (
@@ -81,9 +82,7 @@ export function ProductsTab() {
       )}
       <Card className="p-0 overflow-hidden">
         {list.isLoading ? (
-          <div className="p-4">
-            <Spinner />
-          </div>
+          <SkeletonRows rows={8} />
         ) : list.data?.length ? (
           <div className="overflow-x-auto max-h-[36rem]">
             <table className="w-full text-xs">

@@ -5,8 +5,8 @@ import { DEFAULT_THEME, THEME_COLOR, THEME_INIT_SCRIPT } from '@/client/theme/th
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Algo Hunt · RSI Alert Platform',
-  description: 'Real-time RSI synchronized Future / Call / Put alerting on Zerodha Kite.',
+  title: 'Algo Hunt · Alert Platform',
+  description: 'Strategy + Product = Alert — product-agnostic strategies on NSE and MCX, alerted from live Zerodha Kite data.',
   robots: { index: false, follow: false },
 };
 

@@ -2,8 +2,10 @@
 
 import { useState, type FormEvent } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Activity, Loader2, Lock } from 'lucide-react';
+import { Lock } from 'lucide-react';
+import { Logo } from '@/client/components/Logo';
 import { Tooltip } from '@/client/components/Tooltip';
+import { InlineSpinner } from '@/client/components/loaders';
 
 export function LoginForm() {
   const params = useSearchParams();
@@ -35,16 +37,9 @@ export function LoginForm() {
 
   return (
     <div className="flex h-full items-center justify-center bg-ink-950 p-6">
-      <form onSubmit={submit} className="card w-full max-w-sm p-6 space-y-5">
-        <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-lg bg-accent/20 flex items-center justify-center">
-            <Activity className="w-5 h-5 text-accent-soft" />
-          </div>
-          <div>
-            <div className="text-fg font-semibold leading-tight">Algo Hunt</div>
-            <div className="text-[10px] uppercase tracking-widest text-slate-500">Alert Platform</div>
-          </div>
-        </div>
+      <form onSubmit={submit} className="card w-full max-w-sm p-6 pt-7 space-y-5 relative overflow-hidden">
+        <div aria-hidden className="brand-gradient absolute inset-x-0 top-0 h-1.5" />
+        <Logo height={40} />
         <div>
           <label className="label" htmlFor="password">
             Password
@@ -62,7 +57,7 @@ export function LoginForm() {
         {error && <div className="text-sm text-bear">{error}</div>}
         <Tooltip content={{ title: 'Sign in', body: 'Unlock the dashboard on this browser for 30 days.', note: 'The password is the APP_PASSWORD set on the server.' }} className="w-full">
           <button type="submit" className="btn-primary w-full justify-center" disabled={pending || !password}>
-            {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />} Sign in
+            {pending ? <InlineSpinner /> : <Lock className="w-4 h-4" />} Sign in
           </button>
         </Tooltip>
       </form>

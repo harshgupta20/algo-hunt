@@ -6,18 +6,19 @@
  */
 import { Fragment, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BarChart3, ChevronDown, ChevronRight, Link2, Loader2 } from 'lucide-react';
+import { BarChart3, ChevronDown, ChevronRight, Link2 } from 'lucide-react';
 import clsx from 'clsx';
 import type { CompareResult, ConnectionConfig } from '@/shared/v2';
 import { EXPIRY_MODES, legName } from '@/shared/v2';
 import { InfoTip, Tooltip } from '../../components/Tooltip';
-import { Card, EmptyState, Spinner } from '../../components/ui';
+import { Card, EmptyState } from '../../components/ui';
 import { V2ApiError, v2Api } from '../api';
 import { Cell, InstrumentChip, LegBadge, LegPrices, Section, Segmented, TraceView, UnitTag } from '../components';
 import { DEFAULT_CONFIG } from '../connections/ConnectionsTab';
 import { candleRange, daysAgo, istToday } from '../format';
 import { H } from '../help';
 import { ProductPicker } from '../ProductPicker';
+import { BrandLoader, InlineSpinner, SkeletonCards } from '../../components/loaders';
 
 export function CompareTab({ initialStrategyId }: { initialStrategyId?: string }) {
   const qc = useQueryClient();
@@ -115,11 +116,11 @@ export function CompareTab({ initialStrategyId }: { initialStrategyId?: string }
                 </Cell>
                 <Tooltip content={H.compare.run}>
                   <button type="button" className="btn-primary" disabled={!products.length || run.isPending} onClick={() => run.mutate()}>
-                    {run.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <BarChart3 className="w-4 h-4" />} Compare {products.length || ''} product{products.length === 1 ? '' : 's'}
+                    {run.isPending ? <InlineSpinner /> : <BarChart3 className="w-4 h-4" />} Compare {products.length || ''} product{products.length === 1 ? '' : 's'}
                   </button>
                 </Tooltip>
               </div>
-              {run.isPending && <p className="text-xs text-slate-500">Fetching candles for every product (Kite allows ~3 requests per second) — this can take a little while.</p>}
+              {run.isPending && <BrandLoader className="py-6" label="Fetching candles for every product — Kite allows ~3 requests a second, so this can take a little while…" />}
               {run.error && <p className="text-xs text-bear">{(run.error as Error).message}</p>}
             </>
           )}
@@ -238,7 +239,7 @@ export function CompareTab({ initialStrategyId }: { initialStrategyId?: string }
           </div>
         </Card>
       )}
-      {strategies.isLoading && <Spinner />}
+      {strategies.isLoading && <SkeletonCards count={2} lines={3} />}
     </div>
   );
 }

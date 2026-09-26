@@ -13,6 +13,8 @@ export const HELP = {
       body: 'Build a strategy once without choosing a product, then connect it to any NSE index, NSE stock or MCX commodity to get alerts. Compare shows which products the strategy fires on.',
     },
     settings: { title: 'Settings', body: 'Zerodha Kite connection, theme and desktop notifications.' },
+    collapse: { title: 'Collapse sidebar', body: 'Shrink the sidebar to icons for more room. Hover an icon to see where it goes; your choice is remembered in this browser.' },
+    expand: { title: 'Expand sidebar', body: 'Show the sidebar with its labels again.' },
   },
 
   topbar: {

@@ -2,15 +2,16 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import type { LegDef, LegId, V2Alert, V2Unit } from '@/shared/v2';
 import { Tooltip } from '../components/Tooltip';
-import { Badge, Card, EmptyState, IconButton, Spinner, Tabs } from '../components/ui';
+import { Badge, Card, EmptyState, IconButton, Tabs } from '../components/ui';
 import { v2Api } from './api';
 import { InstrumentChip, LegPrices, OutcomeBadge, SourceBadge, TraceView, TriBadge, UnitTag } from './components';
 import { candleRange, istStampIso } from './format';
 import { H } from './help';
+import { InlineSpinner, SkeletonRows } from '../components/loaders';
 
 const STATUS_TONE: Record<V2Alert['status'], 'bull' | 'warn' | 'bear' | 'accent'> = { SENT: 'bull', PARTIAL: 'warn', FAILED: 'bear', ACKNOWLEDGED: 'accent' };
 
@@ -54,7 +55,7 @@ export function AlertRow({ alert: a }: { alert: V2Alert }) {
         <span className="ml-auto text-[11px] text-slate-500">{istStampIso(a.createdAt)}</span>
         {!a.acknowledgedAt && (
           <IconButton help={H.alerts.acknowledge} onClick={() => ack.mutate()} disabled={ack.isPending} className="p-1.5 rounded-md text-slate-400 hover:text-accent-soft hover:bg-accent/10">
-            {ack.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            {ack.isPending ? <InlineSpinner /> : <Check className="w-4 h-4" />}
           </IconButton>
         )}
       </div>
@@ -117,9 +118,7 @@ export function AlertsTab() {
       {view !== 'signals' && (
         <Card className="p-0 overflow-hidden">
           {alerts.isLoading ? (
-            <div className="p-4">
-              <Spinner />
-            </div>
+            <SkeletonRows rows={5} />
           ) : alerts.data?.length ? (
             <div className="divide-y divide-ink-700/50">
               {alerts.data.map((a) => (
@@ -134,9 +133,7 @@ export function AlertsTab() {
       {view === 'signals' && (
         <Card className="p-0 overflow-hidden">
           {signals.isLoading ? (
-            <div className="p-4">
-              <Spinner />
-            </div>
+            <SkeletonRows rows={5} />
           ) : signals.data?.length ? (
             <div className="overflow-x-auto">
               <table className="w-full text-xs">

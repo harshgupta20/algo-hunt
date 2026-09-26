@@ -31,7 +31,7 @@ Neon Postgres  ◄─────────────────  Live work
 | Layer | Where | Notes |
 | --- | --- | --- |
 | Pages | [src/app/](../src/app) | `(dashboard)/v2`, `(dashboard)/settings`, `login`, Kite redirect landings (`/zerodhaRedirection`, `/redirect/zerodha`). `/` and every retired page URL redirect to `/v2` ([next.config.ts](../next.config.ts)) |
-| App shell | [src/client/components/layout/](../src/client/components/layout) | Sidebar (V2, Settings), top bar (Kite status, NSE/BSE + MCX sessions, live feed vs scanner, notifications, theme, sign out), `AlertNotifier` (desktop notification + chime for new V2 alerts) |
+| App shell | [src/client/components/layout/](../src/client/components/layout) | Full-width brand header (sidebar toggle, logo, Kite status, NSE/BSE + MCX sessions, live feed vs scanner, notifications, theme, sign out), collapsible sidebar (V2, Settings; state kept in the browser), `AlertNotifier` (desktop notification + chime for new V2 alerts) |
 | V2 UI | [src/client/v2/](../src/client/v2) | Everything strategy-related |
 | API | [src/server/api/](../src/server/api) | Thin router + controllers; wiring in [context.ts](../src/server/api/context.ts) |
 | V2 module | [src/server/v2/](../src/server/v2) | Products, strategies, connections, engine, alerts, scanner, compare, live worker |

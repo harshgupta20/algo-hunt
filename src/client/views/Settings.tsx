@@ -7,12 +7,13 @@ import { Bell, Send, Volume2 } from 'lucide-react';
 import type { UserPreferences } from '@ash/shared';
 import { DEFAULT_USER_PREFERENCES } from '@ash/shared';
 import { api } from '../lib/api';
-import { Card, PageHeader, Spinner, Help } from '../components/ui';
+import { Card, PageHeader, Help } from '../components/ui';
 import { KiteConnectionCard } from '../components/KiteConnectionCard';
 import { playChime, requestNotificationPermission, showNotification } from '../lib/notify';
 import { useThemePreference } from '../theme/useThemePreference';
 import { InfoTip, Tooltip, type TooltipContent } from '../components/Tooltip';
 import { HELP } from '../lib/help';
+import { SkeletonCards } from '../components/loaders';
 
 function Toggle({
   label,
@@ -78,7 +79,7 @@ export function Settings() {
     showNotification('Algo Hunt test notification', 'Browser notifications are working.');
   };
 
-  if (prefsQuery.isLoading) return <Spinner />;
+  if (prefsQuery.isLoading) return <SkeletonCards count={3} lines={3} />;
 
   return (
     <div className="max-w-2xl">

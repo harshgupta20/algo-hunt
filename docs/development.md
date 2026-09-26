@@ -146,6 +146,15 @@ These are owner requirements. Keep them for any UI change.
   - Amber = needs attention; grey = neutral/idle.
 - **Theme tokens:** colors are CSS variables per theme in [globals.css](../src/app/globals.css), mapped in
   [tailwind.config.js](../tailwind.config.js) (`ink-*` surfaces, a themed `slate-*` text scale, `fg`, `accent`,
-  `bull`, `bear`, `warn`, `leg-*`). Light is the default theme.
+  `bull`, `bear`, `warn`, `leg-*`, and `brand-1…4` — the logo gradient). Light is the default theme.
+- **Brand:** the logo ([src/client/assets/logo-mark.png](../src/client/assets/logo-mark.png), component
+  [Logo.tsx](../src/client/components/Logo.tsx); app icons `src/app/icon.png` / `apple-icon.png`). Its gradient
+  (`.brand-gradient`) colours the top bar and the active tab; `.btn-glass` is the button style on the gradient;
+  `accent` is the logo's deep blue.
+- **Loading states** ([loaders.tsx](../src/client/components/loaders.tsx)): pages and long operations use
+  `BrandLoader` / `PageLoader` (the logo line drawing itself); lists, tables and cards use skeletons shaped like the
+  content (`SkeletonRows`, `SkeletonStatGrid`, `SkeletonCards`); buttons use `InlineSpinner`; short inline waits use
+  `Spinner` (gradient ring, in ui.tsx). The header's `ActivityBar` shows automatically while data loads for the first
+  time or a save runs. Don't use a bare `Loader2`.
 - **Visual changes:** an app-wide "color-rich" redesign was rejected by the owner and reverted. Agree on the
   direction, or show one screen, before restyling broadly.

@@ -9,7 +9,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Loader2, PlayCircle, Save, X, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, PlayCircle, Save, X, XCircle } from 'lucide-react';
 import clsx from 'clsx';
 import type { ExprNode, LegId, LegKind, StrategyDefinition, V2Strategy } from '@/shared/v2';
 import { TIMEFRAMES, strategySummary } from '@/shared/v2';
@@ -22,6 +22,7 @@ import { ProductPicker } from '../ProductPicker';
 import { dominantSeries, legSeries, nextLegId, usedLegs } from './defaults';
 import { ExpressionEditor } from './ExpressionEditor';
 import { LegsEditor } from './LegsEditor';
+import { InlineSpinner } from '../../components/loaders';
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -87,7 +88,7 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: V2St
         </Tooltip>
         <Tooltip content={H.strategy.save}>
           <button type="button" className="btn-primary" disabled={save.isPending || errors.length > 0} onClick={() => save.mutate()}>
-            {save.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
+            {save.isPending ? <InlineSpinner /> : <Save className="w-4 h-4" />} Save
           </button>
         </Tooltip>
       </div>
@@ -141,7 +142,7 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: V2St
           <Section title="Preview" help={H.strategy.preview}>
             <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-slate-300 font-mono">{strategySummary(def)}</pre>
           </Section>
-          <Section title="Validation" help={H.strategy.validation} actions={validation.isFetching ? <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-500" /> : undefined}>
+          <Section title="Validation" help={H.strategy.validation} actions={validation.isFetching ? <InlineSpinner className="w-3.5 h-3.5 text-slate-500" /> : undefined}>
             {serverError && !serverError.issues && <p className="text-xs text-bear mb-2">{serverError.message}</p>}
             {errors.length === 0 && warnings.length === 0 && validation.data && (
               <p className="flex items-center gap-1.5 text-xs text-bull">
@@ -163,7 +164,7 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: V2St
             actions={
               <Tooltip content={H.strategy.tryIt}>
                 <button type="button" className="btn-ghost py-1 text-xs" disabled={run.isPending || !tryProduct.length || errors.length > 0} onClick={() => run.mutate()}>
-                  {run.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />} Run
+                  {run.isPending ? <InlineSpinner className="w-3.5 h-3.5" /> : <PlayCircle className="w-3.5 h-3.5" />} Run
                 </button>
               </Tooltip>
             }

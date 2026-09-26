@@ -22,9 +22,15 @@
     --slate-800: 226 232 240;
     --slate-900: 241 245 249;
     --fg: 15 23 42;
-    /* Darker hues than the dark theme so colored text stays readable on white. */
-    --accent: 37 99 235;
-    --accent-soft: 29 78 216;
+    /* Brand (from the logo): deep blue → blue → teal → aqua-green. Accent = the logo's deep blue;
+       accent-soft is darker so accent-colored text stays readable on white. */
+    --accent: 17 87 241;
+    --accent-soft: 12 68 196;
+    /* Header gradient stops — a touch deeper than the logo so white text stays readable. */
+    --brand-1: 17 87 241;
+    --brand-2: 38 126 247;
+    --brand-3: 27 147 196;
+    --brand-4: 22 170 150;
     --bull: 21 128 61;
     --bear: 220 38 38;
     --warn: 180 83 9;
@@ -32,6 +38,7 @@
     --leg-fut: 2 132 199;
     --leg-ce: 124 58 237;
     --leg-pe: 219 39 119;
+    --skeleton-shine: rgb(255 255 255 / 0.8);
   }
 
   [data-theme='dark'] {
@@ -52,14 +59,19 @@
     --slate-800: 30 41 59;
     --slate-900: 15 23 42;
     --fg: 255 255 255;
-    --accent: 59 130 246;
-    --accent-soft: 96 165 250;
+    --accent: 38 126 247;
+    --accent-soft: 97 176 253;
+    --brand-1: 12 63 174;
+    --brand-2: 22 88 200;
+    --brand-3: 18 108 140;
+    --brand-4: 16 128 112;
     --bull: 34 197 94;
     --bear: 239 68 68;
     --warn: 245 158 11;
     --leg-fut: 56 189 248;
     --leg-ce: 167 139 250;
     --leg-pe: 244 114 182;
+    --skeleton-shine: rgb(255 255 255 / 0.07);
   }
 
   html,
@@ -96,10 +108,170 @@
   .btn-ghost {
     @apply btn bg-ink-800 hover:bg-ink-700 text-slate-200 border border-ink-700;
   }
+  /* On the brand-colored header. */
+  .btn-glass {
+    @apply btn bg-white/15 hover:bg-white/25 text-white border border-white/25;
+  }
+  .brand-gradient {
+    background-image: linear-gradient(100deg, rgb(var(--brand-1)) 0%, rgb(var(--brand-2)) 40%, rgb(var(--brand-3)) 78%, rgb(var(--brand-4)) 100%);
+  }
+  /* Wordmark in the logo's own colors. */
+  .brand-text {
+    background-image: linear-gradient(90deg, #1157f1 0%, #259ecc 60%, #27ccaf 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
   .input {
     @apply bg-ink-850 border border-ink-700 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-accent;
   }
   .label {
     @apply block text-xs font-medium uppercase tracking-wide text-slate-400 mb-1.5;
+  }
+}
+
+/* ---- Loaders (src/client/components/loaders.tsx) ------------------------------------------ */
+@layer components {
+  /* Brand loader: the logo line draws itself, candles rise, the signal dot pulses. */
+  .loader-draw {
+    stroke-dasharray: 100;
+    animation: loader-draw 1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  }
+  .loader-candle {
+    transform-box: fill-box;
+    transform-origin: 50% 100%;
+    animation: loader-candle 1.2s ease-in-out infinite;
+  }
+  .loader-dot {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: loader-dot 1.8s ease-in-out infinite;
+  }
+  .loader-ray {
+    animation: loader-ray 1.8s ease-in-out infinite;
+  }
+  /* Gradient ring (inline waits). */
+  .spinner-ring {
+    display: inline-block;
+    border-radius: 9999px;
+    background: conic-gradient(from 90deg, transparent 0 20%, #1157f1 45%, #259ecc 70%, #27ccaf 100%);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+    animation: ring-spin 0.75s linear infinite;
+  }
+  /* Skeleton placeholder with a soft shimmer. */
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    border-radius: 0.375rem;
+    background-color: rgb(var(--ink-700) / 0.75);
+  }
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, var(--skeleton-shine), rgb(var(--accent) / 0.08), transparent);
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+  /* Thin indeterminate bar under the header while pages load or saves run. */
+  .activity-bar {
+    height: 2px;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    pointer-events: none;
+  }
+  .activity-bar.is-active {
+    opacity: 1;
+  }
+  .activity-bar::after {
+    content: '';
+    display: block;
+    height: 100%;
+    width: 35%;
+    background: linear-gradient(90deg, transparent, #1157f1, #259ecc, #27ccaf, transparent);
+    animation: activity 1.2s ease-in-out infinite;
+  }
+}
+
+@keyframes loader-draw {
+  0% {
+    stroke-dashoffset: 100;
+  }
+  55% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: -100;
+  }
+}
+@keyframes loader-candle {
+  0%,
+  100% {
+    transform: scaleY(0.45);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+@keyframes loader-dot {
+  0%,
+  40% {
+    transform: scale(0.7);
+    opacity: 0.45;
+  }
+  55% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+  80% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.7);
+    opacity: 0.45;
+  }
+}
+@keyframes loader-ray {
+  0%,
+  45%,
+  100% {
+    opacity: 0;
+  }
+  58%,
+  80% {
+    opacity: 1;
+  }
+}
+@keyframes ring-spin {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+@keyframes activity {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loader-draw,
+  .loader-candle,
+  .loader-dot,
+  .loader-ray,
+  .spinner-ring,
+  .skeleton::after,
+  .activity-bar::after {
+    animation-duration: 4s;
   }
 }

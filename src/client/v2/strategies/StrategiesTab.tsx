@@ -6,13 +6,14 @@ import { BarChart3, Copy, Link2, Pencil, Plus, Sparkles, Trash2 } from 'lucide-r
 import type { StrategyDefinition, V2Strategy } from '@/shared/v2';
 import { TIMEFRAME, nodeText } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
-import { Badge, Card, EmptyState, IconButton, Spinner } from '../../components/ui';
+import { Badge, Card, EmptyState, IconButton } from '../../components/ui';
 import { v2Api, type StrategyRow } from '../api';
 import { LegBadge } from '../components';
 import { istStampIso } from '../format';
 import { H } from '../help';
 import { blankStrategy, exampleStrategies } from './defaults';
 import { StrategyEditor } from './StrategyEditor';
+import { SkeletonCards } from '../../components/loaders';
 
 function StrategyCard({ s, onEdit, onGo }: { s: StrategyRow; onEdit: () => void; onGo: (tab: 'connections' | 'compare', id: string) => void }) {
   const qc = useQueryClient();
@@ -101,7 +102,7 @@ export function StrategiesTab({ onGo }: { onGo: (tab: 'connections' | 'compare',
           </Tooltip>
         ))}
       </div>
-      {strategies.isLoading && <Spinner />}
+      {strategies.isLoading && <SkeletonCards count={3} />}
       {strategies.error && <p className="text-sm text-bear">{(strategies.error as Error).message}</p>}
       {strategies.data?.length === 0 && <EmptyState title="No strategies yet" hint="Create one — or start from an example above. Products are connected afterwards." />}
       {strategies.data?.map((s) => <StrategyCard key={s.id} s={s} onEdit={() => setEditing({ strategy: s, initial: s.definition })} onGo={onGo} />)}

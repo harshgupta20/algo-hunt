@@ -1,10 +1,10 @@
 import { Suspense } from 'react';
-import { Spinner } from '@/client/components/ui';
+import { PageLoader } from '@/client/components/loaders';
 import { KiteRedirect } from '@/client/views/KiteRedirect';
 
 export default function Page() {
   return (
-    <Suspense fallback={<Spinner />}>
+    <Suspense fallback={<PageLoader />}>
       <KiteRedirect />
     </Suspense>
   );

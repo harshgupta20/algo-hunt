@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarOff, CalendarPlus, Loader2, Save, Send, Trash2 } from 'lucide-react';
+import { CalendarOff, CalendarPlus, Save, Send, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
 import type { CalendarEntry, Market, V2Settings } from '@/shared/v2';
 import { FieldLabel, InfoTip, Tooltip } from '../components/Tooltip';
-import { Card, IconButton, Spinner } from '../components/ui';
+import { Card, IconButton } from '../components/ui';
 import { v2Api } from './api';
 import { istToday, minutesToClock } from './format';
 import { H } from './help';
+import { InlineSpinner, SkeletonCards } from '../components/loaders';
 
 const clockToMinutes = (v: string) => {
   const [h, m] = v.split(':').map(Number);
@@ -39,7 +40,7 @@ function ChannelsCard() {
   });
   const test = useMutation({ mutationFn: (c: 'telegram' | 'email') => v2Api.testChannel(c) });
 
-  if (!form) return <Spinner />;
+  if (!form) return <SkeletonCards count={2} lines={3} />;
   const submit = () =>
     save.mutate({
       ...form,
@@ -98,7 +99,7 @@ function ChannelsCard() {
       <div className="flex items-center gap-3">
         <Tooltip content={H.settings.save}>
           <button type="button" className="btn-primary" disabled={save.isPending} onClick={submit}>
-            {save.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
+            {save.isPending ? <InlineSpinner /> : <Save className="w-4 h-4" />} Save
           </button>
         </Tooltip>
         {save.isSuccess && <span className="text-xs text-bull">Saved</span>}
@@ -125,7 +126,7 @@ function CalendarCard() {
       qc.invalidateQueries({ queryKey: ['v2-status'] });
     },
   });
-  if (!entries) return <Spinner />;
+  if (!entries) return <SkeletonCards count={1} lines={3} />;
   const update = (i: number, e: CalendarEntry) => setEntries(entries.map((x, j) => (j === i ? e : x)));
 
   return (
@@ -173,7 +174,7 @@ function CalendarCard() {
       <div className="flex items-center gap-3">
         <Tooltip content={H.settings.save}>
           <button type="button" className="btn-primary" disabled={save.isPending} onClick={() => save.mutate(entries.map((e) => ({ ...e, note: e.note || undefined })))}>
-            {save.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save calendar
+            {save.isPending ? <InlineSpinner /> : <Save className="w-4 h-4" />} Save calendar
           </button>
         </Tooltip>
         {save.isSuccess && <span className="text-xs text-bull">Saved</span>}

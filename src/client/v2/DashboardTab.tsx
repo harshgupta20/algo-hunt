@@ -1,15 +1,16 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
 import { Tooltip } from '../components/Tooltip';
-import { Card, EmptyState, Spinner, StatCard } from '../components/ui';
+import { Card, EmptyState, StatCard } from '../components/ui';
 import { v2Api, type MarketStatus } from './api';
 import { AlertRow } from './AlertsTab';
 import { LiveCard } from './LiveCard';
 import { istStampIso, minutesToClock } from './format';
 import { H } from './help';
+import { InlineSpinner, SkeletonCards, SkeletonRows, SkeletonStatGrid } from '../components/loaders';
 
 const session = (m: MarketStatus) => (m.today.trading ? `${minutesToClock(m.today.openMin)}–${minutesToClock(m.today.closeMin)} IST${m.today.note ? ` · ${m.today.note}` : ''}` : (m.today.note ?? 'No session today'));
 
@@ -25,7 +26,13 @@ export function DashboardTab() {
       qc.invalidateQueries({ queryKey: ['v2-runs'] });
     },
   });
-  if (status.isLoading) return <Spinner />;
+  if (status.isLoading)
+    return (
+      <div className="flex flex-col gap-4">
+        <SkeletonStatGrid />
+        <SkeletonCards count={2} lines={1} />
+      </div>
+    );
   if (status.error) return <p className="text-sm text-bear">{(status.error as Error).message}</p>;
   const s = status.data!;
   const run = s.lastRun;
@@ -54,7 +61,7 @@ export function DashboardTab() {
       <div className="flex flex-wrap items-center gap-3">
         <Tooltip content={H.status.scanNow}>
           <button type="button" className="btn-ghost" disabled={scan.isPending} onClick={() => scan.mutate()}>
-            {scan.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Scan now
+            {scan.isPending ? <InlineSpinner /> : <RefreshCw className="w-4 h-4" />} Scan now
           </button>
         </Tooltip>
         {scan.data && (
@@ -91,9 +98,7 @@ export function DashboardTab() {
           <span className="text-xs text-slate-500">{active.data?.length ?? 0}</span>
         </div>
         {active.isLoading ? (
-          <div className="p-4">
-            <Spinner />
-          </div>
+          <SkeletonRows rows={3} />
         ) : active.data?.length ? (
           <div className="divide-y divide-ink-700/50">
             {active.data.map((a) => (

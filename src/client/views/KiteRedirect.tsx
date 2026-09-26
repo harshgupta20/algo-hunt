@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Loader2 } from 'lucide-react';
 import { api } from '../lib/api';
+import { BrandLoader } from '../components/loaders';
 
 // Module-level so a StrictMode remount (dev) doesn't exchange the token twice.
 const handledTokens = new Set<string>();
@@ -41,10 +41,7 @@ export function KiteRedirect() {
 
   return (
     <div className="flex h-full items-center justify-center bg-ink-950">
-      <div className="flex flex-col items-center gap-3 text-slate-300">
-        <Loader2 className="w-6 h-6 animate-spin text-accent-soft" />
-        <span className="text-sm">{message}</span>
-      </div>
+      <BrandLoader size="lg" label={message} />
     </div>
   );
 }

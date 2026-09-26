@@ -16,6 +16,7 @@ import { v2Api } from './api';
 import { Section } from './components';
 import { istStamp, istStampIso } from './format';
 import { H } from './help';
+import { Skeleton } from '../components/loaders';
 
 const STATE: Record<LiveState, { label: string; tone: 'bull' | 'warn' | 'accent' | 'default' }> = {
   LIVE: { label: 'Live', tone: 'bull' },
@@ -64,7 +65,12 @@ export function LiveCard() {
 
   return (
     <Section title="Live feed" help={H.live.card} actions={badge}>
-      {q.isLoading ? null : !s ? (
+      {q.isLoading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-3 w-2/3" />
+          <Skeleton className="h-3 w-1/3 opacity-70" />
+        </div>
+      ) : !s ? (
         <Tooltip content={H.live.notRunning}>
           <p className="text-xs text-slate-400 inline-flex items-center gap-2">
             <Radio className="w-4 h-4 text-slate-500" /> Not running — start it with <code className="text-slate-200">npm run live</code> for instant, verified alerts. The per-minute scanner covers your connections meanwhile.

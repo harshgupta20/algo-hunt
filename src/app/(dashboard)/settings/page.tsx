@@ -1,10 +1,10 @@
 import { Suspense } from 'react';
-import { Spinner } from '@/client/components/ui';
+import { PageLoader } from '@/client/components/loaders';
 import { Settings } from '@/client/views/Settings';
 
 export default function Page() {
   return (
-    <Suspense fallback={<Spinner />}>
+    <Suspense fallback={<PageLoader />}>
       <Settings />
     </Suspense>
   );

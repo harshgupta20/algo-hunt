@@ -11,10 +11,10 @@ import { X } from 'lucide-react';
 import type { ProductKind, StrategyDefinition, V2Product } from '@/shared/v2';
 import { MAX_CONNECT, PRODUCT_KIND_LABEL, incompatibility, requiredKinds } from '@/shared/v2';
 import { Tooltip } from '../components/Tooltip';
-import { Spinner } from '../components/ui';
 import { v2Api } from './api';
 import { ProductLegs, Segmented } from './components';
 import { H } from './help';
+import { SkeletonRows } from '../components/loaders';
 
 /** Rows listed at once (the rest via search / filters). */
 const LIST_LIMIT = 500;
@@ -188,11 +188,7 @@ export function ProductPicker({
         </div>
       )}
       <div className="max-h-64 overflow-y-auto rounded-lg border border-ink-700/60 divide-y divide-ink-700/40">
-        {list.isLoading && (
-          <div className="p-3">
-            <Spinner />
-          </div>
-        )}
+        {list.isLoading && <SkeletonRows rows={6} dense />}
         {list.data?.length === 0 && (
           <p className="p-3 text-xs text-slate-500">
             No products{legsText ? ` with ${legsText}` : ''} match{search ? ` “${search}”` : ''}. Sync products from the Products tab if the list is empty.

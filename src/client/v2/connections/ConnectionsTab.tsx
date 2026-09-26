@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Link2, Loader2, Pencil, PlayCircle, Plus, Power, PowerOff, RefreshCw, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Link2, Pencil, PlayCircle, Plus, Power, PowerOff, RefreshCw, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
 import type { ConnectionConfig, StrategyDefinition, V2Strategy } from '@/shared/v2';
 import { TIMEFRAME, candleRequestsPerProduct, expiryText, legName, policyText } from '@/shared/v2';
@@ -19,6 +19,7 @@ import { fmtNum, istStampIso } from '../format';
 import { H } from '../help';
 import { ProductPicker } from '../ProductPicker';
 import { ConfigEditor } from './ConfigEditor';
+import { InlineSpinner, SkeletonCards, SkeletonRows } from '../../components/loaders';
 
 export const DEFAULT_CONFIG: ConnectionConfig = {
   expiry: { mode: 'CURRENT' },
@@ -188,7 +189,7 @@ function NewConnection({
             <div>
               <Tooltip content={H.connection.create}>
                 <button type="button" className="btn-primary" disabled={!products.length || create.isPending} onClick={() => create.mutate()}>
-                  {create.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />} Connect {products.length || ''} product{products.length === 1 ? '' : 's'}
+                  {create.isPending ? <InlineSpinner /> : <Link2 className="w-4 h-4" />} Connect {products.length || ''} product{products.length === 1 ? '' : 's'}
                 </button>
               </Tooltip>
             </div>
@@ -235,7 +236,7 @@ function ConnectionRowView({ c, definition }: { c: ConnectionRow; definition?: S
         </span>
         <Tooltip content={c.enabled ? H.connection.disable : H.connection.enable}>
           <button type="button" className={clsx('btn py-1 text-xs', c.enabled ? 'btn-ghost' : 'btn-primary')} disabled={toggle.isPending} onClick={() => toggle.mutate()}>
-            {toggle.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : c.enabled ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
+            {toggle.isPending ? <InlineSpinner className="w-3.5 h-3.5" /> : c.enabled ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
             {c.enabled ? 'Switch off' : 'Switch on'}
           </button>
         </Tooltip>
@@ -243,7 +244,7 @@ function ConnectionRowView({ c, definition }: { c: ConnectionRow; definition?: S
           <Badge tone={c.enabled ? 'bull' : 'default'}>{c.enabled ? '● On' : '○ Off'}</Badge>
         </Tooltip>
         <IconButton help={H.connection.explain} onClick={() => run.mutate()} className={btn} disabled={run.isPending}>
-          {run.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
+          {run.isPending ? <InlineSpinner /> : <PlayCircle className="w-4 h-4" />}
         </IconButton>
         <IconButton help={H.connection.units} onClick={() => setPanel(panel === 'units' ? null : 'units')} className={btn}>
           {panel === 'units' ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
@@ -285,7 +286,7 @@ function ConnectionRowView({ c, definition }: { c: ConnectionRow; definition?: S
       {panel === 'units' && (
         <div className="mt-3">
           {units.isLoading ? (
-            <Spinner />
+            <SkeletonRows rows={2} dense />
           ) : units.data?.length ? (
             <table className="w-full text-xs">
               <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500">
@@ -339,7 +340,7 @@ export function ConnectionsTab({ initialStrategyId }: { initialStrategyId?: stri
     }
   }, [initialStrategyId]);
 
-  if (strategies.isLoading || connections.isLoading) return <Spinner />;
+  if (strategies.isLoading || connections.isLoading) return <SkeletonCards count={3} />;
   const list = connections.data ?? [];
   const byStrategy = (strategies.data ?? []).map((s) => ({ s, rows: list.filter((c) => c.strategyId === s.id) })).filter((g) => g.rows.length);
 
