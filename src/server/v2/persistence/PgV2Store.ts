@@ -11,6 +11,7 @@ import type {
   ProductKind,
   ScanRun,
   StrategyDefinition,
+  LiveStatus,
   UnitState,
   V2Alert,
   V2Connection,
@@ -354,16 +355,28 @@ export class PgV2Store implements V2Store {
       const r = (await this.pool.query('SELECT * FROM v2_unit_state WHERE connection_id = $1 AND unit_key = $2', [connectionId, unitKey])).rows[0];
       return r ? mapUnit(r) : null;
     },
-    upsert: async (s: UnitState) => {
-      await this.pool.query(
-        `INSERT INTO v2_unit_state (connection_id, unit_key, state, last_evaluated_candle, last_result, last_signal_candle, last_alert_at, cooldown_until, last_evaluation, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
-         ON CONFLICT (connection_id, unit_key) DO UPDATE SET
-           state = EXCLUDED.state, last_evaluated_candle = EXCLUDED.last_evaluated_candle, last_result = EXCLUDED.last_result,
-           last_signal_candle = EXCLUDED.last_signal_candle, last_alert_at = EXCLUDED.last_alert_at,
-           cooldown_until = EXCLUDED.cooldown_until, last_evaluation = EXCLUDED.last_evaluation, updated_at = now()`,
-        [s.connectionId, s.unitKey, s.state, s.lastEvaluatedCandle, s.lastResult, s.lastSignalCandle, s.lastAlertAt, s.cooldownUntil, s.lastEvaluation ? JSON.stringify(s.lastEvaluation) : null],
-      );
+    listFor: async (connectionIds: string[]) =>
+      connectionIds.length ? (await this.pool.query('SELECT * FROM v2_unit_state WHERE connection_id = ANY($1::uuid[])', [connectionIds])).rows.map(mapUnit) : [],
+    upsert: async (s: UnitState) => this.units.upsertMany([s]),
+    upsertMany: async (list: UnitState[]) => {
+      for (let i = 0; i < list.length; i += 500) {
+        const chunk = list.slice(i, i + 500);
+        const vals: unknown[] = [];
+        const rows = chunk.map((s) => {
+          vals.push(s.connectionId, s.unitKey, s.state, s.lastEvaluatedCandle, s.lastResult, s.lastSignalCandle, s.lastAlertAt, s.cooldownUntil, s.lastEvaluation ? JSON.stringify(s.lastEvaluation) : null);
+          const b = vals.length - 9;
+          return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9}, now())`;
+        });
+        await this.pool.query(
+          `INSERT INTO v2_unit_state (connection_id, unit_key, state, last_evaluated_candle, last_result, last_signal_candle, last_alert_at, cooldown_until, last_evaluation, updated_at)
+           VALUES ${rows.join(',')}
+           ON CONFLICT (connection_id, unit_key) DO UPDATE SET
+             state = EXCLUDED.state, last_evaluated_candle = EXCLUDED.last_evaluated_candle, last_result = EXCLUDED.last_result,
+             last_signal_candle = EXCLUDED.last_signal_candle, last_alert_at = EXCLUDED.last_alert_at,
+             cooldown_until = EXCLUDED.cooldown_until, last_evaluation = EXCLUDED.last_evaluation, updated_at = now()`,
+          vals,
+        );
+      }
     },
     clear: async (connectionId: string) => {
       await this.pool.query('DELETE FROM v2_unit_state WHERE connection_id = $1', [connectionId]);
@@ -496,6 +509,23 @@ export class PgV2Store implements V2Store {
     },
     release: async (name: string) => {
       await this.pool.query('UPDATE app_locks SET locked_until = now(), last_run_at = now() WHERE name = $1', [name]);
+    },
+  };
+
+  live = {
+    get: async () => {
+      const r = (await this.pool.query("SELECT status, offline_notified_at FROM v2_live_status WHERE id = 'main'")).rows[0] as { status: LiveStatus; offline_notified_at: Date | null } | undefined;
+      return r ? { status: r.status, offlineNotifiedAt: r.offline_notified_at ? new Date(r.offline_notified_at).toISOString() : null } : null;
+    },
+    save: async (status: LiveStatus) => {
+      await this.pool.query(
+        `INSERT INTO v2_live_status (id, worker_id, heartbeat_at, status, offline_notified_at) VALUES ('main', $1, $2, $3, NULL)
+         ON CONFLICT (id) DO UPDATE SET worker_id = EXCLUDED.worker_id, heartbeat_at = EXCLUDED.heartbeat_at, status = EXCLUDED.status, offline_notified_at = NULL`,
+        [status.workerId, status.heartbeatAt, JSON.stringify(status)],
+      );
+    },
+    markOfflineNotified: async (at: string) => {
+      await this.pool.query("UPDATE v2_live_status SET offline_notified_at = $1 WHERE id = 'main'", [at]);
     },
   };
 }

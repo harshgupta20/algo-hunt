@@ -179,6 +179,7 @@ With `APP_PASSWORD` unset the app is open in development (production refuses to 
 | `npm test` | vitest suite |
 | `npm run typecheck` | TypeScript check |
 | `npm run db:migrate` | Apply pending migrations |
+| `npm run live` | V2 live worker: streams Kite ticks and alerts seconds after each candle close (run locally; `-- --check` to test the stream) |
 
 To trigger an evaluation manually (e.g. outside market hours):
 `curl -H "Authorization: Bearer $CRON_SECRET" "https://<domain>/api/cron/tick?force=1"`.

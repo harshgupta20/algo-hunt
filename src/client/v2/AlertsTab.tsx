@@ -8,7 +8,7 @@ import type { LegDef, LegId, V2Alert, V2Unit } from '@/shared/v2';
 import { Tooltip } from '../components/Tooltip';
 import { Badge, Card, EmptyState, IconButton, Spinner, Tabs } from '../components/ui';
 import { v2Api } from './api';
-import { InstrumentChip, LegPrices, OutcomeBadge, TraceView, TriBadge, UnitTag } from './components';
+import { InstrumentChip, LegPrices, OutcomeBadge, SourceBadge, TraceView, TriBadge, UnitTag } from './components';
 import { candleRange, istStampIso } from './format';
 import { H } from './help';
 
@@ -47,6 +47,7 @@ export function AlertRow({ alert: a }: { alert: V2Alert }) {
         </Tooltip>
         <span className="text-xs text-slate-400">{candleRange(a.candleTime, a.triggerTimeframe)}</span>
         <LegPrices prices={a.evaluation.prices} legs={legs} />
+        <SourceBadge source={a.evaluation.source} />
         <Tooltip content={{ ...H.alerts.status, note: a.deliveries.map((d) => `${d.channel}: ${d.status}${d.error ? ` — ${d.error}` : ''}`).join(' · ') || 'Recorded only (no channel)' }}>
           <Badge tone={STATUS_TONE[a.status]}>{a.status === 'ACKNOWLEDGED' ? 'Acknowledged' : a.deliveries.length ? a.status.toLowerCase() : 'recorded'}</Badge>
         </Tooltip>

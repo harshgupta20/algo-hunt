@@ -7,6 +7,7 @@ import { Tooltip } from '../components/Tooltip';
 import { Card, EmptyState, Spinner, StatCard } from '../components/ui';
 import { v2Api, type MarketStatus } from './api';
 import { AlertRow } from './AlertsTab';
+import { LiveCard } from './LiveCard';
 import { istStampIso, minutesToClock } from './format';
 import { H } from './help';
 
@@ -49,6 +50,7 @@ export function DashboardTab() {
           help={H.status.lastRun}
         />
       </div>
+      <LiveCard />
       <div className="flex flex-wrap items-center gap-3">
         <Tooltip content={H.status.scanNow}>
           <button type="button" className="btn-ghost" disabled={scan.isPending} onClick={() => scan.mutate()}>

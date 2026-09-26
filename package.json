@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "db:migrate": "node scripts/migrate.mjs"
+    "db:migrate": "node scripts/migrate.mjs",
+    "live": "node scripts/migrate.mjs --if-configured --soft && tsx src/server/workers/v2Live.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.103.2",
@@ -40,6 +41,7 @@
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
   }

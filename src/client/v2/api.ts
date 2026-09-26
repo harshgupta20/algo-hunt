@@ -5,6 +5,7 @@ import type {
   CalendarEntry,
   CompareResult,
   ConnectionConfig,
+  LiveStatus,
   ScanRun,
   SignalOutcome,
   StrategyDefinition,
@@ -80,6 +81,12 @@ export interface V2Status {
   channels: ChannelStatus;
 }
 
+export interface LiveInfo {
+  health: { online: boolean; covering: boolean; uncovered: string[]; crashed: boolean; silentMs: number | null };
+  status: LiveStatus | null;
+  offlineNotifiedAt: string | null;
+}
+
 export type ProductCounts = { INDEX: number; STOCK: number; COMMODITY: number; total: number };
 
 export type StrategyRow = V2Strategy & { connections: number; enabledConnections: number };
@@ -131,6 +138,7 @@ export interface CompareInput {
 
 export const v2Api = {
   status: () => request<V2Status>('/status'),
+  live: () => request<LiveInfo>('/live'),
   products: (q: { search?: string; kind?: string; market?: string; ids?: string[]; needs?: string[]; limit?: number } = {}) => {
     const p = new URLSearchParams();
     if (q.search) p.set('search', q.search);

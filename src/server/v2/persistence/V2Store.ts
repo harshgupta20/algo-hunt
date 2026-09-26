@@ -7,6 +7,7 @@ import type {
   CalendarEntry,
   ConnectionConfig,
   LegKind,
+  LiveStatus,
   ProductKind,
   Delivery,
   ScanRun,
@@ -76,8 +77,12 @@ export interface V2Store {
   };
   units: {
     list(connectionId: string): Promise<UnitState[]>;
+    /** Unit states of several connections in one query (live worker, per trigger candle). */
+    listFor(connectionIds: string[]): Promise<UnitState[]>;
     get(connectionId: string, unitKey: string): Promise<UnitState | null>;
     upsert(state: UnitState): Promise<void>;
+    /** Batched upsert (one statement). */
+    upsertMany(states: UnitState[]): Promise<void>;
     clear(connectionId: string): Promise<void>;
   };
   signals: {
@@ -105,5 +110,11 @@ export interface V2Store {
   locks: {
     acquire(name: string, leaseSeconds: number, minIntervalSeconds: number): Promise<boolean>;
     release(name: string): Promise<void>;
+  };
+  /** Live worker heartbeat / status (single row). */
+  live: {
+    get(): Promise<{ status: LiveStatus; offlineNotifiedAt: string | null } | null>;
+    save(status: LiveStatus): Promise<void>;
+    markOfflineNotified(at: string): Promise<void>;
   };
 }

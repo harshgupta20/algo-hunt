@@ -20,6 +20,42 @@ export const H = {
     settings: { title: 'Settings', body: 'Telegram / Email destinations, the request budget and the NSE / MCX holiday calendars.' },
   } satisfies Record<string, TooltipContent>,
 
+  live: {
+    card: {
+      title: 'Live feed',
+      body: 'The live worker streams Kite ticks for every contract your switched-on connections use and checks each connection the moment its candle closes (seconds, not minutes).',
+      note: 'Run it on your computer with `npm run live`. While it streams, the per-minute scanner only backs it up.',
+    },
+    state: {
+      title: 'Worker state',
+      body: 'LIVE: streaming and checking at every close. Warming up: loading candle history (results are checked on Kite candles meanwhile). Degraded: stream disconnected, reconnecting — the backup scanner covers. Waiting for login: log in to Kite in Settings.',
+    },
+    offline: {
+      title: 'Worker offline',
+      body: 'No heartbeat from the live worker. The per-minute backup scanner checks your connections instead (alerts can be a few minutes late).',
+      note: 'Start it with `npm run live` and keep the computer awake during market hours.',
+    },
+    contracts: {
+      title: 'Contracts streamed',
+      body: 'Contracts in use (every leg at the current ATM, plus the price that sets ATM) and nearby strikes kept warm (2 either side) so an ATM move switches instantly.',
+      note: 'Kite allows 9,000 per login (3 connections × 3,000).',
+    },
+    stream: { title: 'Kite stream', body: 'Open WebSocket connections to Kite and the ticks per second arriving. Each reconnects by itself; a gap is re-checked on Kite candles.' },
+    today: {
+      title: 'Accuracy today',
+      body: 'Checked: results re-checked on Kite’s official candles before deciding — every alert, near-threshold calls that could matter, and data with gaps. Corrected: Kite’s candles changed the live result. Unverified: Kite’s candles didn’t arrive within 2 minutes, so it was decided on live data.',
+    },
+    candles: { title: 'Recent candle closes', body: 'Each trigger candle the worker processed: units checked, how fast after the close every unit was decided, and how many were re-checked on Kite candles.' },
+    decided: { title: 'Decided in', body: 'Seconds from the candle close until every unit had a result on live candles.' },
+    verified: { title: 'Kite check done', body: 'Seconds from the candle close until the last re-check on Kite candles finished (alerts go out as each one is confirmed).' },
+    uncovered: { title: 'Not streamed', body: 'These connections don’t fit Kite’s 9,000-contract limit — the backup scanner checks them every minute instead.' },
+    errors: { title: 'Recent problems', body: 'The worker keeps going after an error; the latest are listed here.' },
+    notRunning: {
+      title: 'Live worker not running',
+      body: 'Run `npm run live` in the project folder for instant, verified alerts. Until then the per-minute scanner checks your connections.',
+    },
+  } satisfies Record<string, TooltipContent>,
+
   status: {
     nse: { title: 'NSE / BSE session', body: 'Weekdays 09:15–15:30 IST. Holidays come from Settings → Calendar.' },
     mcx: { title: 'MCX session', body: 'Weekdays 09:00 until 23:30 (US summer) or 23:55 (US winter) IST. Holidays come from Settings → Calendar.' },
@@ -168,6 +204,10 @@ export const H = {
   } satisfies Record<string, TooltipContent>,
 
   alerts: {
+    sourceVerified: { title: 'Verified', body: 'Decided by the live worker and re-checked on Kite’s official candles before the alert went out.' },
+    sourceUnverified: { title: 'Not verified', body: 'Kite’s official candles didn’t arrive within 2 minutes, so the live worker decided on its live-built candles. Usually identical; check the chart if it matters.' },
+    sourceLive: { title: 'Live candle', body: 'Live-candle mode: fired on the forming candle as it happened (it can’t be verified until the candle closes).' },
+    sourceHistorical: { title: 'Kite candles', body: 'Decided by the per-minute scanner directly on Kite’s official candles.' },
     acknowledge: { title: 'Acknowledge', body: 'Mark as seen. It won’t alert again until the strategy turns false and then true again.' },
     status: { title: 'Delivery status', body: 'Sent: every chosen channel delivered. Partial: one failed. Failed: none delivered.' },
     outcome: { title: 'Signal outcome', body: 'Every time a strategy fires a signal is recorded — delivered, or suppressed with the reason.' },

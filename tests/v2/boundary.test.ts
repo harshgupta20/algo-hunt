@@ -54,7 +54,7 @@ describe('V2 module boundaries', () => {
   });
 
   it('the rest of the app imports V2 only at the wiring points', () => {
-    const allowed = new Set(['src/server/api/context.ts', 'src/server/api/routes.ts', 'src/app/api/cron/tick/route.ts', 'src/server/api/controllers/v2Controller.ts']);
+    const allowed = new Set(['src/server/api/context.ts', 'src/server/api/routes.ts', 'src/app/api/cron/tick/route.ts', 'src/server/api/controllers/v2Controller.ts', 'src/server/workers/v2Live.ts']);
     const others = [...files('src/server'), ...files('src/client'), ...files('src/app'), ...files('src/shared')].filter((f) => !/\/v2\//.test(relative(ROOT, f)));
     for (const f of others) {
       const rel = relative(ROOT, f);

@@ -116,6 +116,7 @@ Severity: **High** = can cause missed alerts or wrong data · **Medium** = misle
 | 2026-09-25 | Color-rich redesign rejected and reverted; the existing look is the baseline |
 | 2026-09-25 | Top bar shows NSE/BSE and MCX separately with open/closed and monitor activity |
 | 2026-09-25 | Bollinger %B / Bandwidth added; the builder adapts comparisons and warns on price-vs-small-number |
+| 2026-09-27 | V2 live worker (`npm run live`, runs locally): Kite WebSocket streaming, candles built from ticks, evaluation seconds after each close; results that would alert, near misses that matter, and gap-affected data are re-checked on Kite's official candles before deciding (alerts marked Verified / Unverified); ATM ± 2 strikes kept warm; cron scanner becomes the backup; Neon stays the database |
 | 2026-09-26 | New **V2** at `/v2`: strategy (product-agnostic, 1–4 legs chosen by the trader) + product connection = alert; compare products by alerts only; comparing legs is enough for now, arithmetic kept in scope for later; nothing existing replaced |
 | 2026-09-26 | MCX V2 conditions use FUT / CE / PE legs of a strike (simpler universe: product → futures or options → expiry → strikes; reference-future and fixed-contract choices removed; old definitions auto-upgraded) |
 | 2026-09-25 | MCX V2 built as an isolated subsystem next to V1 (decisions D1–D9 accepted: Resend email, volume candles from base candles, spec cross semantics, ≤ 40 targets / ≤ 150 requests per cycle, same cron with its own lease, manual holiday calendar, 1-minute live mode, `/mcx-v2` beta page, Telegram env with MCX chat override) |
@@ -126,10 +127,12 @@ Severity: **High** = can cause missed alerts or wrong data · **Medium** = misle
 
 | Claim | How verified |
 | --- | --- |
-| Engines, MCX rules, sessions, multi-timeframe, patterns, ADX/DMI, Bollinger outputs | Automated tests (230 passing: 61 MCX V2, 42 V2) |
+| Engines, MCX rules, sessions, multi-timeframe, patterns, ADX/DMI, Bollinger outputs | Automated tests (247 passing: 61 MCX V2, 59 V2) |
 | V2 leg resolution, product catalogue, one strategy across NSE + MCX products, compare, boundaries | Automated tests (`tests/v2/`) + local production build with a throwaway database (Kite disconnected) |
 | MCX V2 engine, alert policy, both Definition-of-Done strategies end to end, module boundaries | Automated tests (`tests/mcx2/`) |
 | MCX V2 UI (all tabs, light + dark), create / validate / enable flows, scan without Kite | Manually, local production build + throwaway database (Kite disconnected) |
 | UI pages, MCX tab, top-bar market states, builder behaviour | Manually, in a local production build against a throwaway database with synthetic instruments and snapshots (Kite disconnected) |
+| V2 live worker logic (candles from ticks, re-check on Kite candles, backup scanner hand-over) | Automated tests (`tests/v2/live.test.ts`) + local boot against a throwaway database (heartbeat, Dashboard card, single-worker guard, clean stop) |
+| V2 live worker against the real Kite stream (ticks, candle timing, confirmations, reconnects) | **Not verified** — needs market hours: `npm run live -- --check`, then `npm run live` |
 | Live Kite behaviour for MCX (sync, candles, LTP) | **Not verified** |
 | Top-bar "Live" (green) state with Kite connected | **Not visually verified** |

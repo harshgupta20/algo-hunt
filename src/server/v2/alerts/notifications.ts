@@ -4,7 +4,7 @@
  * settings (chat id override, recipients, sender). Each delivery attempt is
  * recorded; one channel failing never blocks the other.
  */
-import type { AlertStatus, ConditionTrace, Delivery, ExprTrace, LegDef, V2Alert, V2Settings } from '@/shared/v2';
+import type { AlertStatus, ConditionTrace, Delivery, EvaluationSource, ExprTrace, LegDef, V2Alert, V2Settings } from '@/shared/v2';
 import { TIMEFRAME, legName, unitText } from '@/shared/v2';
 import { getConfig } from '../../config/index';
 import { childLogger } from '../../utils/logger';
@@ -52,6 +52,14 @@ function conditionLine(c: ConditionTrace): string {
   return `${mark} ${c.text}  (${lv}${rv})`;
 }
 
+/** How the candles behind an alert were checked (none for Kite's own historical candles). */
+const SOURCE_LINE: Record<EvaluationSource, string | null> = {
+  HISTORICAL: null,
+  LIVE_VERIFIED: '✓ Verified on Kite candles',
+  LIVE_UNVERIFIED: '⚠ Not verified — Kite candles were unavailable; decided on live data',
+  LIVE: 'Live (forming candle)',
+};
+
 export function formatAlert(
   alert: Omit<V2Alert, 'id' | 'createdAt' | 'deliveries' | 'acknowledgedAt'>,
   ctx: { productSymbol: string; productName: string; legs: LegDef[] },
@@ -64,10 +72,12 @@ export function formatAlert(
     const price = e.prices?.[l.id];
     return `${legName(l)}: ${inst?.symbol ?? '—'}${price !== undefined ? ` @ ${fmt(price)}` : ''}`;
   });
+  const source = SOURCE_LINE[e.source ?? 'HISTORICAL'];
   const lines = [
     `🔔 ${alert.strategyName} (v${alert.version})`,
     `${ctx.productName} · ${unitText(alert.unit, ctx.productSymbol)}`,
     `${tf} candle ${candle}`,
+    ...(source ? [source] : []),
     ...legLines,
     '',
     ...leaves(e.trace).map(conditionLine),

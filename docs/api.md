@@ -319,6 +319,7 @@ Validation failures return `400` with `{ error, issues: [{ path, message, severi
 | Method | Path | Params / body | Response |
 | --- | --- | --- | --- |
 | GET | `/api/v2/status` | — | Markets (NSE, MCX), Kite, instruments / products, strategies, connections, last scan, channels |
+| GET | `/api/v2/live` | — | `{ health: { online, covering, uncovered[], crashed, silentMs }, status: LiveStatus \| null, offlineNotifiedAt }` — the live worker's heartbeat row |
 | GET | `/api/v2/products` | `search`, `kind` (`INDEX`\|`STOCK`\|`COMMODITY`), `market`, `ids` (comma-separated), `needs` (leg kinds a strategy uses, e.g. `FUT,CE,PE` — only products offering all of them), `limit` (max 5000) | `V2Product[]` (legs available, expiries, strike gap, lot) |
 | GET | `/api/v2/products/counts` | `search`, `market`, `needs` | `{ INDEX, STOCK, COMMODITY, total }` — products per type matching the filters (filter-button counts) |
 | GET | `/api/v2/products/:id` | — | `V2Product` |

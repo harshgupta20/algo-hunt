@@ -223,6 +223,7 @@ through [PgV2Store](../src/server/v2/persistence/PgV2Store.ts).
 | `v2_alerts` / `v2_deliveries` | Alerts (unit with its leg contracts, evaluation) and per-channel results |
 | `v2_scan_runs` | Scanner cycles (summary JSON incl. errors; pruned after 3 days) |
 | `v2_settings` | One JSON row: chat override, email recipients / sender, request budget |
+| `v2_live_status` | One row written every 5 s by the live worker (`npm run live`): heartbeat, state, sockets, contracts, accuracy counters, last candle closes; `offline_notified_at` = the backup scanner already warned (migration 008) |
 
 ---
 

@@ -66,6 +66,46 @@ clock → one batched LTP call for every ATM reference → units → due units �
 evaluate → policy → signal → alert → Telegram / Email. It runs as a **third isolated job** in `/api/cron/tick`
 (own lease `v2-scan`) and while `/v2` is open.
 
+## 4b. Live worker (streaming) — `npm run live`
+
+A long-running process on your computer (same `.env`, database and Kite login as the app) that makes alerts
+**seconds** after a candle closes instead of minutes, for as many products as Kite's stream allows.
+
+- **Stream:** Kite WebSocket, full mode (last-trade time, day volume, OI, exchange time), up to 3 sockets × 3,000
+  contracts. Each socket reconnects by itself (1 s → 30 s backoff, forever), resubscribes, and reports which contracts
+  were observed from when.
+- **What is streamed (`live/plan.ts`):** per switched-on connection, every leg contract at the current ATM for each
+  strike position, the ATM reference (spot, or the future on MCX), plus the same option legs **2 strikes further out
+  on each side** so an ATM move switches to an already-warm contract. Buffers are dropped before needed contracts;
+  connections that don't fit are "uncovered" and left to the cron scanner.
+- **Candles (`live/LiveCandles.ts`):** 1-minute candles built from ticks exactly as Kite forms them — bucketed by the
+  exchange's last-trade time (index values by exchange time), session minutes only, the day's first candle opens at
+  the exchange's day open, volume from the cumulative day volume. Kite's official candles (history at warm-up,
+  re-fetches when confirming) always override live-built ones up to the point Kite demonstrably covers (if Kite lacks a
+  period we saw trades in, it's still catching up and isn't trusted past it). Unobserved stretches — before the
+  subscription, while a socket was down, a trade stamped in an already-closed minute — are recorded as gaps.
+- **Evaluation (`live/LiveWorker.ts`):** 2.5 s after a trigger candle closes, every due unit is evaluated with the same
+  engine, alert policy and commit code as the scanner (`scanner/commit.ts`).
+- **Accuracy rule (`live/verify.ts`):** a result is decided on live candles only when it is clearly false on fully
+  observed data. It is re-checked on Kite's official candles (fetched ~4 s after the close) when it is **true** (every
+  alert), when the data has a **gap**, or when a condition is a **near miss that could change the result** (within 1 point
+  on 0–100 oscillators, 0.25 % on prices, 3 % on volume / OI; candle patterns always count; a near miss that can't
+  change the outcome — e.g. inside an AND whose other side is clearly false — is not checked). If Kite's trigger candle
+  differs from the live one it is read again 10 s after the close. Evaluations record `source`: `LIVE_VERIFIED`,
+  `LIVE` (clear results; forming candles in live-candle mode) or `LIVE_UNVERIFIED` (Kite's candles didn't arrive within
+  2 minutes — still decided, clearly marked in the alert).
+- **Kite requests (`live/FetchQueue.ts`):** one priority queue over the shared ~3/s historical rate gate — confirmations
+  first, then history for contracts in use, then nearby strikes, then gap repairs; identical requests are shared.
+- **Daily routine:** new trading day → fresh candles and history; at 08:15 IST the contract list is re-synced; a new Kite
+  token (morning login) restarts the stream within 30 s.
+- **Health (`v2_live_status`):** heartbeat every 5 s with state (LIVE / WARMING_UP / DEGRADED / WAITING_LOGIN / STOPPED),
+  sockets, contracts vs capacity, accuracy counters and the last candle closes (Dashboard → Live feed). Only one worker
+  runs at a time (a second refuses to start unless `--force`).
+- **Backup:** while the worker is LIVE or WARMING_UP the cron scanner skips the connections it covers and scans only
+  uncovered ones. When the heartbeat stops without a clean stop, the scanner takes over and sends **one** Telegram
+  warning; the worker itself warns when its stream has been down for 60 s during market hours (and when it's back), and
+  reminds you to log in to Kite 15 minutes before the first session if you haven't.
+
 ## 5. Module map
 
 ```
@@ -77,11 +117,14 @@ src/server/v2/
 ├── universe/         resolve (legs → contracts, ATM, strike positions)
 ├── engine/           candles · indicators · series · evaluator
 ├── alerts/           alertPolicy · notifications (Telegram, Resend email)
-├── scanner/          V2Scanner
+├── scanner/          V2Scanner · commit (alert decision shared with the live worker)
+├── live/             LiveWorker · KiteStream · ticks (Kite binary protocol) · LiveCandles · plan · verify
+│                     · FetchQueue · health
 ├── debug/            tools (explain now, compare across products)
-├── persistence/      V2Store · PgV2Store (v2_* tables, migration 007)
+├── persistence/      V2Store · PgV2Store (v2_* tables, migrations 007 + 008)
 ├── V2Service.ts      operations behind /api/v2/*
-└── index.ts          createV2Module() — wired into the API context
+└── index.ts          createV2Module() — wired into the API context · createV2LiveWorker()
+src/server/workers/v2Live.ts   the `npm run live` process (also `--check`, `--force`)
 src/client/v2/        V2Hub (tabs) · strategies/ (editor, legs, conditions) · connections/ · compare/ · alerts, products,
                       scanner, settings, dashboard · ProductPicker · ExplainView · help.ts (tooltips)
 ```
@@ -97,6 +140,7 @@ Migration `007_v2.sql` (additive):
 `v2_strategies` / `v2_strategy_versions` · `v2_connections` (config JSON: expiry, strike shifts, alert policy) ·
 `v2_unit_state` · `v2_signals` (unique identity) · `v2_alerts` / `v2_deliveries` · `v2_scan_runs` · `v2_settings`.
 Deleting a strategy cascades to its connections, their unit states, signals and alerts.
+Migration `008_v2_live.sql` adds `v2_live_status` (one heartbeat / status row written by the live worker).
 
 ## 7. Compare — how to read it
 
@@ -108,10 +152,18 @@ Deleting a strategy cascades to its connections, their unit states, signals and 
 
 ## 8. Verification
 
-- `tests/v2/` — 42 tests: product mapping from Kite dumps, NSE calendar, leg resolution (spot-based ATM on NSE,
+- `tests/v2/` — 59 tests: product mapping from Kite dumps, NSE calendar, leg resolution (spot-based ATM on NSE,
   future-based on MCX, strike positions, missing legs, spot / futures-only), validation, the boundary guard, and an
   end-to-end suite with one FUT-vs-CE strategy connected to NIFTY, BANKNIFTY and GOLD (alerts only where both
-  conditions hold, market gating, no re-alerting, compatibility refusal, channel check on switch-on, explain, compare).
+  conditions hold, market gating, no re-alerting, compatibility refusal, channel check on switch-on, explain, compare),
+  plus the live worker: Kite tick packets, socket subscribe / drop / resubscribe, minute building (trade-time buckets,
+  day open, volume, late trades), gaps and Kite catching up, the re-check rule, the subscription plan (ATM ± 2 strikes,
+  capacity), the fetch queue, and end to end (clear false decided live without a Kite request; true alerted only after
+  Kite confirms; a live true Kite doesn't confirm is dropped; a near miss Kite confirms alerts; gaps re-checked;
+  unverified fallback; cron steps aside and warns once when the worker dies; one worker at a time).
+- Live worker checked locally against a throwaway database (Kite and Telegram disabled): starts, writes its heartbeat,
+  shows on the Dashboard, a second worker refuses to start, Ctrl+C records a clean stop. **Not yet verified against the
+  real Kite stream** (needs market hours) — see § 9.
 - Checked locally (production build, throwaway database, Kite disconnected): every tab renders; strategies with
   1–4 legs, connections (including the refusal for incompatible products), compare and scan report missing data
   honestly.
@@ -122,3 +174,6 @@ Deleting a strategy cascades to its connections, their unit states, signals and 
 2. Log in to Kite, then **V2 → Products → Sync from Kite** (downloads NSE, BSE, NFO, BFO and MCX lists; ~1 minute).
 3. Configure Telegram (`TELEGRAM_BOT_TOKEN` + chat id) and/or email (`RESEND_API_KEY` + recipients) in V2 → Settings.
 4. Enter this year's NSE and MCX holidays in V2 → Settings → Market calendar.
+5. Live worker, first market morning: log in to Kite in the app, run `npm run live -- --check` (prints NIFTY 50 ticks),
+   then `npm run live` and leave it running. Dashboard → Live feed should show LIVE within a few minutes (history loads
+   first) and each candle close with its "decided in" time. Keep the computer awake during market hours.

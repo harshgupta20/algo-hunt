@@ -21,6 +21,7 @@ import type { Quote, V2DataProvider } from './data/DataProvider';
 import type { ProductService } from './data/ProductService';
 import { V2Tools, type CompareRequest } from './debug/tools';
 import type { ProductFilters, V2Store } from './persistence/V2Store';
+import { liveHealth } from './live/health';
 import { V2Scanner, type ScanOptions } from './scanner/V2Scanner';
 import { atmReference, resolveUnits, unitInstruments } from './universe/resolve';
 
@@ -67,6 +68,12 @@ export class V2Service {
   }
 
   // ---- status / products ---------------------------------------------------------------
+
+  /** The live worker's heartbeat row and how healthy it is right now. */
+  async liveStatus() {
+    const row = await this.deps.store.live.get();
+    return { health: liveHealth(row, this.now()), status: row?.status ?? null, offlineNotifiedAt: row?.offlineNotifiedAt ?? null };
+  }
 
   async status() {
     const now = this.now();

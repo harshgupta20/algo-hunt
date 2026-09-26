@@ -7,7 +7,7 @@
 import type { ReactNode } from 'react';
 import clsx from 'clsx';
 import { CheckCircle2, CircleHelp, XCircle } from 'lucide-react';
-import type { AlertStateName, ConditionTrace, ExprTrace, LegDef, LegKind, OperandTrace, SignalOutcome, TriState, UnitEvaluation, V2Instrument, V2Product, V2Unit } from '@/shared/v2';
+import type { AlertStateName, ConditionTrace, EvaluationSource, ExprTrace, LegDef, LegKind, OperandTrace, SignalOutcome, TriState, UnitEvaluation, V2Instrument, V2Product, V2Unit } from '@/shared/v2';
 import { legKindText, legName } from '@/shared/v2';
 import { InfoTip, Tooltip, type TooltipContent } from '../components/Tooltip';
 import { Badge } from '../components/ui';
@@ -225,5 +225,24 @@ export function TraceView({ trace, depth = 0 }: { trace: ExprTrace; depth?: numb
       </div>
       {trace.children?.map((c) => <TraceView key={c.id} trace={c} depth={depth + 1} />)}
     </div>
+  );
+}
+
+const SOURCE: Record<EvaluationSource, { label: string; tone: 'default' | 'warn'; help: TooltipContent }> = {
+  LIVE_VERIFIED: { label: '✓ Verified', tone: 'default', help: H.alerts.sourceVerified },
+  LIVE_UNVERIFIED: { label: 'Unverified', tone: 'warn', help: H.alerts.sourceUnverified },
+  LIVE: { label: 'Live candle', tone: 'default', help: H.alerts.sourceLive },
+  HISTORICAL: { label: 'Kite candles', tone: 'default', help: H.alerts.sourceHistorical },
+};
+
+/** Where an alert's candles came from and whether Kite's candles confirmed it. */
+export function SourceBadge({ source }: { source?: EvaluationSource }) {
+  const s = SOURCE[source ?? 'HISTORICAL'];
+  return (
+    <Tooltip content={s.help}>
+      <span>
+        <Badge tone={s.tone}>{s.label}</Badge>
+      </span>
+    </Tooltip>
   );
 }

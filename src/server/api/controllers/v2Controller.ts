@@ -34,6 +34,7 @@ export function v2Controller(ctx: AppContext) {
 
   const handlers = {
     status: () => svc().status(),
+    live: () => svc().liveStatus(),
     products: (req) =>
       svc().products({
         search: str(req.query.get('search')),

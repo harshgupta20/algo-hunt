@@ -282,7 +282,17 @@ export interface UnitEvaluation {
   trace: ExprTrace;
   /** Each leg's close on the trigger candle (legs whose data was fetched). */
   prices: Partial<Record<LegId, number>>;
+  /** Where the candles came from (absent on older evaluations = Kite historical). */
+  source?: EvaluationSource;
 }
+
+/**
+ * HISTORICAL: Kite's official candles (scanner, compare).
+ * LIVE_VERIFIED: live-built candles, re-checked against Kite's official candles before deciding.
+ * LIVE: live-built candles only (clear results, and forming candles in live-candle mode).
+ * LIVE_UNVERIFIED: Kite's official candles were unavailable in time — decided on live-built candles.
+ */
+export type EvaluationSource = 'HISTORICAL' | 'LIVE' | 'LIVE_VERIFIED' | 'LIVE_UNVERIFIED';
 
 // ---- State, signals, alerts ---------------------------------------------------------------------------
 
@@ -387,6 +397,57 @@ export const DEFAULT_V2_SETTINGS: V2Settings = {
   emailFrom: 'Algo Hunt <onboarding@resend.dev>',
   requestBudget: 150,
 };
+
+// ---- Live worker (streaming) --------------------------------------------------------------------
+
+export type LiveState = 'STARTING' | 'WAITING_LOGIN' | 'WARMING_UP' | 'LIVE' | 'DEGRADED' | 'STOPPED';
+
+/** One trigger candle the live worker processed. */
+export interface LiveCandleStat {
+  market: Market;
+  timeframe: Timeframe;
+  /** Open time (epoch s) of the trigger candle. */
+  candle: number;
+  units: number;
+  /** Close → every unit decided on live candles (ms). */
+  evaluatedMs: number;
+  /** Close → last confirmation against Kite's candles finished (ms); absent while pending. */
+  confirmedMs?: number;
+  /** Units re-checked against Kite's candles (true / near-threshold / gap-affected). */
+  checked: number;
+  /** Re-checks where Kite's candles changed the result. */
+  corrected: number;
+  unverified: number;
+  alerts: number;
+}
+
+export interface LiveSocketStatus {
+  id: number;
+  state: 'CONNECTING' | 'OPEN' | 'CLOSED';
+  tokens: number;
+  lastMessageAt: string | null;
+  reconnects: number;
+  error?: string;
+}
+
+/** Heartbeat + health of the live worker (one row, rewritten every few seconds). */
+export interface LiveStatus {
+  workerId: string;
+  startedAt: string;
+  heartbeatAt: string;
+  state: LiveState;
+  detail: string;
+  sockets: LiveSocketStatus[];
+  contracts: { needed: number; buffer: number; subscribed: number; capacity: number; overCapacity: number };
+  warmup: { done: number; total: number };
+  queue: { confirm: number; warmup: number; repair: number };
+  ticks: { perSecond: number; lastAt: string | null; late: number; clockDriftMs: number | null };
+  connections: { covered: number; uncovered: string[] };
+  today: { date: string; candles: number; checked: number; corrected: number; unverified: number; alerts: number };
+  lastCandles: LiveCandleStat[];
+  errors: Array<{ at: string; message: string }>;
+  memoryMb: number;
+}
 
 export type CalendarEntry =
   | { market: Market; date: string; kind: 'HOLIDAY'; note?: string }

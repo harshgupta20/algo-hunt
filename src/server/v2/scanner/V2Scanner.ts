@@ -15,12 +15,12 @@
  *  11 alert        policy → signal (deduped by identity) → alert → delivery; persist
  */
 import { randomUUID } from 'node:crypto';
-import type { Market, ScanError, ScanRun, StrategyDefinition, Timeframe, TriState, UnitEvaluation, UnitState, V2Connection, V2Instrument, V2Product, V2Settings, V2Strategy, V2Unit } from '@/shared/v2';
+import type { Market, ScanError, ScanRun, StrategyDefinition, Timeframe, UnitEvaluation, UnitState, V2Connection, V2Instrument, V2Product, V2Settings, V2Strategy, V2Unit } from '@/shared/v2';
 import { TIMEFRAME } from '@/shared/v2';
-import { istDate } from '../../utils/marketTime';
+import { IST_OFFSET_MS, istDate } from '../../utils/marketTime';
 import { childLogger } from '../../utils/logger';
-import { decide, initialState, signalIdentity } from '../alerts/alertPolicy';
-import { deliver, formatAlert, type ChannelFactory } from '../alerts/notifications';
+import { initialState } from '../alerts/alertPolicy';
+import { deliver, type ChannelFactory } from '../alerts/notifications';
 import { calendars, type MarketCalendar } from '../calendar/MarketCalendar';
 import { BudgetExceededError, CandleService } from '../data/CandleService';
 import type { V2DataProvider } from '../data/DataProvider';
@@ -29,6 +29,8 @@ import { evaluateUnit, pendingReason, type UnitEvalInput } from '../engine/evalu
 import { leafCount, legInstrument, seriesOf } from '../engine/series';
 import type { V2Store } from '../persistence/V2Store';
 import { atmReference, resolveUnits } from '../universe/resolve';
+import { commitUnit, previousResult, type Clock } from './commit';
+import { LIVE_OFFLINE_WARN_MS, liveHealth } from '../live/health';
 
 const log = childLogger('v2-scan');
 
@@ -54,13 +56,6 @@ export interface ScanOptions {
 export interface ScanResult {
   run: ScanRun;
   skipped?: string;
-}
-
-interface Clock {
-  triggerOpenMs: number;
-  at: number;
-  prevOpenMs: number | null;
-  prevAt: number | null;
 }
 
 interface Plan {
@@ -143,13 +138,30 @@ export class V2Scanner {
     }
     const products = new Map((await store.products.list({ ids: [...new Set(connections.map((c) => c.productId))] })).map((p) => [p.id, p]));
     const open = (m: Market) => opts.force || cals[m].isMarketOpen(now, CLOSE_GRACE_MIN);
-    const live = connections.filter((c) => {
+    let live = connections.filter((c) => {
       const p = products.get(c.productId);
       return p ? open(p.market) : true; // unknown product → reported below
     });
     if (!live.length) {
       run.notes.push('Markets for the enabled connections are closed');
       return finish('SKIPPED', 'market-closed');
+    }
+
+    // Live worker: while it streams, it handles every connection it covers — this scan only backs it up.
+    if (!opts.force && !opts.connectionIds) {
+      const row = await store.live.get().catch(() => null);
+      const health = liveHealth(row, now);
+      if (health.covering) {
+        const uncovered = new Set(health.uncovered);
+        live = live.filter((c) => uncovered.has(c.id));
+        if (!live.length) {
+          run.notes.push('The live worker is handling every connection');
+          return finish('SKIPPED', 'live-worker');
+        }
+        run.notes.push(`Live worker active — checking ${live.length} connection(s) it can't cover`);
+      } else if (row && health.crashed && health.silentMs !== null && health.silentMs >= LIVE_OFFLINE_WARN_MS && !row.offlineNotifiedAt) {
+        await this.warnWorkerOffline(row.status.heartbeatAt, settings).catch((err) => log.warn({ err: msg(err) }, 'offline warning failed'));
+      }
     }
     run.connections = live.length;
 
@@ -292,8 +304,16 @@ export class V2Scanner {
     return finish();
   }
 
+  /** One Telegram message when the live worker went quiet without a clean stop (this scanner is now the backup). */
+  private async warnWorkerOffline(lastSeen: string, settings: V2Settings): Promise<void> {
+    const at = new Date(this.now()).toISOString();
+    await this.deps.store.live.markOfflineNotified(at);
+    const seen = new Date(Date.parse(lastSeen) + IST_OFFSET_MS).toISOString().slice(11, 16);
+    const text = `⚠️ V2 live worker is offline (last seen ${seen} IST).\nThe backup scanner now checks your connections every minute — alerts may arrive a few minutes late until the worker is back (npm run live).`;
+    await deliver(this.deps.channels, settings, { telegram: true, email: false }, { subject: 'V2 live worker offline', text, html: `<p>${text.replace(/\n/g, '<br/>')}</p>` }, () => this.now());
+  }
+
   private async processUnit(p: Plan, unit: V2Unit, candles: CandleService, memo: Map<string, unknown>, settings: V2Settings, now: number, run: ScanRun): Promise<void> {
-    const { store } = this.deps;
     const { connection: c, strategy: s, product } = p;
     const d = s.definition;
     const input: UnitEvalInput = { strategyId: s.id, version: s.version, productId: product.id, definition: d, unit, lookup: candles.lookup, triggerOpenMs: p.clock.triggerOpenMs, at: p.clock.at, memo };
@@ -302,83 +322,14 @@ export class V2Scanner {
       run.notes.push(`Waiting for data: ${pending}`);
       return;
     }
-    const evaluation = evaluateUnit(input);
+    const evaluation: UnitEvaluation = { ...evaluateUnit(input), source: 'HISTORICAL' };
     run.unitsEvaluated++;
     run.conditions += leafCount(d);
 
     const state = p.states.get(unit.key) ?? initialState(c.id, unit.key);
-    const prevResult = this.previousResult(p, state, input, evaluation);
-    const policy = c.config.alert;
-    const decision = decide({ policy, state, result: evaluation.result, prevResult, triggerCandle: evaluation.triggerCandle, at: p.clock.at, now, enabledAt: c.enabledAt, mode: d.evaluation.mode });
-
-    if (decision.outcome) {
-      const identity = signalIdentity({
-        connectionId: c.id,
-        version: s.version,
-        unitKey: unit.key,
-        triggerTimeframe: d.evaluation.triggerTimeframe,
-        triggerCandle: evaluation.triggerCandle,
-        mode: d.evaluation.mode,
-        oncePerCandle: policy.oncePerCandle,
-        now,
-      });
-      const signal = await store.signals.insert({
-        identity,
-        connectionId: c.id,
-        strategyId: s.id,
-        version: s.version,
-        unitKey: unit.key,
-        triggerTimeframe: d.evaluation.triggerTimeframe,
-        candleTime: evaluation.triggerCandle,
-        outcome: decision.outcome,
-        evaluation,
-      });
-      if (signal) {
-        run.signals++;
-        if (decision.outcome === 'ALERTED' || decision.outcome === 'NO_CHANNEL') {
-          const draft = {
-            signalId: signal.id,
-            connectionId: c.id,
-            strategyId: s.id,
-            strategyName: s.name,
-            version: s.version,
-            productId: product.id,
-            status: 'SENT' as const,
-            unit,
-            triggerTimeframe: d.evaluation.triggerTimeframe,
-            candleTime: evaluation.triggerCandle,
-            evaluation,
-          };
-          const alert = await store.alerts.insert(draft);
-          run.alerts++;
-          if (decision.outcome === 'ALERTED') {
-            const message = formatAlert(draft, { productSymbol: product.symbol, productName: product.name, legs: d.legs });
-            const { deliveries, status } = await deliver(this.deps.channels, settings, policy.channels, message, () => this.now());
-            for (const del of deliveries) await store.alerts.addDelivery(alert.id, del);
-            if (status !== 'SENT') await store.alerts.setStatus(alert.id, status);
-            for (const del of deliveries) {
-              if (del.status === 'failed') run.errors.push({ source: `delivery:${del.channel}`, connectionId: c.id, unitKey: unit.key, message: del.error ?? 'failed' });
-            }
-          }
-        }
-      }
-    }
-    const next: UnitState = { ...decision.next, lastEvaluatedCandle: evaluation.triggerCandle, lastEvaluation: evaluation };
-    await store.units.upsert(next);
+    const prevResult = previousResult(p.clock, state, input, evaluation);
+    const next = await commitUnit({ store: this.deps.store, channels: this.deps.channels, now: () => this.now() }, p, unit, evaluation, prevResult, state, settings, run);
+    await this.deps.store.units.upsert(next);
     p.states.set(unit.key, next);
-  }
-
-  /** The unit's result on the previous trigger candle: stored when it evaluated exactly that candle, otherwise re-evaluated now. */
-  private previousResult(p: Plan, state: UnitState, input: UnitEvalInput, evaluation: UnitEvaluation): TriState | null {
-    const { clock } = p;
-    if (input.definition.evaluation.mode === 'LIVE_CANDLE') {
-      const last = state.lastEvaluation;
-      if (last && state.lastResult && evaluation.evaluatedAt - last.evaluatedAt <= 3 * 60_000) return state.lastResult;
-      if (clock.prevOpenMs === null || clock.prevAt === null) return null;
-      return evaluateUnit({ ...input, mode: 'COMPLETED_CANDLE', triggerOpenMs: clock.prevOpenMs, at: clock.prevAt }).result;
-    }
-    if (clock.prevOpenMs === null || clock.prevAt === null) return null;
-    if (state.lastEvaluatedCandle === Math.floor(clock.prevOpenMs / 1000)) return state.lastResult;
-    return evaluateUnit({ ...input, triggerOpenMs: clock.prevOpenMs, at: clock.prevAt }).result;
   }
 }

@@ -66,6 +66,7 @@ Postgres, Kite or the network.
 | [v2/bollinger.test.ts](../tests/v2/bollinger.test.ts) | 4 | V2 Bollinger Bands: upper / middle / lower with the chosen std dev, %B, bandwidth, other sources, which comparisons validation allows |
 | [v2/comparison.test.ts](../tests/v2/comparison.test.ts) | 6 | Editor comparison rules: a Bollinger band / average becomes “Close vs band” (no number), %B / Bandwidth / RSI / ADX get typical levels, one-click fix for “band vs number” |
 | [v2/examples.test.ts](../tests/v2/examples.test.ts) | 5 | Every V2 example validates; the trader's RSI + Bollinger sheet (Group 1 bullish OR Group 2 bearish) fires the right group on bullish / bearish candles and not on a half setup |
+| [v2/live.test.ts](../tests/v2/live.test.ts) | 17 | Live worker: Kite tick packets; socket subscribe / drop / resubscribe; minute building (trade-time buckets, day open, day-volume deltas, late trades); gaps and Kite catching up; the re-check rule (true / gap / near miss that matters); subscription plan (ATM ± 2 strikes, capacity, waiting for a price); fetch-queue priorities; end to end (decided live, verified alert, correction by Kite, near miss confirmed, gap re-check, unverified fallback, cron steps aside + one offline warning, one worker at a time) |
 | [v2/boundary.test.ts](../tests/v2/boundary.test.ts) | 4 | V2 never imports MCX V2 or V1 business modules; the app imports V2 only at the wiring points |
 | [mcx2/boundary.test.ts](../tests/mcx2/boundary.test.ts) | 4 | MCX V2 never imports V1 business modules; V1 imports V2 only at the wiring points |
 

@@ -11,6 +11,7 @@ import type {
   ExprNode,
   LegDef,
   LegId,
+  LiveStatus,
   Operand,
   ProductKind,
   ScanRun,
@@ -51,6 +52,7 @@ export class MemoryV2Store implements V2Store {
     runs: [] as ScanRun[],
     settings: { ...DEFAULT_V2_SETTINGS } as V2Settings,
     locks: new Map<string, number>(),
+    live: null as { status: LiveStatus; offlineNotifiedAt: string | null } | null,
   };
 
   constructor(private readonly clock: () => number = Date.now) {}
@@ -155,8 +157,12 @@ export class MemoryV2Store implements V2Store {
   units = {
     list: async (cid: string) => clone([...this.data.units.values()].filter((u) => u.connectionId === cid)),
     get: async (cid: string, key: string) => clone(this.data.units.get(`${cid}|${key}`) ?? null),
+    listFor: async (ids: string[]) => clone([...this.data.units.values()].filter((u) => ids.includes(u.connectionId))),
     upsert: async (s: UnitState) => {
       this.data.units.set(`${s.connectionId}|${s.unitKey}`, clone({ ...s, updatedAt: this.iso() }));
+    },
+    upsertMany: async (list: UnitState[]) => {
+      for (const s of list) await this.units.upsert(s);
     },
     clear: async (cid: string) => {
       for (const k of [...this.data.units.keys()]) if (k.startsWith(`${cid}|`)) this.data.units.delete(k);
@@ -235,6 +241,16 @@ export class MemoryV2Store implements V2Store {
     },
     release: async (name: string) => {
       this.data.locks.delete(name);
+    },
+  };
+
+  live = {
+    get: async () => clone(this.data.live),
+    save: async (status: LiveStatus) => {
+      this.data.live = { status: clone(status), offlineNotifiedAt: null };
+    },
+    markOfflineNotified: async (at: string) => {
+      if (this.data.live) this.data.live.offlineNotifiedAt = at;
     },
   };
 }

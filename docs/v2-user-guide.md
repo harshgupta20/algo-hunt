@@ -16,6 +16,35 @@ Open **V2 · beta** in the sidebar. Every control has an ⓘ or a hover tooltip 
    - Press the ✈ button next to each to send a test message.
 4. **Holidays:** V2 → Settings → **Market calendar**. Add this year's NSE and MCX holidays.
 
+## Live alerts on your computer (recommended)
+
+Without it, connections are checked once a minute by a scanner that downloads candles from Kite (about 150 a minute),
+so with many products alerts can be a few minutes late. The **live worker** streams prices instead and checks every
+connection within seconds of each candle close.
+
+**Every market day:**
+
+1. Log in to Kite in the app (Settings → Broker Connection). If you forget, the worker sends a Telegram reminder 15 minutes before the open.
+2. In the project folder run `npm run live` and leave the window open. Keep the computer awake until your last market closes (MCX runs until 23:30 or 23:55).
+3. V2 → **Dashboard → Live feed** shows its state:
+   - **Warming up:** it's loading candle history for the contracts in use. This takes a few minutes, and results are checked on Kite's candles meanwhile.
+   - **Live:** it's streaming. Each candle close is listed with "decided in" (usually 2–3 seconds).
+
+The first time, run `npm run live -- --check`. It connects to Kite, prints a few NIFTY 50 prices and exits.
+
+**Accuracy: every alert is checked on Kite's own candles.**
+- When a condition looks true, or is within a whisker of its level and could matter, the worker downloads Kite's official candle a few seconds after the close. It alerts only if Kite's candle agrees.
+- Alerts are marked **✓ Verified**.
+- If Kite's candles haven't arrived after 2 minutes, it still alerts, marked **Unverified**.
+- **Checked / corrected** on the Live feed card counts how often Kite's candles were used and how often they changed the result.
+
+**If something goes wrong:** if the internet drops or the computer sleeps, the per-minute scanner takes over by itself and Telegram tells you. Alerts are then a few minutes late until the worker is back.
+
+**Limits:** Kite allows 9,000 streamed contracts per login.
+- Each connection needs its legs at ATM, plus 2 strikes either side kept ready for ATM moves.
+- For example, 210 F&O stocks with FUT + CE + PE at ATM use about 2,500 (4 in use + 8 nearby strikes each).
+- If you go over, the extra connections are checked by the per-minute scanner, and the card says so.
+
 ## 1. Build a strategy (Strategies tab)
 
 1. Click **New strategy**, or start from an example:
@@ -83,6 +112,6 @@ Open **V2 · beta** in the sidebar. Every control has an ⓘ or a hover tooltip 
 
 ## Good to know
 
-- **Scanning:** strategies are checked every minute during market hours (NSE/BSE 09:15–15:30; MCX 09:00–23:30 or 23:55), and also while V2 is open in a browser.
+- **Scanning:** with the live worker running, connections are checked seconds after each candle closes. Without it, they're checked every minute during market hours (NSE/BSE 09:15–15:30; MCX 09:00–23:30 or 23:55), and also while V2 is open in a browser.
 - **Duplicates:** a candle never alerts twice. Acknowledged alerts stay quiet until the strategy turns false and then true again.
 - **Unknown results:** "Unknown" means not enough data, e.g. indicator warm-up or a strike that isn't listed. Unknown never alerts.
