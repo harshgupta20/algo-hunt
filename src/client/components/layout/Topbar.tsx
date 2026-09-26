@@ -52,7 +52,7 @@ export function Topbar({ collapsed, onToggleSidebar }: { collapsed: boolean; onT
   };
 
   return (
-    <header className="brand-gradient h-16 shrink-0 shadow-sm flex items-center justify-between gap-4 pl-3 pr-6 text-white">
+    <header className="bg-brand h-16 shrink-0 shadow-sm flex items-center justify-between gap-4 pl-3 pr-6 text-white">
       <div className="flex items-center gap-3 min-w-0">
         <IconButton help={collapsed ? HELP.nav.expand : HELP.nav.collapse} side="bottom" className="btn-glass px-2" onClick={onToggleSidebar}>
           {collapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}

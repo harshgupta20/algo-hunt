@@ -12,7 +12,7 @@ export function Logo({ height = 38, onBrand = false }: { height?: number; onBran
     <div className="flex items-center gap-2.5">
       {onBrand ? <span className="flex items-center rounded-xl bg-white px-1.5 py-1 shadow-sm ring-1 ring-white/60">{img}</span> : img}
       <div>
-        <div className={clsx('text-[15px] font-bold leading-tight', onBrand ? 'text-white' : 'brand-text')}>Algo Hunt</div>
+        <div className={clsx('text-[15px] font-bold leading-tight', onBrand ? 'text-white' : 'text-accent')}>Algo Hunt</div>
         <div className={clsx('text-[10px] uppercase tracking-widest', onBrand ? 'text-white/75' : 'text-slate-500')}>Alert Platform</div>
       </div>
     </div>

@@ -23,8 +23,8 @@ export default {
           DEFAULT: themed('accent'),
           soft: themed('accent-soft'),
         },
-        // Logo gradient stops (header background): deep blue → blue → teal → aqua-green.
-        brand: scale('brand', [1, 2, 3, 4]),
+        // Header background (the logo's deep blue).
+        brand: themed('brand'),
         // Direction: green = bullish / up, red = bearish / down. Amber = needs attention.
         bull: themed('bull'),
         bear: themed('bear'),

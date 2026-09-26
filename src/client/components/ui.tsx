@@ -83,7 +83,7 @@ export function Tabs<T extends string>({
           onClick={() => onChange(v)}
           className={clsx(
             'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-            v === value ? 'brand-gradient text-white shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-ink-800',
+            v === value ? 'bg-accent text-white shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-ink-800',
           )}
         >
           {Icon && <Icon className="w-4 h-4" />}
@@ -134,7 +134,7 @@ export function Help({ content, side, className, children }: { content: TooltipC
   );
 }
 
-/** Inline wait with a label (brand gradient ring). Pages use BrandLoader, lists use skeletons (loaders.tsx). */
+/** Inline wait with a label (accent ring). Pages use BrandLoader, lists use skeletons (loaders.tsx). */
 export function Spinner({ label }: { label?: string }) {
   return (
     <div role="status" className="flex items-center gap-2 text-slate-400 text-sm">

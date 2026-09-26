@@ -5,7 +5,7 @@
  *   BrandLoader   the logo line drawing itself (pages, long operations)
  *   Skeleton*     shimmering placeholders shaped like the content (cards, tables, lists)
  *   InlineSpinner currentColor arc for buttons
- *   ActivityBar   thin gradient bar under the header while pages load or saves run
+ *   ActivityBar   thin accent bar under the header while pages load or saves run
  * (The inline gradient-ring `Spinner` with a label lives in ui.tsx.)
  */
 import { useEffect, useId, useState, type ReactNode } from 'react';

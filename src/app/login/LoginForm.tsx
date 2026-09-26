@@ -38,7 +38,7 @@ export function LoginForm() {
   return (
     <div className="flex h-full items-center justify-center bg-ink-950 p-6">
       <form onSubmit={submit} className="card w-full max-w-sm p-6 pt-7 space-y-5 relative overflow-hidden">
-        <div aria-hidden className="brand-gradient absolute inset-x-0 top-0 h-1.5" />
+        <div aria-hidden className="bg-accent absolute inset-x-0 top-0 h-1.5" />
         <Logo height={40} />
         <div>
           <label className="label" htmlFor="password">
