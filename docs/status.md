@@ -126,7 +126,7 @@ Severity: **High** = can cause missed alerts or wrong data · **Medium** = misle
 
 | Claim | How verified |
 | --- | --- |
-| Engines, MCX rules, sessions, multi-timeframe, patterns, ADX/DMI, Bollinger outputs | Automated tests (212 passing: 61 MCX V2, 24 V2) |
+| Engines, MCX rules, sessions, multi-timeframe, patterns, ADX/DMI, Bollinger outputs | Automated tests (216 passing: 61 MCX V2, 28 V2) |
 | V2 leg resolution, product catalogue, one strategy across NSE + MCX products, compare, boundaries | Automated tests (`tests/v2/`) + local production build with a throwaway database (Kite disconnected) |
 | MCX V2 engine, alert policy, both Definition-of-Done strategies end to end, module boundaries | Automated tests (`tests/mcx2/`) |
 | MCX V2 UI (all tabs, light + dark), create / validate / enable flows, scan without Kite | Manually, local production build + throwaway database (Kite disconnected) |

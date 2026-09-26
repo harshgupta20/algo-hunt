@@ -108,7 +108,7 @@ Deleting a strategy cascades to its connections, their unit states, signals and 
 
 ## 8. Verification
 
-- `tests/v2/` — 24 tests: product mapping from Kite dumps, NSE calendar, leg resolution (spot-based ATM on NSE,
+- `tests/v2/` — 28 tests: product mapping from Kite dumps, NSE calendar, leg resolution (spot-based ATM on NSE,
   future-based on MCX, strike positions, missing legs, spot / futures-only), validation, the boundary guard, and an
   end-to-end suite with one FUT-vs-CE strategy connected to NIFTY, BANKNIFTY and GOLD (alerts only where both
   conditions hold, market gating, no re-alerting, compatibility refusal, channel check on switch-on, explain, compare).

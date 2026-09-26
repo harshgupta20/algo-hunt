@@ -63,6 +63,7 @@ Postgres, Kite or the network.
 | [v2/resolve.test.ts](../tests/v2/resolve.test.ts) | 5 | V2 legs → contracts: spot-based ATM (NSE), future-based ATM (MCX), FUT = the future options expire into, strike positions, legs outside the ladder, spot / futures-only |
 | [v2/catalog.test.ts](../tests/v2/catalog.test.ts) | 7 | Kite dump rows → V2 instruments and products; NSE calendar; strategy / connection validation and product compatibility; named groups in the strategy text |
 | [v2/scanner.test.ts](../tests/v2/scanner.test.ts) | 8 | One FUT-vs-CE strategy on NIFTY, BANKNIFTY and GOLD: alerts, market gating, no re-alerting, refusals, explain, compare, spot-only on stocks |
+| [v2/bollinger.test.ts](../tests/v2/bollinger.test.ts) | 4 | V2 Bollinger Bands: upper / middle / lower with the chosen std dev, %B, bandwidth, other sources, which comparisons validation allows |
 | [v2/boundary.test.ts](../tests/v2/boundary.test.ts) | 4 | V2 never imports MCX V2 or V1 business modules; the app imports V2 only at the wiring points |
 | [mcx2/boundary.test.ts](../tests/mcx2/boundary.test.ts) | 4 | MCX V2 never imports V1 business modules; V1 imports V2 only at the wiring points |
 
