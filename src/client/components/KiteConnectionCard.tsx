@@ -2,15 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Database, Link2, Loader2, LogOut, RefreshCw } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, CheckCircle2, Link2, Loader2, LogOut, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
 import type { KiteAuthState } from '@ash/shared';
 import { api } from '../lib/api';
 import { fmtTime } from '../lib/format';
 import { useKiteStatus } from '../hooks/useKiteStatus';
 import { Card, Help } from './ui';
-import { InfoTip } from './Tooltip';
 import { HELP } from '../lib/help';
 
 const STATE_META: Record<KiteAuthState, { label: string; text: string; dot: string }> = {
@@ -30,21 +29,6 @@ export function KiteConnectionCard() {
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; msg: string } | null>(null);
   const [origin, setOrigin] = useState('');
 
-  const instruments = useQuery({
-    queryKey: ['kite-instruments'],
-    queryFn: api.kiteInstruments,
-    enabled: data?.enabled === true,
-  });
-  const sync = useMutation({
-    mutationFn: api.kiteSyncInstruments,
-    onSuccess: (r) => {
-      setNotice({ kind: 'ok', msg: `Instrument master refreshed (${r.count.toLocaleString()} contracts).` });
-      void qc.invalidateQueries({ queryKey: ['kite-instruments'] });
-      void qc.invalidateQueries({ queryKey: ['underlyings'] });
-      void qc.invalidateQueries({ queryKey: ['mcx-products'] });
-    },
-    onError: (e: Error) => setNotice({ kind: 'error', msg: e.message }),
-  });
   const logout = useMutation({
     mutationFn: api.kiteLogout,
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['kite-status'] }),
@@ -55,9 +39,9 @@ export function KiteConnectionCard() {
   useEffect(() => {
     const kite = params.get('kite');
     if (!kite) return;
-    if (kite === 'connected') setNotice({ kind: 'ok', msg: 'Kite connected — live monitoring and backtests are using real market data.' });
+    if (kite === 'connected') setNotice({ kind: 'ok', msg: 'Kite connected — V2 scanning and the live worker use real market data.' });
     else setNotice({ kind: 'error', msg: params.get('message') ?? 'Kite login failed.' });
-    void qc.invalidateQueries({ queryKey: ['kite-instruments'] });
+    void qc.invalidateQueries({ queryKey: ['kite-status'] });
     router.replace(pathname);
   }, [params, router, pathname, qc]);
 
@@ -140,25 +124,6 @@ export function KiteConnectionCard() {
           <CheckCircle2 className="w-3.5 h-3.5 text-bull" />
           Session valid{data.expiresAt ? ` until ${fmtTime(data.expiresAt)}` : ''}. Kite resets access tokens every
           morning (~6:00 AM IST) — reconnect once per trading day.
-        </div>
-      )}
-
-      {connected && (
-        <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-400">
-          <span className="flex items-center gap-2">
-            <Database className="w-3.5 h-3.5 text-slate-500" />
-            <InfoTip content={HELP.settings.instruments} /> Instrument master:{' '}
-            {instruments.data
-              ? instruments.data.segments
-                ? `NSE/BSE ${instruments.data.segments.NSE.count.toLocaleString()} · MCX ${instruments.data.segments.MCX.count.toLocaleString()} contracts${instruments.data.syncedAt ? ` · synced ${fmtTime(instruments.data.syncedAt)}` : ''}`
-                : `${instruments.data.count.toLocaleString()} contracts${instruments.data.syncedAt ? ` · synced ${fmtTime(instruments.data.syncedAt)}` : ''}`
-              : '…'}
-          </span>
-          <Help content={HELP.settings.refresh}>
-            <button className="btn-ghost text-xs" onClick={() => sync.mutate()} disabled={sync.isPending}>
-              {sync.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Refresh
-            </button>
-          </Help>
         </div>
       )}
 

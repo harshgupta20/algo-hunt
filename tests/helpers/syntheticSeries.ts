@@ -3,7 +3,13 @@
  * specific transition, so the REAL RSI + strategy engines can be exercised
  * end-to-end in tests.
  */
-import type { RsiSyncParams } from '@ash/shared';
+/** RSI levels the synthetic series are built around. */
+export interface RsiSyncParams {
+  rsiPeriod: number;
+  futureLevel: number;
+  callLevel: number;
+  putLevel: number;
+}
 import { computeRsiSeries } from '../../src/server/services/indicator/rsi';
 
 /** Alternating +1/-1 warmup that settles RSI toward ~50. */

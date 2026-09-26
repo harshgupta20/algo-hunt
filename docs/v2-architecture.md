@@ -1,10 +1,10 @@
 # V2 — Strategy + Product = Alert
 
-Status: **beta at `/v2`** (sidebar "V2 · beta"). Runs alongside everything else — NSE monitors, the MCX tab and
-MCX V2 are unchanged. Trader guide: [v2-user-guide.md](v2-user-guide.md).
+Status: **the app** — `/v2` (sidebar "V2"; `/` redirects there). The earlier V1 pages (Dashboard, Alerts, Strategies,
+Configuration, MCX) and MCX V2 were removed on 2026-09-27. Trader guide: [v2-user-guide.md](v2-user-guide.md).
 
-> Related: [architecture.md](architecture.md) · [api.md § 4.13](api.md#413-v2--strategy--product--alert) ·
-> [database.md](database.md#v2-tables-007) · [mcx-v2-architecture.md](mcx-v2-architecture.md) (the earlier MCX-only design V2 generalises)
+> Related: [architecture.md](architecture.md) · [api.md § 4.2](api.md#42-v2--strategy--product--alert) ·
+> [database.md](database.md#v2-tables-007-008)
 
 ---
 
@@ -49,7 +49,7 @@ the server refuses them.
 - A connection resolves to **units**: one per *strike position* (`strikeShifts`, e.g. `[-1, 0, 1]` scans the same
   legs one strike lower and higher), or a single unit for spot / futures strategies. Unit keys: `<expiry>|<base
   strike>`, `FUT|<expiry>` or `SPOT`.
-- The engine (candles, indicators, evaluator, alert policy) is the one proven in MCX V2, re-typed for legs:
+- The engine (candles, indicators, evaluator, alert policy) started from the MCX V2 engine (since removed), re-typed for legs:
   completed-candle mode evaluates once per trigger candle on closed candles; live mode every minute on forming
   candles; crosses = previous ≤ and current >; missing data is `UNKNOWN` and never alerts; `ON_TRANSITION` needs the
   previous result to be `FALSE`; signal identity = connection · strategy version · unit · candle (deduped in the DB).
@@ -59,12 +59,11 @@ the server refuses them.
 
 ## 4. Scanner
 
-Same staged, failure-isolated cycle as MCX V2 ([mcx-v2-architecture.md § 6](mcx-v2-architecture.md#6-scanner-pipeline)),
-per connection: gate by market → connections + strategies + products → provider + instrument freshness → trigger
+A staged, failure-isolated cycle per connection: gate by market → connections + strategies + products → provider + instrument freshness → trigger
 clock → one batched LTP call for every ATM reference → units → due units → fetch plan within the request budget
 (`v2_settings.requestBudget`, default 150) → fetch (each contract once per cycle, shared across connections) →
-evaluate → policy → signal → alert → Telegram / Email. It runs as a **third isolated job** in `/api/cron/tick`
-(own lease `v2-scan`) and while `/v2` is open.
+evaluate → policy → signal → alert → Telegram / Email. It is the job behind `/api/cron/tick` (lease `v2-scan`,
+table `app_locks`) and also runs while `/v2` is open; while the live worker streams it only backs it up (§ 4b).
 
 ## 4b. Live worker (streaming) — `npm run live`
 
@@ -129,8 +128,8 @@ src/client/v2/        V2Hub (tabs) · strategies/ (editor, legs, conditions) · 
                       scanner, settings, dashboard · ProductPicker · ExplainView · help.ts (tooltips)
 ```
 
-A boundary test (`tests/v2/boundary.test.ts`) keeps V2 independent: it never imports MCX V2 or V1 business modules,
-so either can be retired without touching V2; the rest of the app imports V2 only at the wiring points.
+A boundary test (`tests/v2/boundary.test.ts`) keeps V2 independent of the retired V1 / MCX V2 module paths,
+and the rest of the app imports V2 only at the wiring points (API context, router, cron route, live worker, app shell).
 
 ## 6. Persistence
 

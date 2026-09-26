@@ -1,6 +1,5 @@
 import type { AppContext } from '../context';
 import { HttpError, type Handler } from '../http';
-import { INSTRUMENTS_SYNCED_KEY, MCX_INSTRUMENTS_SYNCED_KEY, syncInstrumentsFromKite } from '../../services/kite/instrumentSync';
 
 /** Accept a raw request_token OR the full redirected URL and pull the token out. */
 export function extractRequestToken(input: string): string {
@@ -58,30 +57,5 @@ export function kiteController(ctx: AppContext) {
     return { ok: true };
   };
 
-  /** Instrument-master status (total + per market) + manual refresh from Kite. */
-  const instruments: Handler = async () => {
-    const [count, nse, mcx, nseSynced, mcxSynced] = await Promise.all([
-      ctx.store.instruments.count(),
-      ctx.store.instruments.count(['NFO', 'BFO']),
-      ctx.store.instruments.count(['MCX']),
-      ctx.store.kv.get<{ at: string }>(INSTRUMENTS_SYNCED_KEY),
-      ctx.store.kv.get<{ at: string }>(MCX_INSTRUMENTS_SYNCED_KEY),
-    ]);
-    return {
-      count,
-      syncedAt: nseSynced?.value.at,
-      segments: {
-        NSE: { count: nse, syncedAt: nseSynced?.value.at },
-        MCX: { count: mcx, syncedAt: mcxSynced?.value.at },
-      },
-    };
-  };
-
-  const syncInstruments: Handler = async () => {
-    const count = await syncInstrumentsFromKite(ctx.kiteAuth, ctx.store);
-    ctx.instrumentStore.invalidate();
-    return { count, syncedAt: new Date().toISOString() };
-  };
-
-  return { status, login, loginUrlJson, callback, session, logout, instruments, syncInstruments };
+  return { status, login, loginUrlJson, callback, session, logout };
 }

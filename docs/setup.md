@@ -44,8 +44,8 @@ noted otherwise.
 | `KITE_API_SECRET` | **Yes** for market data | Kite Connect app secret; also derives the key that encrypts the stored access token. Rotating it invalidates the stored session |
 | `APP_PASSWORD` | **Yes in production** | Dashboard password. Unset → open in development, 503 in production |
 | `CRON_SECRET` | **Yes in production** | Secret for `/api/cron/tick` (`Authorization: Bearer …` or `?secret=`). Unset → allowed only outside production |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | No | Both set → alerts are also sent to that Telegram chat. MCX V2 needs only the token when a chat id is set in MCX V2 → Settings |
-| `RESEND_API_KEY` | No | MCX V2 email alerts via [Resend](https://resend.com); recipients and sender are set in MCX V2 → Settings |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | No | Telegram alerts. The chat id can instead be set in V2 → Settings (then only the token is needed) |
+| `RESEND_API_KEY` | No | Email alerts via [Resend](https://resend.com); recipients and sender are set in V2 → Settings |
 | `LOG_LEVEL` | No | `error` · `warn` · `info` (default) · `debug`; JSON log lines ([logger.ts](../src/server/utils/logger.ts)) |
 | `KITE_API_ROOT` | No | Overrides the Kite API base URL (for proxies / integration testing). Read directly in [kiteClient.ts](../src/server/services/kite/kiteClient.ts); **not listed in `.env.example`** |
 | `NODE_ENV` | Set by Next.js | Production enables the password/secret requirements and `Secure` cookies |
@@ -57,8 +57,8 @@ noted otherwise.
 - `.env`, `.env.local` and `.env.*.local` are git-ignored ([.gitignore](../.gitignore)).
 
 > ⚠ **Use a separate development database.** The dev server talks to whatever `DATABASE_URL` points at. An open
-> dashboard triggers live ticks, which write monitor state and alerts and may sync instruments. Point local
-> development at a Neon branch or local Postgres, not production.
+> dashboard and the live worker write scanner state and alerts. Point local development at a Neon branch or a
+> local Postgres if you don't want to touch production data.
 
 ---
 
@@ -87,24 +87,25 @@ npm run dev                   # http://localhost:3000
 | `npm test` / `npm run test:watch` | vitest once / watch mode |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run db:migrate` | Apply migrations |
+| `npm run live` | V2 live worker (migrations first): streams Kite ticks and alerts seconds after each candle close; `-- --check` tests the stream, `-- --force` takes over from another worker |
 
-There is only one service to run: the Next.js app serves both the UI and the API. The database and Kite are
-external.
+The Next.js app serves the UI and the API. The live worker is an optional second process for instant alerts; the
+database and Kite are external.
 
 ### Connecting Kite locally
 
 1. In your Kite Connect app, add the redirect URL `http://localhost:3000/zerodhaRedirection` (or
    `/redirect/zerodha`).
-2. Open the app → **Connect Kite** (top bar or **Settings → Broker Connection**). You return automatically. The
-   instrument master for NSE/BSE and MCX syncs after login.
+2. Open the app → **Connect Kite** (top bar or **Settings → Broker Connection**). You return automatically.
+   Then **V2 → Products → Sync from Kite** once (the scanner and the live worker keep it fresh afterwards).
 3. Kite tokens expire every morning (~06:00 IST), so reconnect once per trading day.
 
-### Running the live evaluator locally
+### Running alerts locally
 
-- Keep a dashboard tab open. While Kite is connected and a market with active monitors is in session, the tab
-  calls `POST /api/live/tick` every 30 s.
-- Or trigger one pass by hand. Without `CRON_SECRET` this is allowed outside production; `force=1` runs even when
-  markets are closed:
+- **Live worker:** `npm run live` and leave it running during market hours (see
+  [v2-user-guide.md](v2-user-guide.md#live-alerts-on-your-computer-recommended)).
+- **Scanner:** keep `/v2` open (it scans once a minute during market hours), or trigger one cycle by hand. Without
+  `CRON_SECRET` this is allowed outside production; `force=1` runs even when markets are closed:
 
   ```bash
   curl -s 'http://localhost:3000/api/cron/tick?force=1'
@@ -119,7 +120,7 @@ external.
 | API responds `503 Database tables are missing — run npm run db:migrate` | Schema not migrated on this database | `npm run db:migrate` |
 | `DATABASE_URL is not set. Add your Neon Postgres connection string…` | Missing env var | Add it to `.env.local` |
 | Settings shows "Kite Connect credentials are missing" | `KITE_API_KEY` / `KITE_API_SECRET` unset | Set both; restart |
-| Underlying / product dropdowns are empty; "not synced" badges on the MCX tab | Instrument master not downloaded yet | Connect Kite, then **Settings → Refresh** |
+| V2 product lists are empty | Products not synced yet | Connect Kite, then **V2 → Products → Sync from Kite** |
 | `next dev` exits with "Another next dev server is already running" | Next.js 16 allows one dev server per project directory | Use the existing server (URL printed) or stop it |
 | Production responds `APP_PASSWORD is not configured…` | Missing env var in production | Set `APP_PASSWORD` |
 | Kite login bounces back with an error | Redirect URL mismatch, cancelled login, or a reused `request_token` | Check the Kite app's Redirect URL; log in again |

@@ -9,8 +9,9 @@
 | Web app + API | **Vercel**, functions pinned to region `sin1` (Singapore) | [vercel.json](../vercel.json) |
 | Database | **Neon Postgres** in `ap-southeast-1` (Singapore), pooled connection string | root [README.md](../README.md), [.env.example](../.env.example) |
 | Market data | Zerodha Kite Connect (external SaaS) | `src/server/services/kite/` |
-| Scheduler | Vercel Cron (Pro plan) **or** an external service such as cron-job.org calling `/api/cron/tick` every minute | root README, [cron route](../src/app/api/cron/tick/route.ts) |
-| Alerts out | Telegram Bot API (optional) | `NotificationService.ts` |
+| Scheduler | Vercel Cron (Pro plan) **or** an external service such as cron-job.org calling `/api/cron/tick` every minute (the V2 scanner) | [cron route](../src/app/api/cron/tick/route.ts) |
+| Live worker | `npm run live` on your own computer (long-running; not on Vercel) | [src/server/workers/v2Live.ts](../src/server/workers/v2Live.ts) |
+| Alerts out | Telegram Bot API and Resend email (optional) | [notifications.ts](../src/server/v2/alerts/notifications.ts) |
 
 **Docker / containers:** none in the repository. **CI/CD:** no pipeline configuration (GitHub Actions etc.) exists.
 Deployments are presumably Vercel's Git integration (*inference — not identifiable from the repository*).
@@ -41,11 +42,10 @@ Relevant [next.config.ts](../next.config.ts):
 
 - `serverExternalPackages: ['pg', 'kiteconnect']` — loaded from `node_modules` at runtime, not bundled.
 - `poweredByHeader: false`.
-- Permanent redirects for old URLs: `/library`, `/builder[/:id]`, `/analyzer`, `/strategy/:id`, `/history`,
-  `/analytics`.
+- Temporary (307) redirects to `/v2` for `/` and every retired page URL (V1 pages, MCX, MCX V2).
 
-Function limits: the API catch-all and the cron route set `maxDuration = 300` seconds. Backtests over long ranges
-are the main reason. The live-tick lease is 280 s, so it's shorter than that limit.
+Function limits: the API catch-all and the cron route set `maxDuration = 300` seconds (Compare over many products is
+the longest call). The V2 scan lease is 240 s, shorter than that limit.
 
 ---
 
@@ -76,15 +76,10 @@ Set the app's **Redirect URL** to `https://<your-domain>/zerodhaRedirection` (`/
 
 ## 5. Scheduler (every minute)
 
-The evaluator must be called **every minute on weekdays** while either market is open:
-
-| Market | Evaluated window (IST) |
-| --- | --- |
-| NSE/BSE | 09:15 – 15:40 (15:30 close + 10 min grace) |
-| MCX | 09:00 – 23:40 (23:30 close + grace) while the US observes daylight saving; 09:00 – 00:05 (23:55 + grace) otherwise |
-
-So the scheduler window must cover **09:00 – 00:05 IST, Monday–Friday**. Calls outside every market window return
-`{"ran":false,"reason":"market-closed"}` immediately, so a wider window is harmless.
+The V2 scanner must be called **every minute on weekdays** while either market is open — NSE/BSE 09:15–15:30 and
+MCX 09:00–23:30 (23:55 while the US is on standard time), plus a few minutes' grace — so cover **09:00 – 00:05 IST,
+Monday–Friday**. Calls while every market is closed return `skipped: "market-closed"` immediately. While the live
+worker is streaming, the scanner only checks the connections the worker can't cover.
 
 - **Vercel Pro:**
 
@@ -92,13 +87,10 @@ So the scheduler window must cover **09:00 – 00:05 IST, Monday–Friday**. Cal
   "crons": [{ "path": "/api/cron/tick", "schedule": "* 3-18 * * 1-5" }]
   ```
 
-  `3-18` UTC covers 08:30–00:29 IST; the day-of-week is evaluated in UTC, and the latest MCX close (00:05 IST) is
-  still Friday 18:35 UTC. Hobby plans only allow daily crons, and a more frequent schedule fails the deployment.
+  `3-18` UTC covers 08:30–00:29 IST. Hobby plans only allow daily crons, and a more frequent schedule fails the
+  deployment.
 - **Any plan:** an external scheduler (e.g. cron-job.org) calling `https://<domain>/api/cron/tick` every minute,
   Mon–Fri, with header `Authorization: Bearer <CRON_SECRET>` (or `?secret=<CRON_SECRET>`).
-
-> ⚠ The root README's older instructions cover only NSE hours (`* 3-10 * * 1-5`). With that window MCX monitors are
-> not evaluated in the evening.
 
 ---
 
@@ -114,20 +106,17 @@ So the scheduler window must cover **09:00 – 00:05 IST, Monday–Friday**. Cal
 
 ## 7. Rollback considerations
 
-- **Code:** redeploy a previous Vercel deployment (standard Vercel feature; *not configured in the repository*).
-- **Schema:** there are no down migrations. Because every migration so far is additive, older code keeps working on
-  a newer schema. A destructive migration would need a manual rollback plan.
-- **Data written by newer code** (e.g. MCX instruments, MCX configs, `near-month` expiry types) is stored in text
-  columns. Older code without MCX support would not understand those rows. Deactivate MCX monitors before rolling
-  back past the MCX release.
+- **Code:** redeploy a previous Vercel deployment. Deployments before 2026-09-27 still contain the V1 pages and MCX
+  V2; their tables were never dropped, so an older deployment finds its data where it left it (though nothing wrote
+  to those tables in between).
+- **Schema:** there are no down migrations; every migration so far is additive, so older code keeps working on a
+  newer schema.
 
 ---
 
-## 8. Post-deploy and daily operations
+## 8. Daily operations
 
-1. **Each trading day** (tokens reset ~06:00 IST): open the app → **Connect Kite**. The login also re-syncs the
-   instrument master for NSE/BSE and MCX.
-2. **After the first deploy with MCX support:** click **Settings → Refresh**, or wait for the first tick in market
-   hours, so MCX contracts are downloaded. MCX rows are added alongside NSE rows; NSE rows aren't touched.
-3. Check **Settings → Live Evaluator** or the top-bar market status. "scheduler idle" means the cron isn't firing.
-4. Monitors created before a contract expired roll to the next contract automatically on the next tick.
+1. **Each trading day** (tokens reset ~06:00 IST): open the app → **Connect Kite**.
+2. Start the live worker on your computer: `npm run live` (it picks up the new login within 30 s). V2 → Dashboard →
+   **Live feed** should show LIVE; the top bar shows "Live feed".
+3. If the worker isn't running, the top bar shows "Scanner" and the per-minute scanner covers your connections.

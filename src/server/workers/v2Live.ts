@@ -22,13 +22,13 @@ for (const file of ['.env.local', '.env']) {
 }
 
 const args = new Set(process.argv.slice(2));
-const { PgDataStore } = await import('../db/pg/pgStore');
+const { PgAppStore } = await import('../db/appStore');
 const { KiteAuthService } = await import('../services/kite/kiteAuth');
 const { KiteHistoricalProvider } = await import('../services/kite/KiteHistoricalProvider');
 const { KiteStream, createV2LiveWorker, kiteLiveSession } = await import('../v2');
 const { getPool } = await import('../db/pool');
 
-const kiteAuth = new KiteAuthService(new PgDataStore());
+const kiteAuth = new KiteAuthService(new PgAppStore());
 const istTime = (ms: number) => new Date(ms + 330 * 60_000).toISOString().slice(11, 19);
 
 if (args.has('--check')) {

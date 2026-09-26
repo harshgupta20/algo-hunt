@@ -3,7 +3,6 @@ import type { ReactNode } from 'react';
 import clsx from 'clsx';
 import { Loader2 } from 'lucide-react';
 import { InfoTip, Tooltip, type TooltipContent, type TooltipSide } from './Tooltip';
-import { HELP } from '../lib/help';
 
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={clsx('card p-4', className)}>{children}</div>;
@@ -66,49 +65,6 @@ const STRATEGY_STATUS: Record<'active' | 'draft' | 'disabled', { label: string; 
 };
 
 /** Published = usable by monitors (green), Draft (amber), Disabled (grey). */
-export function StrategyStatusBadge({ status }: { status: 'active' | 'draft' | 'disabled' }) {
-  const s = STRATEGY_STATUS[status];
-  return (
-    <Tooltip content={HELP.strategyStatus[status]}>
-      <Badge tone={s.tone}>{s.label}</Badge>
-    </Tooltip>
-  );
-}
-
-const SCENARIO_TITLE: Record<1 | 2, string> = { 1: 'All three crossing', 2: 'Future already above' };
-
-/**
- * Both RSI-sync scenarios are bullish signals, so both are green: S1 (fresh
- * crossing on all legs) is solid, S2 (future already trending above) is outlined.
- */
-export function ScenarioBadge({ scenario, compact }: { scenario: 1 | 2; compact?: boolean }) {
-  return (
-    <Tooltip content={HELP.scenario[scenario]}>
-    <span
-      aria-label={`Scenario ${scenario} — ${SCENARIO_TITLE[scenario]} (bullish)`}
-      className={clsx(
-        'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-semibold whitespace-nowrap',
-        scenario === 1 ? 'bg-bull/15 text-bull border border-bull/30' : 'text-bull border border-dashed border-bull/60',
-      )}
-    >
-      ▲ S{scenario}
-      {!compact && <span className="font-normal">· {scenario === 1 ? 'All cross' : 'Fut above'}</span>}
-    </span>
-    </Tooltip>
-  );
-}
-
-/** Generic trigger label: a built-in scenario or a custom strategy variant. */
-export function RuleBadge({ scenario, variant, compact }: { scenario?: 1 | 2; variant?: string; compact?: boolean }) {
-  if (scenario) return <ScenarioBadge scenario={scenario} compact={compact} />;
-  return (
-    <Tooltip content={HELP.scenario.custom}>
-      <Badge tone="accent">{variant ?? 'Triggered'}</Badge>
-    </Tooltip>
-  );
-}
-
-/** Segmented control for in-page tabs. */
 export function Tabs<T extends string>({
   value,
   onChange,

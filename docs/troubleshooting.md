@@ -26,47 +26,41 @@ the exact strings the application produces.
 | Login lands on Settings with `kite=error&message=Login was cancelled` / `Missing request_token` | Cancelled login or wrong redirect | Check the Kite app's Redirect URL (`/zerodhaRedirection`) and retry |
 | `Provide the request_token (or paste the full redirected URL).` | Empty body to `POST /api/kite/session` | Send `{"token": "<request_token or URL>"}` |
 | `Kite did not return an access token` / other login error text | Kite rejected the exchange (bad secret, reused token) | Verify `KITE_API_SECRET`; request_tokens are single-use, so log in again |
-| `409` on activate / backtest | Kite not connected | Connect Kite first |
-| Backtests are slow | Kite historical rate limit (~3 req/s); long ranges are split into windows and fetched one after another | Use shorter ranges or a larger timeframe |
+| `409` on product sync / preview / compare | Kite not connected | Connect Kite first |
+| Compare is slow | Kite historical rate limit (~3 req/s) | Fewer products or a larger trigger timeframe |
 
-## 3. Instruments and contracts
+## 3. V2 products and connections
 
 | Symptom / message | Cause | Fix |
 | --- | --- | --- |
-| Empty underlying/product lists; MCX catalog shows **not synced** | Instrument master missing for that market | **Settings → Refresh** (needs Kite) |
-| `Kite returned no MCX F&O instruments for the supported underlyings` (in logs) | The MCX download contained no matching product names | Check `MCX_PRODUCTS` symbols against Kite's `name` column (see [status.md](status.md)) |
-| `Instrument sync failed — NSE: …; MCX: …` | Both markets failed to sync | Check the Kite connection; retry |
-| `No upcoming <expiry> expiry for <UNDERLYING>. Is Kite connected and the instrument master synced?` | No contract for that expiry choice (e.g. Far Month on a product listing only two months) | Pick another expiry, or refresh instruments |
-| `Could not resolve triplet for <U> <expiry> @ <strike> (future=… call=… put=…)` | The computed strike isn't listed for that expiry (NSE) | Choose another strike or expiry, or use CUSTOM |
-| `No listed strikes for <U> <expiry>` | MCX product with options but none listed for that expiry | Choose another month |
-| `Near month is an MCX expiry — NIFTY trades on NSE/BSE. Choose a weekly or monthly expiry.` | MCX expiry on an NSE underlying | Use NSE expiries on NSE underlyings |
+| Product lists are empty | Products never synced | **V2 → Products → Sync from Kite** (needs Kite; ~1 minute) |
+| A product is missing from the connection picker | It lacks a leg the strategy uses (e.g. options → cash-only stocks are hidden) | Expected; the picker lists only products offering every leg |
+| `… is already connected to this strategy` | A product in the selection already has a connection for that strategy | Already-connected products are marked "connected" and skipped by Select all |
+| `Strike position +N is outside the listed strikes — skipped` | That strike isn't listed for the chosen expiry | Choose fewer strike positions or another expiry |
+| "Unknown" results | Indicator warm-up, or a contract with no trades / history | Expected: Unknown never alerts |
 
-## 4. Monitors
+## 4. Live worker (`npm run live`)
 
-| Symptom / message (monitor card / error badge) | Cause | Fix |
+| Symptom / message | Cause | Fix |
 | --- | --- | --- |
-| `Strategy "<name>" is disabled — publish it to resume this monitor.` | The strategy was disabled | Publish it again in the Library |
-| `This strategy only runs on <list> — not <U>. Delete this monitor, or add <U> to "<name>".` | The strategy's fixed underlyings changed | Edit the strategy or delete the monitor |
-| `RSI Multi Confirmation needs the ATM Call and Put, but <U> has no listed options…` | Built-in strategy on a futures-only MCX product | Use a strategy that reads only the Future |
-| `"<name>" reads the call/put leg, but <U> has no listed options…` | Custom strategy with option legs on a futures-only product | Same as above |
-| Top bar shows **scheduler idle** for a market | No evaluation in the last 3 minutes while that market is open with active monitors | Check the cron job (window must include MCX evenings, see [deployment.md § 5](deployment.md#5-scheduler-every-minute)); keep a dashboard open as a fallback |
-| MCX monitors never alert in the evening | Scheduler window stops at NSE close | Extend the cron window to 09:00–00:05 IST |
-| An alert you expected is missing after downtime | Candles that closed more than 30 minutes before evaluation are skipped on purpose (`skippedStale`) | Expected behaviour |
-| A Daily/Weekly monitor only fires once a day/week | Daily candles close at the session close; weekly candles at Friday's close | Expected behaviour |
-| Daily/Weekly conditions on Call/Put never become true | Option contracts only have a few weeks of history, so long indicators don't warm up | Read Daily/Weekly indicators on the Future (continuous data) |
+| `✗ Kite is not logged in — log in from the app …` (`--check`) / state **Waiting for Kite login** | No valid Kite session | Log in (Settings → Broker Connection); the worker picks it up within 30 s |
+| `Another live worker is running (heartbeat N s ago)` | A second worker was started | Stop the first one (Ctrl+C), or start with `-- --force` |
+| Live feed **Degraded** / Telegram "live feed disconnected" | Internet drop or Kite closed the socket | It reconnects by itself; the backup scanner covers meanwhile |
+| Telegram "live worker is offline" | The worker stopped without Ctrl+C (crash, sleep, closed terminal) | Restart `npm run live`; keep the computer awake in market hours |
+| `This computer's clock is N s off the exchange` | System clock drift | Enable automatic time sync |
+| Alerts marked **Unverified** | Kite's official candles didn't arrive within 2 minutes | Usually identical to Kite's chart; check it if it matters |
+| "N connection(s) don't fit Kite's contract limit" | More than 9,000 streamed contracts | Those connections are checked by the scanner; reduce products or strike positions |
 
-## 5. Strategy builder
+## 5. Scanner
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| Warning "… is a price, but 60 looks like an oscillator level" | Price-type indicator (Bollinger band, EMA, Price…) on the Future compared with a small number | Compare to an indicator (e.g. Close vs Bollinger Upper), type a real price, or use Bollinger %B / Bandwidth |
-| Warning "… are on different scales" | Comparing indicators with different units (e.g. RSI vs EMA) | Compare like with like |
-| "Bollinger upper crosses above Close" doesn't fire on breakouts | With the band on the left, *Cross Above* means the band rose above price (price fell back) | Use *Cross Below* there, or put Price (Close) on the left and compare to Bollinger Upper |
-| `Choose underlying, timeframe — "<name>" leaves them open.` (backtest) | Universal strategy run without its open fields | Fill the fields shown under the strategy |
+| Top bar shows "Scanner" and alerts come minutes late | The live worker isn't running | Start `npm run live` |
+| No scans in the evening for MCX | Scheduler window stops at NSE close | Cover 09:00–00:05 IST (see [deployment.md § 5](deployment.md#5-scheduler-every-minute)) |
+| An alert you expected is missing after downtime | Candles that closed more than 30 minutes before evaluation are recorded as suppressed (stale), not sent | Expected behaviour; see V2 → Alerts → signals |
 
 ## 6. Tests and build
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| stderr shows `{"level":"error",…"monitor evaluation failed"…}` during `npm test` | Tests that deliberately make a monitor fail | Expected |
 | `npm run build` skips migrations | `DATABASE_URL` not set in the build environment (`--if-configured`) | Set it in Vercel project env vars |

@@ -10,7 +10,7 @@
  * Every helper takes a Session and defaults to NSE, the original market.
  */
 import type { Segment, Timeframe } from '@ash/shared';
-import { TIMEFRAME_MS, segmentOf } from '@ash/shared';
+import { TIMEFRAME_MS } from '@ash/shared';
 
 export const IST_OFFSET_MS = 330 * 60_000;
 const MINUTE = 60_000;
@@ -61,11 +61,6 @@ export const MCX_SESSION: Session = {
 
 export function sessionForSegment(segment: Segment): Session {
   return segment === 'MCX' ? MCX_SESSION : NSE_SESSION;
-}
-
-/** The session an underlying trades in (MCX products → MCX, everything else → NSE). */
-export function sessionFor(underlying: string): Session {
-  return sessionForSegment(segmentOf(underlying));
 }
 
 /** yyyy-mm-dd of the IST calendar day containing `ms`. */

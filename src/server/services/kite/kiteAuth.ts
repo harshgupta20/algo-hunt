@@ -9,7 +9,7 @@
  */
 import type { KiteAuthStatus } from '@ash/shared';
 import { getConfig, requireKiteCredentials } from '../../config/index';
-import type { DataStore } from '../../db/store';
+import type { AppStore } from '../../db/appStore';
 import { childLogger } from '../../utils/logger';
 import { nextKiteTokenExpiry } from '../../utils/marketTime';
 import { KiteNotConnectedError, createKiteClient, isKiteTokenError, kiteErrorMessage, type KiteClient } from './kiteClient';
@@ -25,7 +25,7 @@ export class KiteAuthService {
   private pending: { requestToken: string; promise: Promise<void> } | undefined;
 
   constructor(
-    private readonly store: DataStore,
+    private readonly store: Pick<AppStore, 'kite'>,
     /** Invoked after a successful login (e.g. to refresh the instrument master). */
     private readonly onLogin?: () => Promise<void>,
   ) {}

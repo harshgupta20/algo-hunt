@@ -1,215 +1,76 @@
 # Architecture
 
-Algo Hunt is a single **Next.js 16 (App Router)** application that serves the React dashboard and a JSON REST API
-from the same deployment. It is built to run **serverless on Vercel**: nothing stays running between requests, so
-live monitoring is driven by a per-minute scheduler instead of a WebSocket ticker. All state lives in **Postgres
-(Neon)**; all market data comes from **Zerodha Kite Connect**.
+> Related: [v2-architecture.md](v2-architecture.md) (the strategy system in depth) · [api.md](api.md) ·
+> [database.md](database.md) · [deployment.md](deployment.md)
 
-> Related: [domain.md](domain.md) (what the system computes) · [api.md](api.md) · [database.md](database.md) ·
-> [deployment.md](deployment.md)
-
----
+Algo Hunt is a personal **alerting** platform (it never places orders): build a strategy once, connect it to any NSE
+index, NSE stock or MCX commodity, and get Telegram / email / desktop alerts when it fires. Everything runs on real
+Zerodha Kite data.
 
 ## 1. High-level view
 
-```mermaid
-flowchart LR
-  subgraph Browser
-    UI["React dashboard<br/>(TanStack Query, polling)"]
-  end
-  subgraph Vercel["Vercel · Next.js 16 app (region sin1)"]
-    PX["src/proxy.ts<br/>password session check"]
-    PAGES["App Router pages<br/>src/app/(dashboard)/*"]
-    API["/api/[...path]<br/>catch-all → Router"]
-    CRON["/api/cron/tick<br/>CRON_SECRET"]
-    SVC["Services<br/>src/server/services/*"]
-    STORE["DataStore → PgDataStore<br/>src/server/db"]
-  end
-  SCHED["Scheduler<br/>(Vercel Cron / cron-job.org)"]
-  DB[("Neon Postgres")]
-  KITE["Zerodha Kite Connect<br/>login · instruments · LTP · historical"]
-  TG["Telegram Bot API<br/>(optional)"]
-
-  UI -->|HTML/JS| PX --> PAGES
-  UI -->|fetch /api/*| PX --> API --> SVC
-  SCHED -->|every minute| CRON --> SVC
-  SVC --> STORE --> DB
-  SVC -->|REST| KITE
-  SVC -->|sendMessage| TG
+```
+Browser (React 19, TanStack Query)
+  /v2        V2 hub: Dashboard · Strategies · Connections · Compare · Alerts · Products · Scanner · Settings
+  /settings  Kite login, theme, desktop notifications
+      │  fetch /api/*  (session cookie, checked by src/proxy.ts)
+      ▼
+Next.js 16 app (Node runtime; Vercel or local)
+  /api/[...path]   router → controllers: health · kite · preferences · v2
+  /api/cron/tick   V2 scanner cycle (CRON_SECRET), the backup to the live worker
+  /api/auth/*      password login / logout
+      │                                   │
+      ▼                                   ▼
+Neon Postgres  ◄─────────────────  Live worker (`npm run live`, your computer)
+  v2_* tables, kite_session,         Kite WebSocket → candles → evaluate at every close
+  user_preferences, app_locks        → verify on Kite candles → alert
+      ▲                                   │
+      └──── Kite Connect (historical candles, LTP, instrument dumps, WebSocket ticks)
 ```
 
-| Layer | Location | Responsibility |
+| Layer | Where | Notes |
 | --- | --- | --- |
-| Access control | [src/proxy.ts](../src/proxy.ts) | Next.js 16 "proxy" (formerly middleware): every page and `/api/*` needs the password session cookie, except `/login`, `/api/auth/login`, `/api/health` and `/api/cron/*` |
-| Pages | [src/app/](../src/app) | Thin route files that render client views from `src/client/views` |
-| REST API | [src/app/api/[...path]/route.ts](../src/app/api/[...path]/route.ts) → [src/server/api/](../src/server/api) | One catch-all route dispatches to a small path router, controllers and zod schemas |
-| Scheduler entry | [src/app/api/cron/tick/route.ts](../src/app/api/cron/tick/route.ts) | Runs one live-evaluation pass (`runLiveTick`) |
-| Services | [src/server/services/](../src/server/services) | Kite integration, live monitoring, strategy engine, indicators, backtesting, alerts, notifications, MCX catalog |
-| Persistence | [src/server/db/](../src/server/db) | Repository interfaces (`DataStore`) and the Postgres implementation |
-| Shared | [src/shared/](../src/shared) (alias `@ash/shared`) | Types, constants and market-profile rules used by both server and client |
-| Client | [src/client/](../src/client) | React views, components, API client, tooltip text, theme |
+| Pages | [src/app/](../src/app) | `(dashboard)/v2`, `(dashboard)/settings`, `login`, Kite redirect landings (`/zerodhaRedirection`, `/redirect/zerodha`). `/` and every retired page URL redirect to `/v2` ([next.config.ts](../next.config.ts)) |
+| App shell | [src/client/components/layout/](../src/client/components/layout) | Sidebar (V2, Settings), top bar (Kite status, NSE/BSE + MCX sessions, live feed vs scanner, notifications, theme, sign out), `AlertNotifier` (desktop notification + chime for new V2 alerts) |
+| V2 UI | [src/client/v2/](../src/client/v2) | Everything strategy-related |
+| API | [src/server/api/](../src/server/api) | Thin router + controllers; wiring in [context.ts](../src/server/api/context.ts) |
+| V2 module | [src/server/v2/](../src/server/v2) | Products, strategies, connections, engine, alerts, scanner, compare, live worker |
+| Shared low-level | [src/server/services/](../src/server/services) | `kite/` (auth + encrypted session, client, historical candles with the ~3 req/s gate) and `indicator/` (indicator maths V2's engine uses) |
+| Utilities | [src/server/utils/](../src/server/utils), [src/server/config/](../src/server/config), [src/server/db/](../src/server/db) | IST / session helpers, env config, pool, app store (Kite session + preferences) |
 
----
+## 2. How alerts are produced
 
-## 2. Runtime model: serverless, candle-close evaluation
+- **Live worker (preferred):** `npm run live` on your computer streams Kite ticks for every contract the switched-on
+  connections use and evaluates each connection ~2.5 s after its trigger candle closes; anything that would alert
+  (or is a near miss that matters, or has a data gap) is re-checked on Kite's official candles first. See
+  [v2-architecture.md § 4b](v2-architecture.md#4b-live-worker-streaming--npm-run-live).
+- **Scanner (backup):** `/api/cron/tick`, called every minute by Vercel Cron or cron-job.org (and while `/v2` is
+  open), fetches closed candles from Kite and evaluates due connections. While the live worker's heartbeat is fresh
+  it only checks connections the worker can't cover; when the worker goes silent it takes over and warns once on
+  Telegram.
+- Both use the same engine, alert policy and dedupe (signal identity), so a candle never alerts twice.
 
-- **No long-running process.** Vercel functions are request-scoped. Everything the old worker kept in memory is now
-  in Postgres: the Kite session (`kite_session`), monitor cursors and snapshots (`monitor_state`), leases
-  (`app_locks`) and small key/values (`app_kv`).
-- **Candles, not ticks.** Each evaluation pulls OHLCV candles from Kite's historical API and evaluates only
-  **closed** candles. The still-forming candle feeds dashboard gauges only.
-- **Per-minute trigger.** An external scheduler calls `/api/cron/tick` every minute during market hours. As a
-  fallback, an open dashboard also calls `POST /api/live/tick` every 30 s while a market with active monitors is
-  open. A database lease makes concurrent or back-to-back calls a no-op.
-- **One engine for live and backtest.** The monitor service and the backtest runner call the same RSI calculator,
-  the same built-in strategy class and the same generic custom-strategy evaluator, so historical and live results
-  agree.
-- **Dependency container.** [src/server/api/context.ts](../src/server/api/context.ts) is the only place services are
-  wired together. It is built lazily once per serverless instance and cached on `globalThis`.
+## 3. Request flow
 
-```mermaid
-flowchart TB
-  CTX["getContext()<br/>src/server/api/context.ts"]
-  CTX --> STORE["PgDataStore"]
-  CTX --> ENGINE["StrategyEngine (built-in rsi-sync)"]
-  CTX --> KAUTH["KiteAuthService<br/>onLogin → syncInstrumentsFromKite"]
-  CTX --> ISTORE["InstrumentStore<br/>(kiteInstrumentSource)"]
-  CTX --> HIST["KiteHistoricalProvider"]
-  CTX --> NOTIF["NotificationService<br/>(channelsFromConfig: Telegram)"]
-  CTX --> ALERTS["AlertService"]
-  CTX --> MON["MonitorService"]
-  CTX --> BT["BacktestRunner"]
-  MON --> ISTORE & ENGINE & ALERTS & HIST & STORE
-  BT --> HIST & ISTORE & ENGINE & STORE
-  ALERTS --> NOTIF
-```
+`/api/*` → [src/proxy.ts](../src/proxy.ts) (session cookie) → [src/app/api/[...path]/route.ts](../src/app/api/[...path]/route.ts)
+→ `createRouter(getContext())` ([routes.ts](../src/server/api/routes.ts)) → controller → `V2Service` / `KiteAuthService`
+/ app store → JSON. Errors map to status codes in [http.ts](../src/server/api/http.ts) (400 validation, 401, 404,
+409 Kite not connected, 503 missing tables).
 
----
+## 4. External integrations
 
-## 3. Request / response flow (REST API)
-
-```mermaid
-sequenceDiagram
-  participant B as Browser (api.ts)
-  participant P as proxy.ts
-  participant R as /api/[...path]
-  participant H as http.ts dispatch
-  participant C as Controller
-  participant S as Service / DataStore
-  B->>P: fetch /api/configs (cookie ash_session)
-  P->>P: verifySessionToken(HMAC of APP_PASSWORD)
-  alt missing/invalid
-    P-->>B: 401 {"error":"Not authenticated"}
-  else ok
-    P->>R: forward
-    R->>H: dispatch(router, request, path segments)
-    H->>H: match route (404 / 405), parse JSON body (400)
-    H->>C: handler({method, params, query, body})
-    C->>C: zod parse (400 on failure)
-    C->>S: business logic
-    S-->>C: data
-    C-->>H: data | Response | undefined
-    H-->>B: 200 JSON · 201 (created) · 204 (undefined)
-  end
-  Note over H: HttpError → its status · KiteNotConnectedError → 409 ·<br/>Postgres 42P01 (missing table) → 503 · other → 500
-```
-
-Details: [api.md](api.md). The client wrapper [src/client/lib/api.ts](../src/client/lib/api.ts) turns non-2xx
-responses into `Error(body.error)` and redirects to `/login?next=…` on 401.
-
----
-
-## 4. Live monitoring flow (one scheduler tick)
-
-```mermaid
-sequenceDiagram
-  participant SCH as Scheduler / open dashboard
-  participant T as runLiveTick (liveTick.ts)
-  participant L as app_locks
-  participant IS as instrumentSync
-  participant M as MonitorService.runAll
-  participant K as Kite historical API
-  participant E as Evaluators (rsi-sync / custom)
-  participant A as AlertService
-  participant N as Telegram
-  SCH->>T: GET /api/cron/tick (Bearer CRON_SECRET)
-  T->>T: Kite connected? any market window open (NSE or MCX)?
-  T->>L: acquire('live-tick', lease 280 s, min interval 45 s)
-  T->>IS: syncInstrumentsIfStale (per market, 18 h max age)
-  T->>M: runAll(now) — only monitors whose market is in session
-  loop each active monitor
-    M->>M: re-sync with strategy market profile; re-activate if expired
-    M->>K: candles per leg (cached per token+timeframe within the run)
-    M->>E: replay closed candles (warm-up + new)
-    E-->>M: match on rising edge
-    M->>A: record alert (deduped by unique index)
-    A->>N: notify (logged in notification_logs)
-    M->>M: store cursor + RSI snapshot in monitor_state
-  end
-  T->>L: release (sets last_run_at)
-  T-->>SCH: {ran, monitors, alerts}
-```
-
-Correctness guarantees and their mechanics are described in [domain.md § Monitors](domain.md#6-monitors-live-evaluation).
-
----
-
-## 5. Frontend / backend interaction
-
-- **Data fetching:** TanStack Query ([src/app/providers.tsx](../src/app/providers.tsx): `staleTime` 10 s,
-  `retry` 1, no refetch on focus). All calls go through `api` in [src/client/lib/api.ts](../src/client/lib/api.ts).
-- **Live updates by polling** ([src/client/context/LiveContext.tsx](../src/client/context/LiveContext.tsx)):
-
-  | What | Interval |
-  | --- | --- |
-  | `GET /live/status` (sessions, Kite, active monitors, last run) | 20 s |
-  | `GET /alerts?limit=25` (new-alert detection → browser notification + chime) | 10 s (also in background tabs) |
-  | `POST /live/tick` (dashboard-driven evaluation fallback) | 30 s, only while a market with active monitors is open and Kite is connected |
-  | `GET /configs/snapshots` (monitor gauges) | 15 s on Dashboard / MCX / Configuration |
-  | `GET /kite/status` | 30 s + on window focus |
-
-- **Theme:** light by default; stored in `localStorage` and in `user_preferences.prefs.theme`
-  ([src/client/theme/](../src/client/theme)). An inline script in the root layout applies a stored theme before
-  first paint.
-- **URL state:** tabs are query parameters (`/strategies?tab=builder&id=…`, `/mcx?tab=backtest&strategy=…`,
-  `/alerts?view=table&segment=MCX`). Components that read `useSearchParams` are wrapped in `<Suspense>`.
-
----
-
-## 6. Database interaction
-
-- Services depend only on the repository interfaces in [src/server/db/store.ts](../src/server/db/store.ts)
-  (`DataStore` with `alerts`, `configs`, `strategies`, `groups`, `monitors`, `kite`, `instruments`, `locks`, `kv`,
-  `notifications`, `preferences`).
-- [src/server/db/pg/pgStore.ts](../src/server/db/pg/pgStore.ts) implements them with raw SQL through one `pg.Pool`
-  ([src/server/db/pool.ts](../src/server/db/pool.ts): `max` 5, idle timeout 10 s, TLS for non-local hosts, cached
-  on `globalThis`).
-- Tests use an in-process fake store ([tests/helpers/fixtures.ts](../tests/helpers/fixtures.ts)), never Postgres.
-
-Details: [database.md](database.md).
-
----
-
-## 7. External integrations
-
-| Integration | Used for | Code |
+| Service | Used for | Where |
 | --- | --- | --- |
-| **Zerodha Kite Connect** (`kiteconnect` npm package) | Login (request_token → access_token), instrument master (`getInstruments('NFO'/'BFO'/'MCX')`), LTP for ATM strikes (`getLTP`), historical candles (`getHistoricalData`, with OI; `continuous` for futures day candles), logout (`invalidateAccessToken`) | [src/server/services/kite/](../src/server/services/kite) |
-| **Neon Postgres** | All persistent state | [src/server/db/](../src/server/db) |
-| **Telegram Bot API** | Optional server-side alert delivery (`POST https://api.telegram.org/bot<token>/sendMessage`) | [NotificationService.ts](../src/server/services/notification/NotificationService.ts) |
-| **Browser Notification API + Web Audio** | Desktop notification and chime for new alerts while the app is open | [src/client/lib/notify.ts](../src/client/lib/notify.ts) |
+| Zerodha Kite Connect | Login (daily token), instrument dumps (NSE, BSE, NFO, BFO, MCX), historical candles, LTP / quotes, WebSocket ticks | [services/kite/](../src/server/services/kite), [v2/data/KiteDataProvider.ts](../src/server/v2/data/KiteDataProvider.ts), [v2/live/KiteStream.ts](../src/server/v2/live/KiteStream.ts) |
+| Telegram Bot API | Alerts and live-worker health messages | [v2/alerts/notifications.ts](../src/server/v2/alerts/notifications.ts) |
+| Resend | Email alerts | same |
+| Neon Postgres | All state | [database.md](database.md) |
 
-Kite call hygiene: 30 s request timeout; historical requests are serialized per instance with ≥ 350 ms spacing and
-retried on HTTP 429; other REST calls retry on 429 with linear back-off (`withKiteRetry`).
+## 5. Authentication and authorization
 
----
+There are three independent mechanisms. There are **no user roles**: the app is single-user (one seeded default user holds the UI preferences).
 
-## 8. Authentication and authorization
-
-There are three independent mechanisms. There are **no user roles**: the app is single-tenant (one fixed default
-user, `DEFAULT_USER_ID` in [src/server/db/constants.ts](../src/server/db/constants.ts)).
-
-### 8.1 Dashboard password (people)
+### 5.1 Dashboard password (people)
 
 ```mermaid
 sequenceDiagram
@@ -228,12 +89,12 @@ sequenceDiagram
 - With `APP_PASSWORD` unset the app is **open in development** and **refused (503) in production**.
 - Changing `APP_PASSWORD` invalidates every session. Logout (`POST /api/auth/logout`) clears the cookie.
 
-### 8.2 Scheduler secret (machines)
+### 5.2 Scheduler secret (machines)
 
 `/api/cron/tick` bypasses the proxy and checks `Authorization: Bearer $CRON_SECRET` or `?secret=$CRON_SECRET`
 (constant-time). Without `CRON_SECRET` it is allowed only when `NODE_ENV !== 'production'`.
 
-### 8.3 Kite Connect session (broker)
+### 5.3 Kite Connect session (broker)
 
 ```mermaid
 sequenceDiagram
@@ -247,7 +108,6 @@ sequenceDiagram
   U->>App: POST /api/kite/session {token}
   App->>K: generateSession(request_token, KITE_API_SECRET)
   App->>App: store AES-256-GCM encrypted token in kite_session (expires ~06:00 IST next day)
-  App->>K: onLogin → sync instrument master (NSE/BSE + MCX)
 ```
 
 - The token is encrypted with a key derived from `KITE_API_SECRET` (SHA-256), never returned by any endpoint, and
@@ -256,19 +116,11 @@ sequenceDiagram
 - Duplicate submissions of the same `request_token` are de-duplicated per instance; a concurrent second exchange
   that fails shortly after a successful one is ignored.
 
----
+## 6. Decisions
 
-## 9. Important architectural decisions
-
-| Decision | Why | Where |
-| --- | --- | --- |
-| Vercel-only, cron-driven evaluation (no WebSocket worker) | Simplest possible deploy; the owner chose Vercel only | `liveTick.ts`, `/api/cron/tick` |
-| Decide only on **closed** candles fetched from Kite | No repainting; RSI matches the Kite chart exactly | `monitorService.ts` |
-| Same engine for live and backtest | Backtests predict live behaviour | `customEvaluator.ts`, `backtestRunner.ts` |
-| Strategies are **JSON**, interpreted by a generic evaluator | No-code builder; versionable; the built-in strategy is proven equivalent in tests | `src/shared/types/builder.ts`, `customEvaluator.ts` |
-| Strategy **market profile** (fixed vs open fields) | One strategy can be "specific" or "universal"; the server enforces fixed fields | `src/shared/strategyMarket.ts`, `runContext.ts` |
-| **Two markets (segments)**: NSE/BSE index F&O and MCX commodities, with a dedicated MCX tab but a shared engine | MCX has different hours, monthly-only expiries and futures-only products; sharing the engine avoids duplicate indicator/strategy logic | `marketTime.ts`, `instrumentStore.ts`, `instrumentSync.ts`, `src/client/views/mcx/` |
-| Per-market instrument sync that replaces only its own exchanges | One market's refresh or failure never wipes the other's contracts | `instrumentSync.ts`, `replaceExchanges` |
-| Multi-timeframe conditions read the **still-forming** higher-timeframe candle built from closed run candles | Chartink-like behaviour without look-ahead | `customEvaluator.ts` |
-| Single-tenant v1 | Personal tool; multi-user is noted as a roadmap item in code | `src/server/db/constants.ts` |
-| Every UI control has a rich tooltip; fixed trader color language | Owner requirement (see [development.md § UI conventions](development.md#6-ui-conventions)) | `src/client/lib/help.ts`, `src/client/lib/signals.ts` |
+| Decision | Why |
+| --- | --- |
+| V2 is the whole app; V1 pages and MCX V2 removed (2026-09-27), their tables kept | One product-agnostic system covers NSE and MCX; old data stays recoverable |
+| Live worker on your computer + cron scanner as backup | Seconds-after-close alerts for many products (Kite's historical API allows ~3 requests/s); the backup keeps alerts flowing when the computer is off |
+| Alerts only after Kite's official candles confirm (live worker) | "Correct" = matches the Kite/Zerodha chart candle |
+| Every UI control has a rich tooltip; green/red only for direction | Owner requirement ([development.md](development.md)) |

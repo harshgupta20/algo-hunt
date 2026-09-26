@@ -2,15 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import Link from 'next/link';
 import { Bell, Send, Volume2 } from 'lucide-react';
-import { formatDistanceToNowStrict } from 'date-fns';
 import type { UserPreferences } from '@ash/shared';
 import { DEFAULT_USER_PREFERENCES } from '@ash/shared';
 import { api } from '../lib/api';
-import { Badge, Card, PageHeader, Spinner, Help } from '../components/ui';
+import { Card, PageHeader, Spinner, Help } from '../components/ui';
 import { KiteConnectionCard } from '../components/KiteConnectionCard';
 import { playChime, requestNotificationPermission, showNotification } from '../lib/notify';
-import { useLive } from '../context/LiveContext';
 import { useThemePreference } from '../theme/useThemePreference';
 import { InfoTip, Tooltip, type TooltipContent } from '../components/Tooltip';
 import { HELP } from '../lib/help';
@@ -55,7 +54,6 @@ function Toggle({
 export function Settings() {
   const qc = useQueryClient();
   const prefsQuery = useQuery({ queryKey: ['preferences'], queryFn: api.getPreferences });
-  const { status: live } = useLive();
   const { theme, setTheme } = useThemePreference();
   const [prefs, setPrefs] = useState<UserPreferences>(DEFAULT_USER_PREFERENCES);
 
@@ -84,7 +82,7 @@ export function Settings() {
 
   return (
     <div className="max-w-2xl">
-      <PageHeader title="Settings" subtitle="Broker connection, appearance, notifications and runtime information." />
+      <PageHeader title="Settings" subtitle="Broker connection, appearance and desktop notifications." />
 
       <KiteConnectionCard />
 
@@ -93,14 +91,14 @@ export function Settings() {
         <div className="divide-y divide-ink-700/50">
           <Toggle
             label="Browser notifications"
-            hint="Show a desktop notification when the strategy triggers."
+            hint="Show a desktop notification when a V2 alert fires."
             checked={prefs.browserNotifications}
             onChange={(v) => update({ browserNotifications: v })}
             help={HELP.settings.browserNotifications}
           />
           <Toggle
             label="Sound alert"
-            hint="Play a chime on each new alert."
+            hint="Play a chime on each new V2 alert."
             checked={prefs.soundEnabled}
             onChange={(v) => update({ soundEnabled: v })}
             help={HELP.settings.sound}
@@ -128,66 +126,13 @@ export function Settings() {
       </Card>
 
       <Card className="mb-6">
-        <h2 className="text-sm font-semibold text-slate-300 mb-3">Live Evaluator</h2>
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <div className="flex justify-between">
-            <span className="flex items-center gap-1 text-slate-400">
-              NSE/BSE session <InfoTip content={HELP.settings.marketSession} />
-            </span>
-            <Badge tone={live?.marketOpen ? 'bull' : 'default'}>{live ? (live.marketOpen ? 'open' : 'closed') : '—'}</Badge>
-          </div>
-          <div className="flex justify-between">
-            <span className="flex items-center gap-1 text-slate-400">
-              MCX session <InfoTip content={HELP.settings.mcxSession} />
-            </span>
-            <Badge tone={live?.sessions?.MCX.open ? 'bull' : 'default'}>
-              {live?.sessions
-                ? `${live.sessions.MCX.open ? 'open' : 'closed'} · until ${new Date(live.sessions.MCX.closesAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false })}`
-                : '—'}
-            </Badge>
-          </div>
-          <div className="flex justify-between">
-            <span className="flex items-center gap-1 text-slate-400">
-              Active monitors <InfoTip content={HELP.stats.activeMonitors} />
-            </span>
-            <Badge tone="accent">{live?.activeMonitors ?? '—'}</Badge>
-          </div>
-          <div className="flex justify-between col-span-2">
-            <span className="flex items-center gap-1 text-slate-400">
-              Last evaluator run <InfoTip content={HELP.settings.lastRun} />
-            </span>
-            <span className="text-slate-300 text-xs">
-              {live?.lastRunAt
-                ? `${formatDistanceToNowStrict(new Date(live.lastRunAt))} ago · ${live.lastRunSummary?.monitors ?? 0} monitors · ${live.lastRunSummary?.alerts ?? 0} alerts${live.lastRunSummary?.errors ? ` · ${live.lastRunSummary.errors} errors` : ''}`
-                : 'never'}
-            </span>
-          </div>
-        </div>
-        <p className="mt-3 pt-3 border-t border-ink-700/60 text-[11px] text-slate-500 leading-relaxed">
-          Monitors are evaluated on every closed candle by <code className="text-accent-soft">/api/cron/tick</code>, which a
-          scheduler should call every minute during market hours (Vercel Cron on Pro, or a free service such as
-          cron-job.org). While this dashboard is open it also triggers evaluation itself, so alerts keep flowing even
-          without a scheduler.
-        </p>
-      </Card>
-
-      <Card>
-        <h2 className="text-sm font-semibold text-slate-300 mb-1">Server-side channels</h2>
-        <p className="text-xs text-slate-500 mb-3">
-          Delivered by the server, so they reach you even when no dashboard is open.
-        </p>
-        <div className="flex items-center justify-between rounded-lg border border-ink-700 bg-ink-850 px-3 py-2 text-sm">
-          <span className="flex items-center gap-2 text-slate-300">
-            <Send className="w-4 h-4 text-slate-500" /> Telegram <InfoTip content={HELP.settings.telegram} />
-          </span>
-          {live?.channels.includes('telegram') ? (
-            <Badge tone="bull">enabled</Badge>
-          ) : (
-            <span className="text-xs text-slate-500">
-              set <code>TELEGRAM_BOT_TOKEN</code> + <code>TELEGRAM_CHAT_ID</code> to enable
-            </span>
-          )}
-        </div>
+        <h2 className="text-sm font-semibold text-slate-300 mb-1">Telegram &amp; email alerts</h2>
+        <p className="text-xs text-slate-500 mb-3">Delivered by the server, so they reach you even when no browser is open.</p>
+        <Help content={HELP.settings.alertChannels}>
+          <Link href="/v2?tab=settings" className="btn-ghost text-xs inline-flex">
+            <Send className="w-4 h-4" /> Open V2 → Settings
+          </Link>
+        </Help>
       </Card>
     </div>
   );

@@ -7,7 +7,6 @@ export const H = {
   nav: {
     title: 'V2 — Strategy + Product = Alert',
     body: 'Build a strategy once without choosing a product, then connect it to any NSE index, NSE stock or MCX commodity to get alerts. Compare shows which products the strategy fires on.',
-    note: 'Runs alongside the existing pages — nothing there changes.',
   },
   tabs: {
     dashboard: { title: 'Dashboard', body: 'Markets, data connection, scanner health and active alerts at a glance.' },

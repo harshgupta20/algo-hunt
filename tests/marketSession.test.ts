@@ -7,7 +7,7 @@ import {
   isMarketWindow,
   periodOpenMs,
   sessionCloseMs,
-  sessionFor,
+  sessionForSegment,
   usDstInEffect,
 } from '../src/server/utils/marketTime';
 
@@ -35,8 +35,8 @@ describe('MCX session follows US daylight saving', () => {
   });
 
   it('routes underlyings to their session', () => {
-    expect(sessionFor('CRUDEOIL')).toBe(MCX_SESSION);
-    expect(sessionFor('NIFTY')).toBe(NSE_SESSION);
+    expect(sessionForSegment('MCX')).toBe(MCX_SESSION);
+    expect(sessionForSegment('NSE')).toBe(NSE_SESSION);
   });
 });
 

@@ -29,7 +29,7 @@ export function KiteRedirect() {
     if (handledTokens.has(token)) return; // already exchanged (StrictMode remount)
     handledTokens.add(token);
 
-    setMessage('Connecting to Kite and syncing the instrument master…');
+    setMessage('Connecting to Kite…');
     api
       .kiteSubmitToken(token)
       .then(() => back('kite=connected'))
