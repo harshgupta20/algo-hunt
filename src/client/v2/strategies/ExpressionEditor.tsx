@@ -7,14 +7,16 @@
  * comparisons.
  */
 import clsx from 'clsx';
-import { AlertTriangle, ArrowDown, ArrowUp, Ban, CandlestickChart, FolderPlus, Plus, Trash2, Undo2 } from 'lucide-react';
-import type { ConditionNode, ExprNode, GroupNode, LegDef, LegId, LegKind, PatternNode, SeriesSpec } from '@/shared/v2';
+import { AlertTriangle, ArrowDown, ArrowUp, Ban, CandlestickChart, FolderPlus, Info, Plus, Trash2, Undo2 } from 'lucide-react';
+import { useState } from 'react';
+import type { ConditionNode, ExprNode, GroupNode, LegDef, LegId, LegKind, Operand, PatternNode, SeriesSpec } from '@/shared/v2';
 import { OPERATORS, PATTERNS, conditionText, legName, nodeText, operandUnit } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { IconButton } from '../../components/ui';
 import { Cell } from '../components';
 import { LEG_KIND_TEXT } from '../format';
 import { H } from '../help';
+import { adaptCondition, compareWithClose, isPriceLevel } from './comparison';
 import { newCondition, newGroup, newPattern, wrapNot } from './defaults';
 import { OperandEditor, SeriesPicker } from './OperandEditor';
 
@@ -56,13 +58,21 @@ const UNIT_LABEL: Record<string, string> = {
 };
 
 function ConditionEditor({ node, ctx, onChange }: { node: ConditionNode; ctx: Ctx; onChange: (n: ConditionNode) => void }) {
+  const [note, setNote] = useState<string | undefined>();
   const lu = operandUnit(node.left);
   const ru = operandUnit(node.right);
   const mismatch = lu && ru && lu !== ru;
   const opSpec = OPERATORS.find((o) => o.value === node.operator);
+  const edit = (side: 'left' | 'right', next: Operand) => {
+    const r = adaptCondition(node, side, next);
+    if (r.note) setNote(r.note);
+    onChange(r.cond);
+  };
+  // A price level (band, average) compared with a number — usually a leftover; offer the natural form.
+  const levelVsNumber = isPriceLevel(node.left) && node.right.kind === 'CONSTANT';
   return (
     <div className="flex flex-col gap-3">
-      <OperandEditor side="Left" value={node.left} onChange={(left) => onChange({ ...node, left })} defaultSeries={ctx.defaultSeries} legs={ctx.legs} onAddLeg={ctx.onAddLeg} allowConstant={false} />
+      <OperandEditor side="Left" value={node.left} onChange={(left) => edit('left', left)} defaultSeries={ctx.defaultSeries} legs={ctx.legs} onAddLeg={ctx.onAddLeg} allowConstant={false} />
       <div className="flex flex-wrap items-end gap-3">
         <Cell label="Operator" help={{ ...H.editor.operator, title: `Operator — ${opSpec?.label ?? ''}` }}>
           <select aria-label="Operator" className="input py-1 text-xs" value={node.operator} onChange={(e) => onChange({ ...node, operator: e.target.value as ConditionNode['operator'] })}>
@@ -77,7 +87,7 @@ function ConditionEditor({ node, ctx, onChange }: { node: ConditionNode; ctx: Ct
       <OperandEditor
         side="Right"
         value={node.right}
-        onChange={(right) => onChange({ ...node, right })}
+        onChange={(right) => edit('right', right)}
         defaultSeries={node.left.kind === 'CONSTANT' ? ctx.defaultSeries : node.left.series}
         legs={ctx.legs}
         onAddLeg={ctx.onAddLeg}
@@ -85,6 +95,23 @@ function ConditionEditor({ node, ctx, onChange }: { node: ConditionNode; ctx: Ct
       <p className="text-[11px] text-slate-500">
         Reads as: <span className="font-mono text-slate-300">{conditionText(node, ctx.legs)}</span>
       </p>
+      {note && !levelVsNumber && (
+        <p className="flex items-center gap-1.5 text-[11px] text-accent-soft">
+          <Info className="w-3.5 h-3.5 shrink-0" />
+          {note}
+        </p>
+      )}
+      {levelVsNumber && (
+        <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-warn">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          This compares a price level with a fixed number. Bands and averages are usually compared with the price, e.g. “Close crossed above Bollinger Upper”.
+          <Tooltip content={H.editor.compareWithClose}>
+            <button type="button" className="btn-ghost py-0.5 text-[11px]" onClick={() => (setNote(undefined), onChange(compareWithClose(node)))}>
+              Compare Close with it
+            </button>
+          </Tooltip>
+        </p>
+      )}
       {mismatch && (
         <p className="flex items-center gap-1.5 text-[11px] text-warn">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />

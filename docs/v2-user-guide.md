@@ -44,6 +44,9 @@ Open **V2 · beta** in the sidebar. Every control has an ⓘ or a hover tooltip 
        C · PE ATM RSI(14) < 40
      ```
    - **Need a leg you haven't added?** Pick **+ Add FUT / CE ATM / PE ATM / SPOT leg** at the bottom of any Leg list. The leg is added to section 1 and used by that condition. With only one leg, a hint above the conditions offers the same buttons.
+   - **Bollinger Bands and moving averages** are price levels, so you never type a number for them. Choosing Bollinger **Upper / Middle / Lower** (or SMA, EMA, the Supertrend line) makes the condition read *Close crossed above Bollinger Upper* automatically.
+     - **%B** and **Bandwidth %** are readings, so they get a number (%B 1 = on the upper band, Bandwidth 2 = a tight squeeze).
+     - Older conditions like "Bollinger Upper crossed above 60" show a one-click **Compare Close with it** fix.
    - Combine conditions with AND / OR groups and NOT. Name a group (e.g. "Future conditions", "Option conditions") so the preview and alerts read clearly.
 5. Check the **Preview** and **Validation** on the right.
 6. **Try on a product.** Pick one product and press Run. You'll see every condition's current value and whether it would alert now. Nothing is saved or sent.

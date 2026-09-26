@@ -107,7 +107,12 @@ export const H = {
     lookback: { title: 'Lookback', body: 'OI change = OI now − OI this many candles ago.' },
     field: { title: 'Field', body: 'A raw candle value.' },
     operator: { title: 'Operator', body: 'Greater / less / equal compare current values. Crossed above = previous left ≤ previous right AND current left > current right.' },
-    constant: { title: 'Number', body: 'A fixed level, e.g. 60.' },
+    constant: { title: 'Number', body: 'A fixed level, e.g. 60 for RSI or 1 for Bollinger %B. Bands and averages (Bollinger Upper / Middle / Lower, SMA, EMA) are compared with the price instead.' },
+    compareWithClose: {
+      title: 'Compare Close with it',
+      body: 'Rewrites this condition as “Close <operator> <band / average>” on the same leg, timeframe and candles — the usual way to use Bollinger bands and moving averages.',
+      example: 'A · FUT Close crossed above A · FUT Bollinger Bands(20,2) Upper',
+    },
     pattern: { title: 'Pattern', body: 'Candlestick pattern on the chosen leg’s candles.' },
   } satisfies Record<string, TooltipContent>,
 
