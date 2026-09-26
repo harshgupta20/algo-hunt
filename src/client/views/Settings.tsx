@@ -9,7 +9,7 @@ import { DEFAULT_USER_PREFERENCES } from '@ash/shared';
 import { api } from '../lib/api';
 import { Card, PageHeader, Help } from '../components/ui';
 import { KiteConnectionCard } from '../components/KiteConnectionCard';
-import { playChime, requestNotificationPermission, showNotification } from '../lib/notify';
+import { raiseAlarm, requestNotificationPermission, showNotification, unlockAudio } from '../lib/notify';
 import { useThemePreference } from '../theme/useThemePreference';
 import { InfoTip, Tooltip, type TooltipContent } from '../components/Tooltip';
 import { HELP } from '../lib/help';
@@ -98,11 +98,18 @@ export function Settings() {
             help={HELP.settings.browserNotifications}
           />
           <Toggle
-            label="Sound alert"
-            hint="Play a chime on each new V2 alert."
+            label="Alert tune"
+            hint="Play a loud alarm the moment a V2 alert arrives."
             checked={prefs.soundEnabled}
             onChange={(v) => update({ soundEnabled: v })}
             help={HELP.settings.sound}
+          />
+          <Toggle
+            label="Repeat until I stop it"
+            hint="Ring every 6 s until you press Stop or open the alerts (max 90 s)."
+            checked={prefs.soundRepeat}
+            onChange={(v) => update({ soundRepeat: v })}
+            help={HELP.settings.soundRepeat}
           />
           <Toggle
             label="Dark theme"
@@ -119,8 +126,14 @@ export function Settings() {
             </button>
           </Help>
           <Help content={HELP.settings.testSound}>
-            <button className="btn-ghost text-xs" onClick={() => playChime()}>
-              <Volume2 className="w-4 h-4" /> Test sound
+            <button
+              className="btn-ghost text-xs"
+              onClick={() => {
+                unlockAudio();
+                raiseAlarm([{ id: `test-${Date.now()}`, title: 'Test alert', detail: 'This is how a real alert sounds and looks' }], { sound: true, repeat: prefs.soundRepeat });
+              }}
+            >
+              <Volume2 className="w-4 h-4" /> Test alert
             </button>
           </Help>
         </div>

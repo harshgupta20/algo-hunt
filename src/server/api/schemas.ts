@@ -8,6 +8,7 @@ import { HttpError } from './http';
 export const preferencesSchema = z.object({
   theme: z.enum(['dark', 'light']),
   soundEnabled: z.boolean(),
+  soundRepeat: z.boolean().optional(),
   browserNotifications: z.boolean(),
 });
 

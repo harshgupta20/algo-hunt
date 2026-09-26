@@ -107,6 +107,8 @@ The first time, run `npm run live -- --check`. It connects to Kite, prints a few
 
 ## 4. Alerts
 
+- **Alarm in the app:** while the app is open in a browser, a new alert rings a loud alarm tune, shows an amber alert card at the top of the page and flashes the tab title. It repeats every 6 seconds until you press **Stop**, open **Alerts**, acknowledge the alert, or click the desktop notification (at most 90 seconds). Settings → Notifications: turn the tune or the repeat off, or press **Test alert** to hear it. Browsers only allow sound after you've clicked the page once; if the sound was blocked, the card shows **Play sound**.
+
 - **Alerts tab:** active alerts (✓ to acknowledge), the full history, and every signal including suppressed ones with the reason. Expand an alert to see why it fired.
 - **Telegram / email messages** list the product, strike, each leg's contract and price, and every condition with its values.
 

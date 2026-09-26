@@ -46,6 +46,12 @@ export const HELP = {
     signOut: { title: 'Sign out', body: 'End this browser session. Scanning and the live worker keep running.' },
   },
 
+  alarm: {
+    view: { title: 'View alerts', body: 'Stop the alarm and open V2 → Alerts.' },
+    stop: { title: 'Stop', body: 'Silence the alarm and close this card. The alerts stay in V2 → Alerts.' },
+    play: { title: 'Play sound', body: 'Your browser blocked the sound because the page hasn’t been clicked yet — press to hear the alarm (sound works from now on).' },
+  },
+
   settings: {
     connect: { title: 'Connect Kite', body: 'Log in to Zerodha Kite; you’re returned here automatically.' },
     reconnect: { title: 'Reconnect', body: 'Log in again to refresh the session (e.g. after switching Kite accounts).' },
@@ -54,11 +60,18 @@ export const HELP = {
       body: 'Revoke the Kite session at Zerodha and remove it from the server.',
       note: 'Scanning and the live worker pause until you connect again.',
     },
-    browserNotifications: { title: 'Browser notifications', body: 'Show a desktop notification for each new V2 alert while the app is open.' },
-    sound: { title: 'Sound alert', body: 'Play a short chime for each new V2 alert.' },
+    browserNotifications: {
+      title: 'Browser notifications',
+      body: 'Show a desktop notification for each new V2 alert while the app is open. It stays on screen until you dismiss it; clicking it opens the app and stops the alarm.',
+    },
+    sound: { title: 'Alert tune', body: 'Play a loud alarm tune the moment a V2 alert arrives, with a flashing alert card and tab title.' },
+    soundRepeat: {
+      title: 'Repeat until I stop it',
+      body: 'Keep ringing every 6 seconds until you press Stop, open the alerts or acknowledge — at most 90 seconds. Off = ring once.',
+    },
     darkTheme: { title: 'Dark theme', body: 'Light is the default. The choice is saved to your account.' },
     testNotification: { title: 'Test notification', body: 'Send a sample desktop notification to check permissions.' },
-    testSound: { title: 'Test sound', body: 'Play the alert chime.' },
+    testSound: { title: 'Test alert', body: 'Ring the alarm exactly as a real alert would (tune, alert card, tab title) so you can check the volume. Press Stop to end it.', note: 'Browsers only allow sound after you have clicked on the page once.' },
     alertChannels: { title: 'Telegram & email', body: 'Where V2 alerts are delivered (chat id, recipients, test messages) — set in V2 → Settings.' },
   },
 } as const satisfies Record<string, Record<string, Help | Record<string, Help>>>;

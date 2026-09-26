@@ -179,6 +179,43 @@
   }
 }
 
+/* Alert alarm card: pulsing amber ring + a shaking bell. */
+@layer components {
+  .alarm-card {
+    animation: alarm-ring 1.2s ease-out infinite;
+  }
+  .alarm-bell {
+    animation: alarm-bell 1.2s ease-in-out infinite;
+  }
+}
+@keyframes alarm-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgb(var(--warn) / 0.55), 0 20px 40px -12px rgb(0 0 0 / 0.35);
+  }
+  70% {
+    box-shadow: 0 0 0 14px rgb(var(--warn) / 0), 0 20px 40px -12px rgb(0 0 0 / 0.35);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(var(--warn) / 0), 0 20px 40px -12px rgb(0 0 0 / 0.35);
+  }
+}
+@keyframes alarm-bell {
+  0%,
+  60%,
+  100% {
+    transform: rotate(0);
+  }
+  10%,
+  30%,
+  50% {
+    transform: rotate(-14deg);
+  }
+  20%,
+  40% {
+    transform: rotate(14deg);
+  }
+}
+
 @keyframes loader-draw {
   0% {
     stroke-dashoffset: 100;
@@ -255,7 +292,9 @@
   .loader-ray,
   .spinner-ring,
   .skeleton::after,
-  .activity-bar::after {
+  .activity-bar::after,
+  .alarm-card,
+  .alarm-bell {
     animation-duration: 4s;
   }
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
@@ -12,6 +12,7 @@ import { InstrumentChip, LegPrices, OutcomeBadge, SourceBadge, TraceView, TriBad
 import { candleRange, istStampIso } from './format';
 import { H } from './help';
 import { InlineSpinner, SkeletonRows } from '../components/loaders';
+import { stopAlarm } from '../lib/notify';
 
 const STATUS_TONE: Record<V2Alert['status'], 'bull' | 'warn' | 'bear' | 'accent'> = { SENT: 'bull', PARTIAL: 'warn', FAILED: 'bear', ACKNOWLEDGED: 'accent' };
 
@@ -28,6 +29,7 @@ export function AlertRow({ alert: a }: { alert: V2Alert }) {
   const ack = useMutation({
     mutationFn: () => v2Api.acknowledge(a.id),
     onSuccess: () => {
+      stopAlarm();
       qc.invalidateQueries({ queryKey: ['v2-alerts'] });
       qc.invalidateQueries({ queryKey: ['v2-units'] });
     },
@@ -82,6 +84,8 @@ type View = 'active' | 'history' | 'signals';
 
 export function AlertsTab() {
   const [view, setView] = useState<View>('active');
+  // Opening the alerts counts as seeing them: silence a ringing alarm.
+  useEffect(() => stopAlarm(), []);
   const [strategyId, setStrategyId] = useState('');
   const strategies = useQuery({ queryKey: ['v2-strategies'], queryFn: v2Api.strategies });
   const alerts = useQuery({
