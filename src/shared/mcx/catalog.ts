@@ -3,7 +3,7 @@
  * offers (timeframes, candle types, operators, indicators, patterns, products).
  * The UI renders from it and the server validates against it.
  */
-import type { CandleType, McxOperator, McxTimeframe, PatternId, SourceField, StrikeMode } from './types';
+import type { CandleType, Leg, McxOperator, McxTimeframe, PatternId, SourceField, StrikeMode } from './types';
 
 // ---- Products ---------------------------------------------------------------------
 
@@ -275,12 +275,26 @@ export const MCX2_EXPIRY_MODES: Array<{ mode: 'CURRENT' | 'NEXT' | 'FAR' | 'ALL'
 ];
 
 export const MCX2_STRIKE_MODES: Array<{ mode: StrikeMode; label: string }> = [
-  { mode: 'ATM_OFFSETS', label: 'ATM / ATM ± N' },
-  { mode: 'ITM', label: 'In the money (N strikes)' },
-  { mode: 'OTM', label: 'Out of the money (N strikes)' },
+  { mode: 'ATM_OFFSETS', label: 'Around ATM' },
   { mode: 'SPECIFIC', label: 'Specific strikes' },
   { mode: 'RANGE', label: 'Strike range' },
   { mode: 'ALL', label: 'All strikes' },
+];
+
+/** Quick picks for ATM-relative strikes (offsets along the listed strike ladder). */
+export const MCX2_ATM_PRESETS: Array<{ key: string; label: string; offsets: number[] }> = [
+  { key: 'atm', label: 'ATM', offsets: [0] },
+  ...[1, 2, 3, 4, 5].map((n) => ({ key: `pm${n}`, label: `ATM ± ${n}`, offsets: Array.from({ length: 2 * n + 1 }, (_, i) => i - n) })),
+  ...[1, 2, 3].map((n) => ({ key: `up${n}`, label: `${n} above ATM`, offsets: Array.from({ length: n }, (_, i) => i + 1) })),
+  ...[1, 2, 3].map((n) => ({ key: `dn${n}`, label: `${n} below ATM`, offsets: Array.from({ length: n }, (_, i) => -(i + 1)) })),
+];
+
+// ---- Legs ----------------------------------------------------------------------------------
+
+export const MCX2_LEGS: Array<{ leg: Leg; label: string; name: string }> = [
+  { leg: 'FUT', label: 'FUT', name: 'Future' },
+  { leg: 'CE', label: 'CE', name: 'Call' },
+  { leg: 'PE', label: 'PE', name: 'Put' },
 ];
 
 /** Signals older than this after their candle closed are recorded but not alerted. */

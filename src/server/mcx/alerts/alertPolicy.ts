@@ -41,18 +41,18 @@ export function fires(policy: AlertPolicy, result: TriState, prev: TriState | nu
   return policy.trigger === 'WHILE_TRUE' || prev === 'FALSE';
 }
 
-/** Signal identity: one signal per strategy version · target · trigger candle (· minute when repeats are allowed). */
+/** Signal identity: one signal per strategy version · unit · trigger candle (· minute when repeats are allowed). */
 export function signalIdentity(p: {
   strategyId: string;
   version: number;
-  targetInstrumentId: string;
+  unitKey: string;
   triggerTimeframe: string;
   triggerCandle: number;
   mode: 'COMPLETED_CANDLE' | 'LIVE_CANDLE';
   oncePerCandle: boolean;
   now: number;
 }): string {
-  const base = `${p.strategyId}:v${p.version}:${p.targetInstrumentId}:${p.triggerTimeframe}:${p.triggerCandle}:ENTRY`;
+  const base = `${p.strategyId}:v${p.version}:${p.unitKey}:${p.triggerTimeframe}:${p.triggerCandle}:ENTRY`;
   return p.mode === 'LIVE_CANDLE' && !p.oncePerCandle ? `${base}:m${Math.floor(p.now / 60_000)}` : base;
 }
 
@@ -88,10 +88,10 @@ export function decide(i: PolicyInput): PolicyDecision {
   return { outcome: hasChannel ? 'ALERTED' : 'NO_CHANNEL', next: alerted };
 }
 
-export function initialState(strategyId: string, targetInstrumentId: string): UnitState {
+export function initialState(strategyId: string, unitKey: string): UnitState {
   return {
     strategyId,
-    targetInstrumentId,
+    unitKey,
     state: 'IDLE',
     lastEvaluatedCandle: null,
     lastResult: null,

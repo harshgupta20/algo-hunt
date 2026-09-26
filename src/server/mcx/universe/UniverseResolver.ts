@@ -1,23 +1,17 @@
 /**
- * Universe resolution: turns a strategy's explicit universe (product, expiry
- * selector, CE/PE, strike selector, reference future) into the concrete target
- * instruments to evaluate — one evaluation unit each.
+ * Universe resolution: turns a strategy's universe into evaluation units.
+ *
+ *   Futures → one unit per selected future (FUT leg only).
+ *   Options → one unit per selected strike, with three legs: FUT (the future the
+ *             options expire into — first future expiring on/after the option),
+ *             CE and PE at that strike and expiry.
  *
  * Two steps, because ATM needs live prices:
- *   1. referenceFutures() → the futures whose LTP is needed.
- *   2. resolveUniverse(…, ltp) → units (target + reference + ATM strike).
- * Dynamic selections (ATM ± N, ITM/OTM) are re-resolved every cycle and never stored.
+ *   1. referenceFutures() → the futures whose LTP sets ATM.
+ *   2. resolveUniverse(…, ltp) → units.
+ * ATM-relative strikes are re-resolved every cycle and never stored.
  */
-import type {
-  ExpirySelector,
-  McxInstrument,
-  OptionType,
-  ReferenceSelector,
-  ResolvedUnit,
-  StrikeSelector,
-  Universe,
-  UniverseResolution,
-} from '@/shared/mcx';
+import type { ExpirySelector, McxInstrument, McxUnit, StrikeSelector, Universe, UniverseResolution } from '@/shared/mcx';
 
 const byExpiry = (a: McxInstrument, b: McxInstrument) => (a.expiry ?? '').localeCompare(b.expiry ?? '');
 
@@ -55,17 +49,10 @@ export function pickExpiries(sel: ExpirySelector, expiries: string[]): string[] 
   }
 }
 
-/** The future acting as UNDERLYING for a target (options: the future the option devolves into). */
-function referenceFor(sel: ReferenceSelector, futures: McxInstrument[], target: McxInstrument): McxInstrument | null {
-  if (sel.mode === 'MATCH_TARGET') {
-    if (target.instrumentType === 'MCX_FUTURE') return target;
-    return futures.find((f) => (f.expiry ?? '') >= (target.expiry ?? '')) ?? futures[futures.length - 1] ?? null;
-  }
-  const picked = pickExpiries(sel.mode === 'ALL' ? { mode: 'CURRENT' } : sel, futures.map((f) => f.expiry!));
-  return futures.find((f) => f.expiry === picked[0]) ?? null;
+/** The future options of `expiry` devolve into: the first future expiring on/after it. */
+export function futureForOptionExpiry(futures: McxInstrument[], expiry: string): McxInstrument | null {
+  return futures.find((f) => (f.expiry ?? '') >= expiry) ?? futures[futures.length - 1] ?? null;
 }
-
-const needsAtm = (s: StrikeSelector) => s.mode === 'ATM_OFFSETS' || s.mode === 'ITM' || s.mode === 'OTM';
 
 /** Index of the listed strike nearest to `price`. */
 export function nearestStrikeIndex(strikes: number[], price: number): number {
@@ -74,26 +61,19 @@ export function nearestStrikeIndex(strikes: number[], price: number): number {
   return best;
 }
 
-/** Strikes selected for one option type, given the listed strikes and the ATM index. */
-export function selectStrikes(sel: StrikeSelector, strikes: number[], atm: number, type: OptionType, notes: string[]): number[] {
-  const at = (i: number) => {
-    if (i < 0 || i >= strikes.length) {
-      notes.push(`Strike offset ${i - atm >= 0 ? '+' : ''}${i - atm} from ATM is outside the listed strikes — skipped`);
-      return undefined;
-    }
-    return strikes[i];
-  };
-  const run = (dir: 1 | -1, count: number) => Array.from({ length: count }, (_, k) => at(atm + dir * (k + 1)));
-  let picked: Array<number | undefined>;
+/** Strikes selected from the listed ladder (`atm` = index of the ATM strike, for ATM-relative selections). */
+export function selectStrikes(sel: StrikeSelector, strikes: number[], atm: number, notes: string[]): number[] {
+  let picked: number[];
   switch (sel.mode) {
     case 'ATM_OFFSETS':
-      picked = [...new Set(sel.offsets)].sort((a, b) => a - b).map((o) => at(atm + o));
-      break;
-    case 'ITM':
-      picked = run(type === 'CE' ? -1 : 1, sel.count);
-      break;
-    case 'OTM':
-      picked = run(type === 'CE' ? 1 : -1, sel.count);
+      picked = [...new Set(sel.offsets)].flatMap((o) => {
+        const k = strikes[atm + o];
+        if (k === undefined) {
+          notes.push(`Strike ${o >= 0 ? '+' : ''}${o} from ATM is outside the listed strikes — skipped`);
+          return [];
+        }
+        return [k];
+      });
       break;
     case 'SPECIFIC': {
       const missing = sel.strikes.filter((k) => !strikes.includes(k));
@@ -108,84 +88,88 @@ export function selectStrikes(sel: StrikeSelector, strikes: number[], atm: numbe
       picked = strikes;
       break;
   }
-  return [...new Set(picked.filter((k): k is number => k !== undefined))].sort((a, b) => a - b);
+  return [...new Set(picked)].sort((a, b) => a - b);
 }
 
-/** Step 1: the reference futures whose LTP is needed to resolve this universe. */
+export function futureUnit(f: McxInstrument): McxUnit {
+  return { key: f.id, underlying: f.underlying, expiry: f.expiry, strike: null, fut: f, ce: null, pe: null };
+}
+
+export function strikeKey(underlying: string, expiry: string, strike: number): string {
+  return `${underlying}:${expiry}:${strike}`;
+}
+
+function strikeUnit(all: McxInstrument[], underlying: string, expiry: string, strike: number, fut: McxInstrument | null, atmStrike?: number): McxUnit {
+  const opt = (type: 'CE' | 'PE') =>
+    all.find((i) => i.underlying === underlying && i.instrumentType === 'MCX_OPTION' && i.expiry === expiry && i.strike === strike && i.optionType === type) ?? null;
+  return { key: strikeKey(underlying, expiry, strike), underlying, expiry, strike, fut, ce: opt('CE'), pe: opt('PE'), atmStrike };
+}
+
+/** Step 1: the futures whose LTP is needed to resolve this universe (ATM-relative strikes only). */
 export function referenceFutures(u: Universe, all: McxInstrument[], today: string): McxInstrument[] {
+  if (u.target.kind !== 'OPTION' || u.target.strikes.mode !== 'ATM_OFFSETS') return [];
   const futures = futuresOf(all, u.underlying, today);
-  if (u.target.kind === 'FUTURE') return [];
-  if (!needsAtm(u.target.strikes)) return [];
-  const expiries = pickExpiries(u.target.expiry, optionExpiriesOf(all, u.underlying, today));
   const refs = new Map<number, McxInstrument>();
-  for (const e of expiries) {
-    const probe = { instrumentType: 'MCX_OPTION', expiry: e } as McxInstrument;
-    const r = referenceFor(u.reference.expiry, futures, probe);
-    if (r) refs.set(r.token, r);
+  for (const e of pickExpiries(u.target.expiry, optionExpiriesOf(all, u.underlying, today))) {
+    const f = futureForOptionExpiry(futures, e);
+    if (f) refs.set(f.token, f);
   }
   return [...refs.values()];
 }
 
-/** Step 2: resolve the units. `ltp` maps reference-future tokens to their last traded price. */
+/** Step 2: resolve the units. `ltp` maps future tokens to their last traded price. */
 export function resolveUniverse(u: Universe, all: McxInstrument[], ltp: Map<number, number>, today: string): UniverseResolution {
   const errors: string[] = [];
   const notes: string[] = [];
-  const units: ResolvedUnit[] = [];
+  const units: McxUnit[] = [];
   const refsUsed = new Map<number, { instrument: McxInstrument; ltp?: number }>();
   const futures = futuresOf(all, u.underlying, today);
+  const expiryName = (e: ExpirySelector) => (e.mode === 'SPECIFIC' ? e.date : e.mode.toLowerCase());
 
   if (u.target.kind === 'FUTURE') {
     const expiries = pickExpiries(u.target.expiry, futures.map((f) => f.expiry!));
-    if (!expiries.length) errors.push(`No ${u.underlying} futures for ${u.target.expiry.mode === 'SPECIFIC' ? u.target.expiry.date : u.target.expiry.mode.toLowerCase()} expiry`);
-    for (const e of expiries) {
-      const target = futures.find((f) => f.expiry === e)!;
-      const reference = referenceFor(u.reference.expiry, futures, target);
-      if (reference) refsUsed.set(reference.token, { instrument: reference, ltp: ltp.get(reference.token) });
-      units.push({ target, reference });
-    }
-    return { units, references: [...refsUsed.values()], expiries, errors, notes };
+    if (!expiries.length) errors.push(`No ${u.underlying} future for the ${expiryName(u.target.expiry)} expiry`);
+    for (const e of expiries) units.push(futureUnit(futures.find((f) => f.expiry === e)!));
+    return { units, references: [], expiries, errors, notes };
   }
 
-  const target = u.target;
+  const t = u.target;
   const optionExpiries = optionExpiriesOf(all, u.underlying, today);
   if (!optionExpiries.length) errors.push(`${u.underlying} has no listed options`);
-  const expiries = pickExpiries(target.expiry, optionExpiries);
-  if (optionExpiries.length && !expiries.length) errors.push(`No ${u.underlying} option expiry matches ${target.expiry.mode === 'SPECIFIC' ? target.expiry.date : target.expiry.mode.toLowerCase()}`);
+  const expiries = pickExpiries(t.expiry, optionExpiries);
+  if (optionExpiries.length && !expiries.length) errors.push(`No ${u.underlying} option expiry matches ${expiryName(t.expiry)}`);
 
   for (const e of expiries) {
     const strikes = strikesOf(all, u.underlying, e);
-    const reference = referenceFor(u.reference.expiry, futures, { instrumentType: 'MCX_OPTION', expiry: e } as McxInstrument);
-    if (reference) refsUsed.set(reference.token, { instrument: reference, ltp: ltp.get(reference.token) });
+    const fut = futureForOptionExpiry(futures, e);
+    if (!fut) notes.push(`No ${u.underlying} future found for the ${e} options — FUT conditions will be unknown`);
     let atm = -1;
-    if (needsAtm(target.strikes)) {
-      const price = reference ? ltp.get(reference.token) : undefined;
-      if (!reference) {
-        errors.push(`No ${u.underlying} future to derive ATM for the ${e} expiry`);
-        continue;
-      }
-      if (price === undefined) {
-        errors.push(`No live price for ${reference.symbol} — ATM for the ${e} expiry can't be computed`);
+    if (t.strikes.mode === 'ATM_OFFSETS') {
+      const price = fut ? ltp.get(fut.token) : undefined;
+      if (fut) refsUsed.set(fut.token, { instrument: fut, ltp: price });
+      if (!fut || price === undefined) {
+        errors.push(fut ? `No live price for ${fut.symbol} — ATM for the ${e} expiry can't be computed` : `No ${u.underlying} future to derive ATM for the ${e} expiry`);
         continue;
       }
       atm = nearestStrikeIndex(strikes, price);
     }
-    for (const type of [...target.optionTypes].sort()) {
-      for (const k of selectStrikes(target.strikes, strikes, atm, type, notes)) {
-        const contract = all.find((i) => i.underlying === u.underlying && i.instrumentType === 'MCX_OPTION' && i.expiry === e && i.optionType === type && i.strike === k);
-        if (!contract) {
-          notes.push(`${u.underlying} ${e} ${k} ${type} is not listed — skipped`);
-          continue;
-        }
-        units.push({ target: contract, reference, atmStrike: atm >= 0 ? strikes[atm] : undefined });
-      }
-    }
+    for (const k of selectStrikes(t.strikes, strikes, atm, notes)) units.push(strikeUnit(all, u.underlying, e, k, fut, atm >= 0 ? strikes[atm] : undefined));
   }
-  const seen = new Set<string>();
-  const unique = units.filter((x) => (seen.has(x.target.id) ? false : (seen.add(x.target.id), true)));
-  return { units: unique, references: [...refsUsed.values()], expiries, errors, notes: [...new Set(notes)] };
+  return { units, references: [...refsUsed.values()], expiries, errors, notes: [...new Set(notes)] };
 }
 
-/** A unit for an explicitly chosen target (replay / explain of one contract), with its reference future. */
-export function unitForTarget(u: Universe, all: McxInstrument[], target: McxInstrument, today: string): ResolvedUnit {
-  return { target, reference: referenceFor(u.reference.expiry, futuresOf(all, u.underlying, today), target) };
+/**
+ * The unit for an explicit key (replay / explain of one unit): `MCX:<token>` for a
+ * future, `<PRODUCT>:<expiry>:<strike>` for a strike.
+ */
+export function unitForKey(all: McxInstrument[], key: string, today: string): McxUnit | null {
+  if (key.startsWith('MCX:')) {
+    const f = all.find((i) => i.id === key && i.instrumentType === 'MCX_FUTURE');
+    return f ? futureUnit(f) : null;
+  }
+  const [underlying, expiry, strike] = key.split(':');
+  if (!underlying || !expiry || !strike) return null;
+  const k = Number(strike);
+  if (!strikesOf(all, underlying, expiry).includes(k)) return null;
+  return strikeUnit(all, underlying, expiry, k, futureForOptionExpiry(futuresOf(all, underlying, today), expiry));
 }

@@ -10,18 +10,18 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Tooltip } from '../../components/Tooltip';
 import { EmptyState } from '../../components/ui';
 import type { ExplainResult, ReplayResult } from '../api';
-import { InstrumentTag, OutcomeBadge, TraceView, TriBadge, UnitStateBadge } from '../components';
+import { LegPrices, OutcomeBadge, TraceView, TriBadge, UnitStateBadge, UnitTag } from '../components';
 import { candleRange, fmtNum, istStamp, istStampMs } from '../format';
 
 export function ExplainView({ result }: { result: ExplainResult }) {
-  const [open, setOpen] = useState<string | null>(result.units.find((u) => u.outcome)?.target.id ?? result.units[0]?.target.id ?? null);
+  const [open, setOpen] = useState<string | null>(result.units.find((u) => u.outcome)?.unit.key ?? result.units[0]?.unit.key ?? null);
   const tf = result.units[0]?.evaluation?.triggerTimeframe;
   return (
     <div className="flex flex-col gap-2">
       <p className="text-xs text-slate-400">
         Evaluated {istStampMs(result.evaluatedAt)} IST on the {tf ? candleRange(result.triggerCandle, tf) : istStamp(result.triggerCandle)} candle ·{' '}
         {result.requests} data request{result.requests === 1 ? '' : 's'}
-        {result.resolution.references.length > 0 && <> · reference {result.resolution.references.map((r) => `${r.symbol} ${fmtNum(r.ltp)}`).join(', ')}</>}
+        {result.resolution.references.length > 0 && <> · ATM from {result.resolution.references.map((r) => `${r.symbol} ${fmtNum(r.ltp)}`).join(', ')}</>}
       </p>
       {[...result.errors, ...result.resolution.errors].map((e) => (
         <p key={e} className="text-xs text-warn">
@@ -30,19 +30,21 @@ export function ExplainView({ result }: { result: ExplainResult }) {
       ))}
       {result.units.length === 0 && <EmptyState title="No contracts to evaluate" hint="The universe resolved to nothing — see the messages above." />}
       {result.units.map((u) => {
-        const isOpen = open === u.target.id;
+        const isOpen = open === u.unit.key;
         return (
-          <div key={u.target.id} className="rounded-lg border border-ink-700/60 bg-ink-850">
-            <button type="button" onClick={() => setOpen(isOpen ? null : u.target.id)} className="w-full flex flex-wrap items-center gap-3 px-3 py-2 text-left">
+          <div key={u.unit.key} className="rounded-lg border border-ink-700/60 bg-ink-850">
+            <button type="button" onClick={() => setOpen(isOpen ? null : u.unit.key)} className="w-full flex flex-wrap items-center gap-3 px-3 py-2 text-left">
               {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
-              <InstrumentTag i={u.target} />
+              <UnitTag unit={u.unit} />
               <TriBadge value={u.evaluation?.result} />
               <Tooltip content={{ title: 'Previous candle', body: 'The strategy’s result on the trigger candle before this one. “Becomes true” alerts need it to be False.' }}>
                 <span className="text-[11px] text-slate-500">prev {u.prevResult ?? '—'}</span>
               </Tooltip>
               {u.outcome ? <OutcomeBadge outcome={u.outcome} /> : <span className="text-[11px] text-slate-500">no signal</span>}
               {u.state && <UnitStateBadge state={u.state.state} />}
-              {u.evaluation?.price !== undefined && <span className="ml-auto text-xs tabular-nums text-slate-400">close {fmtNum(u.evaluation.price)}</span>}
+              <span className="ml-auto">
+                <LegPrices prices={u.evaluation?.prices} />
+              </span>
             </button>
             {isOpen && (
               <div className="px-3 pb-3 border-t border-ink-700/60 pt-2">
@@ -80,9 +82,9 @@ export function ReplayView({ result }: { result: ReplayResult }) {
       {result.units.map((u) => {
         const rows = onlySignals ? u.rows.filter((r) => r.outcome) : u.rows;
         return (
-          <div key={u.target.id} className="rounded-lg border border-ink-700/60 bg-ink-850 p-3">
+          <div key={u.unit.key} className="rounded-lg border border-ink-700/60 bg-ink-850 p-3">
             <div className="flex items-center gap-3 mb-2">
-              <InstrumentTag i={u.target} />
+              <UnitTag unit={u.unit} />
               <span className="text-xs text-slate-500">{u.signals} signal(s)</span>
             </div>
             {rows.length === 0 ? (
@@ -95,13 +97,13 @@ export function ReplayView({ result }: { result: ReplayResult }) {
                       <th className="py-1 pr-3">Candle (IST)</th>
                       <th className="py-1 pr-3">Result</th>
                       <th className="py-1 pr-3">Signal</th>
-                      <th className="py-1 pr-3 text-right">Close</th>
+                      <th className="py-1 pr-3">Close</th>
                       <th className="py-1">Not met</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-ink-700/40">
                     {rows.map((r) => {
-                      const key = `${u.target.id}:${r.candleTime}`;
+                      const key = `${u.unit.key}:${r.candleTime}`;
                       return (
                         <Fragment key={key}>
                           <tr className={clsx(r.trace && 'cursor-pointer hover:bg-ink-800/60')} onClick={() => r.trace && setOpen(open === key ? null : key)}>
@@ -110,7 +112,9 @@ export function ReplayView({ result }: { result: ReplayResult }) {
                               <TriBadge value={r.result} />
                             </td>
                             <td className="py-1 pr-3">{r.outcome ? <OutcomeBadge outcome={r.outcome} /> : <span className="text-slate-600">—</span>}</td>
-                            <td className="py-1 pr-3 text-right tabular-nums">{fmtNum(r.price)}</td>
+                            <td className="py-1 pr-3 whitespace-nowrap">
+                              <LegPrices prices={r.prices} />
+                            </td>
                             <td className="py-1 text-slate-500">{r.failing.join(' · ') || '—'}</td>
                           </tr>
                           {open === key && r.trace && (

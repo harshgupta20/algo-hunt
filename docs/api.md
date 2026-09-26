@@ -284,7 +284,7 @@ The independent MCX alerting subsystem ([mcx-v2-architecture.md](mcx-v2-architec
 | GET | `/api/mcx/v2/products` | — | Products with `futures[]` and `optionExpiries[{ expiry, strikes }]` from `mcx_instruments` |
 | GET | `/api/mcx/v2/instruments` | `underlying`, `expiry`, `type` (`MCX_FUTURE`\|`CE`\|`PE`), `search`, `limit` (≤ 2000) | `{ total, items: McxInstrument[] }` |
 | POST | `/api/mcx/v2/instruments/sync` | — | `{ count, syncedAt }` (needs Kite) |
-| POST | `/api/mcx/v2/universe/preview` | `{ universe }` | Resolution (`units`, `references` with LTP, `expiries`, `errors`, `notes`) + `cap` + `quotes` |
+| POST | `/api/mcx/v2/universe/preview` | `{ universe }` | Resolution (`units` with FUT / CE / PE legs, `references` = futures that set ATM with LTP, `expiries`, `errors`, `notes`) + `cap` + `quotes` (by instrument id, every leg) |
 | POST | `/api/mcx/v2/validate` | `{ definition, forEnable?, resolve? }` | `{ issues, valid, summary, resolvedTargets? }` |
 | GET | `/api/mcx/v2/strategies` | — | `McxStrategy[]` |
 | POST | `/api/mcx/v2/strategies` | `{ definition }` | `201` `McxStrategy` (disabled, v1) |
@@ -293,9 +293,9 @@ The independent MCX alerting subsystem ([mcx-v2-architecture.md](mcx-v2-architec
 | POST | `/api/mcx/v2/strategies/:id/enable` · `/disable` | — | `McxStrategy`; enable validates first (channels configured, universe within the cap) |
 | GET | `/api/mcx/v2/strategies/:id/versions` | — | `McxStrategyVersion[]`, newest first |
 | GET | `/api/mcx/v2/strategies/:id/units` | — | `UnitState[]` with each unit's latest evaluation |
-| POST | `/api/mcx/v2/strategies/:id/explain` | `{ targetId? }` | Explain result (per contract: evaluation trace, previous result, what the policy would do). Nothing saved |
-| POST | `/api/mcx/v2/explain` | `{ definition, targetId? }` | Same for an unsaved draft |
-| POST | `/api/mcx/v2/replay` | `{ strategyId? \| definition?, from, to, targetIds? (≤ 10) }` | Per contract, one row per trigger candle (result, outcome, failing conditions, trace on signals). Span limited per timeframe (e.g. 15 days of 15m) |
+| POST | `/api/mcx/v2/strategies/:id/explain` | `{ unitKey? }` | Explain result (per unit — strike or future: evaluation trace with each leg, previous result, what the policy would do). Nothing saved |
+| POST | `/api/mcx/v2/explain` | `{ definition, unitKey? }` | Same for an unsaved draft |
+| POST | `/api/mcx/v2/replay` | `{ strategyId? \| definition?, from, to, unitKeys? (≤ 10) }` | Per unit, one row per trigger candle (result, outcome, failing conditions, trace on signals). Span limited per timeframe (e.g. 15 days of 15m) |
 | GET | `/api/mcx/v2/alerts` | `active=1`, `strategyId`, `limit` | `McxAlert[]` with deliveries |
 | GET | `/api/mcx/v2/alerts/:id` | — | `McxAlert` |
 | POST | `/api/mcx/v2/alerts/:id/acknowledge` | — | `McxAlert`; the unit goes quiet until the strategy turns false |

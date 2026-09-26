@@ -46,6 +46,7 @@ export interface McxServiceDeps {
 
 export interface UniversePreview extends UniverseResolution {
   cap: number;
+  /** Live quotes keyed by instrument id, for every leg of the shown units. */
   quotes: Record<string, McxQuote>;
 }
 
@@ -155,13 +156,14 @@ export class McxService {
     }
     const res = resolveUniverse(u, all, ltp, today);
     const quotes: Record<string, McxQuote> = {};
-    const shown = res.units.slice(0, settings.universeCap);
-    if (shown.length) {
+    const legs = new Map<number, McxInstrument>();
+    for (const x of res.units.slice(0, settings.universeCap)) for (const i of [x.fut, x.ce, x.pe]) if (i) legs.set(i.token, i);
+    if (legs.size) {
       try {
-        const q = await this.deps.provider.getQuotes(shown.map((x) => x.target));
-        for (const x of shown) {
-          const v = q.get(x.target.token);
-          if (v) quotes[x.target.id] = v;
+        const q = await this.deps.provider.getQuotes([...legs.values()]);
+        for (const i of legs.values()) {
+          const v = q.get(i.token);
+          if (v) quotes[i.id] = v;
         }
       } catch (err) {
         res.notes.push(`Quotes unavailable: ${msg(err)}`);
@@ -187,6 +189,7 @@ export class McxService {
     }
     const issues = validateStrategy(d, {
       syncedProducts: [...new Set(all.map((i) => i.underlying))],
+      optionProducts: [...new Set(all.filter((i) => i.instrumentType === 'MCX_OPTION').map((i) => i.underlying))],
       channelsConfigured: { telegram: status.telegram.configured, email: status.email.configured },
       resolvedTargets,
       universeCap: settings.universeCap,
@@ -255,11 +258,11 @@ export class McxService {
     return this.deps.store.units.list(id);
   }
 
-  async explain(input: { strategyId?: string; definition?: McxStrategyDefinition; targetId?: string }) {
+  async explain(input: { strategyId?: string; definition?: McxStrategyDefinition; unitKey?: string }) {
     const s = input.strategyId ? await this.getStrategy(input.strategyId) : undefined;
     const definition = input.definition ?? s?.definition;
     if (!definition) throw new McxServiceError(400, 'strategyId or definition is required');
-    return this.dryRun.explain({ id: s?.id, version: s?.version, enabledAt: s?.enabledAt, definition }, { targetId: input.targetId });
+    return this.dryRun.explain({ id: s?.id, version: s?.version, enabledAt: s?.enabledAt, definition }, { unitKey: input.unitKey });
   }
 
   async replay(input: { strategyId?: string; definition?: McxStrategyDefinition } & ReplayRequest) {
@@ -290,7 +293,7 @@ export class McxService {
   async acknowledge(id: string): Promise<McxAlert> {
     const a = await this.alert(id);
     const out = await this.deps.store.alerts.acknowledge(id, new Date(this.now()).toISOString());
-    const unit = await this.deps.store.units.get(a.strategyId, a.instrument.id);
+    const unit = await this.deps.store.units.get(a.strategyId, a.unit.key);
     if (unit && unit.state !== 'DISABLED') await this.deps.store.units.upsert({ ...unit, state: 'ACKNOWLEDGED' });
     return out!;
   }

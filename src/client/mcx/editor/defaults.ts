@@ -1,12 +1,12 @@
 /**
  * New-node factories and example strategies for the MCX V2 editor.
  */
-import type { ConditionNode, ExprNode, GroupNode, McxStrategyDefinition, Operand, PatternNode, SeriesSpec } from '@/shared/mcx';
+import type { ConditionNode, ExprNode, GroupNode, Leg, McxStrategyDefinition, Operand, PatternNode, SeriesSpec } from '@/shared/mcx';
 import { MCX2_INDICATOR } from '@/shared/mcx';
 
 const uid = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `n${Math.random().toString(36).slice(2)}`);
 
-export const targetSeries = (timeframe: SeriesSpec['timeframe'] = '15m'): SeriesSpec => ({ instrument: { role: 'TARGET' }, timeframe, candle: { type: 'NORMAL' } });
+export const legSeries = (leg: Leg, timeframe: SeriesSpec['timeframe'] = '15m', candle: SeriesSpec['candle'] = { type: 'NORMAL' }): SeriesSpec => ({ leg, timeframe, candle });
 
 export function indicatorOperand(series: SeriesSpec, id = 'RSI'): Extract<Operand, { kind: 'INDICATOR' }> {
   const spec = MCX2_INDICATOR[id]!;
@@ -35,69 +35,77 @@ export function wrapNot(child: ExprNode): ExprNode {
   return { type: 'NOT', id: uid(), child };
 }
 
+const cond = (left: Operand, operator: ConditionNode['operator'], right: Operand): ConditionNode => ({ type: 'CONDITION', id: uid(), left, operator, right });
+const num = (value: number): Operand => ({ kind: 'CONSTANT', value });
+const rsi = (s: SeriesSpec) => indicatorOperand(s, 'RSI');
+
 export function blankStrategy(): McxStrategyDefinition {
-  const s = targetSeries('15m');
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     market: 'MCX',
     name: 'New MCX strategy',
-    universe: {
-      underlying: 'GOLD',
-      reference: { expiry: { mode: 'MATCH_TARGET' } },
-      target: { kind: 'OPTION', expiry: { mode: 'CURRENT' }, optionTypes: ['CE'], strikes: { mode: 'ATM_OFFSETS', offsets: [0] } },
-    },
+    universe: { underlying: 'GOLD', target: { kind: 'OPTION', expiry: { mode: 'CURRENT' }, strikes: { mode: 'ATM_OFFSETS', offsets: [0] } } },
     evaluation: { mode: 'COMPLETED_CANDLE', triggerTimeframe: '15m' },
-    expression: newGroup('AND', [newCondition(s)]),
+    expression: newGroup('AND', [newCondition(legSeries('CE', '15m'))]),
     alert: { channels: { telegram: true, email: false }, trigger: 'ON_TRANSITION', cooldownMinutes: 30, oncePerCandle: true },
   };
 }
 
-/** The two reference strategies from the V2 specification. */
+/** Ready-made strategies to start from (the two from the V2 specification + a FUT/CE/PE example). */
 export function exampleStrategies(): Array<{ key: string; label: string; description: string; definition: McxStrategyDefinition }> {
-  const t15 = targetSeries('15m');
-  const ha5: SeriesSpec = { instrument: { role: 'TARGET' }, timeframe: '5m', candle: { type: 'HEIKIN_ASHI' } };
+  const fut15 = legSeries('FUT', '15m');
+  const ce15 = legSeries('CE', '15m');
+  const pe15 = legSeries('PE', '15m');
+  const peHa5 = legSeries('PE', '5m', { type: 'HEIKIN_ASHI' });
+  const alert = { channels: { telegram: true, email: false }, trigger: 'ON_TRANSITION' as const, cooldownMinutes: 30, oncePerCandle: true };
   return [
     {
-      key: 'gold-momentum',
-      label: 'GOLD ATM ± 2 CE momentum (15m)',
-      description: 'RSI(14) crosses above 60, ADX(14) > 25 and close crosses above SMA(20) on each call — Telegram + Email, 30 min cooldown.',
+      key: 'gold-legs',
+      label: 'GOLD ATM · FUT + CE + PE RSI (15m)',
+      description: 'At the ATM strike: FUT RSI(14) crosses above 60, CE RSI(14) crosses above 60 and PE RSI(14) crosses below 40.',
       definition: {
-        schemaVersion: 1,
+        schemaVersion: 2,
+        market: 'MCX',
+        name: 'GOLD ATM FUT + CE + PE RSI',
+        universe: { underlying: 'GOLD', target: { kind: 'OPTION', expiry: { mode: 'CURRENT' }, strikes: { mode: 'ATM_OFFSETS', offsets: [0] } } },
+        evaluation: { mode: 'COMPLETED_CANDLE', triggerTimeframe: '15m' },
+        expression: newGroup('AND', [cond(rsi(fut15), 'CROSSED_ABOVE', num(60)), cond(rsi(ce15), 'CROSSED_ABOVE', num(60)), cond(rsi(pe15), 'CROSSED_BELOW', num(40))]),
+        alert,
+      },
+    },
+    {
+      key: 'gold-momentum',
+      label: 'GOLD ATM ± 2 · CE momentum (15m)',
+      description: 'On each of 5 strikes: CE RSI(14) crosses above 60, CE ADX(14) > 25 and CE close crosses above its SMA(20) — Telegram + Email, 30 min cooldown.',
+      definition: {
+        schemaVersion: 2,
         market: 'MCX',
         name: 'GOLD ATM±2 CE momentum',
-        universe: {
-          underlying: 'GOLD',
-          reference: { expiry: { mode: 'MATCH_TARGET' } },
-          target: { kind: 'OPTION', expiry: { mode: 'CURRENT' }, optionTypes: ['CE'], strikes: { mode: 'ATM_OFFSETS', offsets: [-2, -1, 0, 1, 2] } },
-        },
+        universe: { underlying: 'GOLD', target: { kind: 'OPTION', expiry: { mode: 'CURRENT' }, strikes: { mode: 'ATM_OFFSETS', offsets: [-2, -1, 0, 1, 2] } } },
         evaluation: { mode: 'COMPLETED_CANDLE', triggerTimeframe: '15m' },
         expression: newGroup('AND', [
-          { type: 'CONDITION', id: uid(), left: indicatorOperand(t15, 'RSI'), operator: 'CROSSED_ABOVE', right: { kind: 'CONSTANT', value: 60 } },
-          { type: 'CONDITION', id: uid(), left: indicatorOperand(t15, 'ADX'), operator: 'GT', right: { kind: 'CONSTANT', value: 25 } },
-          { type: 'CONDITION', id: uid(), left: { kind: 'FIELD', series: t15, field: 'close' }, operator: 'CROSSED_ABOVE', right: indicatorOperand(t15, 'SMA') },
+          cond(rsi(ce15), 'CROSSED_ABOVE', num(60)),
+          cond(indicatorOperand(ce15, 'ADX'), 'GT', num(25)),
+          cond({ kind: 'FIELD', series: ce15, field: 'close' }, 'CROSSED_ABOVE', indicatorOperand(ce15, 'SMA')),
         ]),
-        alert: { channels: { telegram: true, email: true }, trigger: 'ON_TRANSITION', cooldownMinutes: 30, oncePerCandle: true },
+        alert: { ...alert, channels: { telegram: true, email: true } },
       },
     },
     {
       key: 'silver-hammer',
-      label: 'SILVER OTM PE hammer on volume (5m Heikin Ashi)',
-      description: 'Volume above its 20-candle average and a Hammer, on 5-minute Heikin Ashi candles of two OTM puts.',
+      label: 'SILVER OTM PE · hammer on volume (5m HA)',
+      description: 'Two strikes below ATM: PE volume above its 20-candle average and a Hammer, on 5-minute Heikin Ashi candles.',
       definition: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         market: 'MCX',
         name: 'SILVER OTM PE hammer on volume',
-        universe: {
-          underlying: 'SILVER',
-          reference: { expiry: { mode: 'MATCH_TARGET' } },
-          target: { kind: 'OPTION', expiry: { mode: 'CURRENT' }, optionTypes: ['PE'], strikes: { mode: 'OTM', count: 2 } },
-        },
+        universe: { underlying: 'SILVER', target: { kind: 'OPTION', expiry: { mode: 'CURRENT' }, strikes: { mode: 'ATM_OFFSETS', offsets: [-1, -2] } } },
         evaluation: { mode: 'COMPLETED_CANDLE', triggerTimeframe: '5m' },
         expression: newGroup('AND', [
-          { type: 'CONDITION', id: uid(), left: { kind: 'FIELD', series: ha5, field: 'volume' }, operator: 'GT', right: { ...indicatorOperand(ha5, 'SMA'), source: 'volume' } as Operand },
-          { type: 'PATTERN', id: uid(), series: ha5, pattern: 'HAMMER' },
+          cond({ kind: 'FIELD', series: peHa5, field: 'volume' }, 'GT', { ...indicatorOperand(peHa5, 'SMA'), source: 'volume' }),
+          { type: 'PATTERN', id: uid(), series: peHa5, pattern: 'HAMMER' },
         ]),
-        alert: { channels: { telegram: true, email: false }, trigger: 'ON_TRANSITION', cooldownMinutes: null, oncePerCandle: true },
+        alert: { ...alert, cooldownMinutes: null },
       },
     },
   ];

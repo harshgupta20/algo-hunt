@@ -76,7 +76,7 @@ describe('alert policy', () => {
   });
 
   it('builds deterministic identities (with a minute only for repeating live alerts)', () => {
-    const base = { strategyId: 's', version: 3, targetInstrumentId: 'MCX:9', triggerTimeframe: '15m', triggerCandle: 1000, now: 120_000 };
+    const base = { strategyId: 's', version: 3, unitKey: 'MCX:9', triggerTimeframe: '15m', triggerCandle: 1000, now: 120_000 };
     expect(signalIdentity({ ...base, mode: 'COMPLETED_CANDLE', oncePerCandle: false })).toBe('s:v3:MCX:9:15m:1000:ENTRY');
     expect(signalIdentity({ ...base, mode: 'LIVE_CANDLE', oncePerCandle: true })).toBe('s:v3:MCX:9:15m:1000:ENTRY');
     expect(signalIdentity({ ...base, mode: 'LIVE_CANDLE', oncePerCandle: false })).toBe('s:v3:MCX:9:15m:1000:ENTRY:m2');

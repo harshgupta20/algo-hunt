@@ -14,8 +14,10 @@ import { HeikinAshi } from '../../src/server/services/indicator/candles';
 import {
   FixtureMcxProvider,
   MemoryMcxStore,
+  CE,
+  FUT,
+  PE,
   RecordingChannels,
-  TARGET,
   and,
   candlesAt,
   cond,
@@ -52,32 +54,31 @@ for (const e of ['2026-10-30', '2026-11-27']) {
 
 // ---- strategies ---------------------------------------------------------------------
 const S1: McxStrategyDefinition = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   market: 'MCX',
   name: 'GOLD ATM±2 CE momentum',
   universe: {
     underlying: 'GOLD',
-    reference: { expiry: { mode: 'MATCH_TARGET' } },
-    target: { kind: 'OPTION', expiry: { mode: 'CURRENT' }, optionTypes: ['CE'], strikes: { mode: 'ATM_OFFSETS', offsets: [-2, -1, 0, 1, 2] } },
+    target: { kind: 'OPTION', expiry: { mode: 'CURRENT' }, strikes: { mode: 'ATM_OFFSETS', offsets: [-2, -1, 0, 1, 2] } },
   },
   evaluation: { mode: 'COMPLETED_CANDLE', triggerTimeframe: '15m' },
   expression: and(
-    cond(ind(TARGET('15m'), 'RSI', { period: 14 }), 'CROSSED_ABOVE', num(60)),
-    cond(ind(TARGET('15m'), 'ADX', { period: 14, smoothing: 14 }), 'GT', num(25)),
-    cond(field(TARGET('15m')), 'CROSSED_ABOVE', ind(TARGET('15m'), 'SMA', { period: 20 })),
+    cond(ind(CE('15m'), 'RSI', { period: 14 }), 'CROSSED_ABOVE', num(60)),
+    cond(ind(CE('15m'), 'ADX', { period: 14, smoothing: 14 }), 'GT', num(25)),
+    cond(field(CE('15m')), 'CROSSED_ABOVE', ind(CE('15m'), 'SMA', { period: 20 })),
   ),
   alert: { channels: { telegram: true, email: true }, trigger: 'ON_TRANSITION', cooldownMinutes: 30, oncePerCandle: true },
 };
 
-const HA5 = TARGET('5m', { type: 'HEIKIN_ASHI' });
+const HA5 = PE('5m', { type: 'HEIKIN_ASHI' });
 const S2: McxStrategyDefinition = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   market: 'MCX',
   name: 'SILVER OTM PE hammer on volume',
   universe: {
     underlying: 'SILVER',
-    reference: { expiry: { mode: 'MATCH_TARGET' } },
-    target: { kind: 'OPTION', expiry: { mode: 'SPECIFIC', date: '2026-11-27' }, optionTypes: ['PE'], strikes: { mode: 'OTM', count: 2 } },
+    // OTM puts = the two strikes below ATM.
+    target: { kind: 'OPTION', expiry: { mode: 'SPECIFIC', date: '2026-11-27' }, strikes: { mode: 'ATM_OFFSETS', offsets: [-1, -2] } },
   },
   evaluation: { mode: 'COMPLETED_CANDLE', triggerTimeframe: '5m' },
   expression: and(cond(field(HA5, 'volume'), 'GT', ind(HA5, 'SMA', { period: 20 }, { source: 'volume' })), { type: 'PATTERN', id: 'p1', series: HA5, pattern: 'HAMMER' }),
@@ -155,17 +156,19 @@ describe('MCX V2 scanner — Definition of Done', () => {
     expect(env.provider.calls.ltp).toBe(1); // one batched LTP call for both reference futures
 
     const alerts = env.store.data.alerts;
-    expect(alerts.map((a) => [a.strategyId, a.instrument.symbol]).sort()).toEqual(
+    expect(alerts.map((a) => [a.strategyId, a.unit.key]).sort()).toEqual(
       [
-        [s1.id, goldCe.get(75_100)!.symbol],
-        [s2.id, silverPe.get(89_500)!.symbol],
+        [s1.id, 'GOLD:2026-10-26:75100'],
+        [s2.id, 'SILVER:2026-11-27:89500'],
       ].sort(),
     );
     const a1 = alerts.find((a) => a.strategyId === s1.id)!;
     expect(a1).toMatchObject({ status: 'SENT', version: 1, triggerTimeframe: '15m', candleTime: ist(D, '10:45') / 1000 });
     expect(a1.deliveries.map((d) => d.channel).sort()).toEqual(['email', 'telegram']);
     expect(a1.evaluation.trace.children!.map((c) => c.result)).toEqual(['TRUE', 'TRUE', 'TRUE']);
-    expect(a1.evaluation.reference?.id).toBe(goldDec.id);
+    expect(a1.unit.fut?.id).toBe(goldDec.id); // the CE's strike unit carries its FUT leg
+    expect(a1.unit.ce?.id).toBe(goldCe.get(75_100)!.id);
+    expect(a1.evaluation.prices.CE).toBeDefined();
     const a2 = alerts.find((a) => a.strategyId === s2.id)!;
     expect(a2.deliveries.map((d) => d.channel)).toEqual(['telegram']);
     expect(a2.candleTime).toBe(ist(D, '10:55') / 1000);
@@ -174,10 +177,10 @@ describe('MCX V2 scanner — Definition of Done', () => {
     expect(env.channels.sent[0]!.message.text).toMatch(/MCX · /);
 
     // Unit states: the alerted strike is TRIGGERED with a 30 min cooldown; the others stay IDLE with an explanation.
-    const u = await env.store.units.get(s1.id, goldCe.get(75_100)!.id);
+    const u = await env.store.units.get(s1.id, 'GOLD:2026-10-26:75100');
     expect(u?.state).toBe('TRIGGERED');
     expect(Date.parse(u!.cooldownUntil!) - NOW).toBe(30 * 60_000);
-    const idle = await env.store.units.get(s1.id, goldCe.get(75_000)!.id);
+    const idle = await env.store.units.get(s1.id, 'GOLD:2026-10-26:75000');
     expect(idle).toMatchObject({ state: 'IDLE', lastResult: 'FALSE' });
     expect(idle?.lastEvaluation?.trace.children![2]!.condition!.result).toBe('FALSE'); // close stayed below SMA(20)
   });
@@ -220,7 +223,7 @@ describe('MCX V2 scanner — Definition of Done', () => {
     expect(run.status).toBe('PARTIAL');
     expect(run.errors.map((e) => e.source)).toEqual(['candles']);
     expect(env.store.data.alerts).toHaveLength(2);
-    const broken = await env.store.units.get(s1.id, goldCe.get(75_000)!.id);
+    const broken = await env.store.units.get(s1.id, 'GOLD:2026-10-26:75000');
     expect(broken?.lastResult).toBe('UNKNOWN');
     expect(broken?.lastEvaluation?.trace.children![0]!.condition!.reason).toMatch(/data fetch failed/);
   });
@@ -265,14 +268,50 @@ describe('MCX V2 scanner — Definition of Done', () => {
     await env.instrumentService.sync();
     const ex = await dry.explain(s1);
     expect(ex.units).toHaveLength(5);
-    expect(ex.units.find((u) => u.target.strike === 75_100)).toMatchObject({ outcome: 'ALERTED', prevResult: 'FALSE' });
+    expect(ex.units.find((u) => u.unit.strike === 75_100)).toMatchObject({ outcome: 'ALERTED', prevResult: 'FALSE' });
     expect(ex.units.filter((u) => u.outcome).length).toBe(1);
     expect(env.store.data.alerts).toHaveLength(0);
     expect(env.store.data.units.size).toBe(0);
 
-    const rp = await dry.replay(s1, { from: '2026-10-05', to: D, targetIds: [goldCe.get(75_100)!.id] });
+    const rp = await dry.replay(s1, { from: '2026-10-05', to: D, unitKeys: ['GOLD:2026-10-26:75100'] });
     const signals = rp.units[0]!.rows.filter((r) => r.outcome);
     expect(signals.map((r) => r.candleTime)).toEqual([ist(D, '10:45') / 1000]);
     expect(signals[0]!.trace).toBeDefined();
+  });
+
+  it('combines FUT, CE and PE conditions on the same strike', async () => {
+    // GOLD ATM+1 (75100): the call has the momentum series; give its put a steady fall and the future a steady rise.
+    const pe = instruments.find((i) => i.underlying === 'GOLD' && i.expiry === '2026-10-26' && i.strike === 75_100 && i.optionType === 'PE')!;
+    env.provider.set(pe, '15m', candlesAt(t15, Array.from({ length: 65 }, (_, i) => 400 - i * 2), { spread: 0.5 }));
+    env.provider.set(goldDec, '15m', candlesAt(t15, Array.from({ length: 65 }, (_, i) => 75_000 + i * 5), { spread: 2 }));
+    const legs = (peRsi: 'LT' | 'GT'): McxStrategyDefinition => ({
+      ...S1,
+      name: `FUT + CE + PE (${peRsi})`,
+      universe: { underlying: 'GOLD', target: { kind: 'OPTION', expiry: { mode: 'CURRENT' }, strikes: { mode: 'ATM_OFFSETS', offsets: [1] } } },
+      expression: and(
+        cond(field(FUT('15m')), 'GT', ind(FUT('15m'), 'SMA', { period: 20 })),
+        cond(ind(CE('15m'), 'RSI', { period: 14 }), 'CROSSED_ABOVE', num(60)),
+        cond(ind(PE('15m'), 'RSI', { period: 14 }), peRsi, num(peRsi === 'LT' ? 40 : 60)),
+      ),
+    });
+    const ok = await enable(env.store, legs('LT'));
+    const blocked = await enable(env.store, legs('GT'));
+    const { run } = await env.scanner.run();
+    expect(run.errors).toEqual([]);
+    expect(run.seriesFetched).toBe(3); // FUT, CE and PE of 75100 — fetched once, shared by both strategies
+
+    expect(env.store.data.alerts.map((a) => a.strategyId)).toEqual([ok.id]);
+    const a = env.store.data.alerts[0]!;
+    expect(a.unit).toMatchObject({ key: 'GOLD:2026-10-26:75100', strike: 75_100 });
+    expect(Object.keys(a.evaluation.prices).sort()).toEqual(['CE', 'FUT', 'PE']);
+    expect(a.evaluation.trace.children!.map((c) => [c.condition!.left!.leg, c.result])).toEqual([
+      ['FUT', 'TRUE'],
+      ['CE', 'TRUE'],
+      ['PE', 'TRUE'],
+    ]);
+    expect(env.channels.sent[0]!.message.text).toMatch(/GOLD 75100 · exp 2026-10-26[\s\S]*FUT .* · CE .* · PE /);
+
+    const other = await env.store.units.get(blocked.id, 'GOLD:2026-10-26:75100');
+    expect(other?.lastEvaluation?.trace.children!.map((c) => c.result)).toEqual(['TRUE', 'TRUE', 'FALSE']);
   });
 });

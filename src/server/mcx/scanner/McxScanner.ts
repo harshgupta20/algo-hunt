@@ -5,8 +5,8 @@
  *   2 strategies  enabled strategies + settings
  *   3 data        provider session + instrument master freshness
  *   4 clock       trigger candle per strategy (completed or forming)
- *   5 prices      one batched LTP call for every reference future that sets ATM
- *   6 universe    resolve targets (ATM ± N, ITM/OTM re-resolved every cycle), cap
+ *   5 prices      one batched LTP call for every future that sets ATM
+ *   6 universe    resolve units — futures, or strikes with FUT / CE / PE legs (ATM re-resolved every cycle), cap
  *   7 due units   units that haven't evaluated this trigger candle yet (new ATM strikes,
  *                 budget-deferred units); nothing due → no candle requests at all
  *   8 plan        distinct (instrument, interval) fetches, within the request budget
@@ -18,7 +18,7 @@
  * never stops the others.
  */
 import { randomUUID } from 'node:crypto';
-import type { McxInstrument, McxScanError, McxTimeframe, McxScanRun, McxSettings, McxStrategy, ResolvedUnit, TriState, UnitEvaluation, UnitState } from '@/shared/mcx';
+import type { McxInstrument, McxScanError, McxTimeframe, McxScanRun, McxSettings, McxStrategy, McxUnit, TriState, UnitEvaluation, UnitState } from '@/shared/mcx';
 import { MCX2_TIMEFRAME } from '@/shared/mcx';
 import { istDate } from '../../utils/marketTime';
 import { childLogger } from '../../utils/logger';
@@ -29,7 +29,7 @@ import { BudgetExceededError, CandleService } from '../data/CandleService';
 import type { McxDataProvider } from '../data/McxDataProvider';
 import type { McxInstrumentService } from '../data/McxInstrumentService';
 import { evaluateUnit, pendingReason, type UnitEvalInput } from '../engine/evaluator';
-import { fixedIdsOf, leafCount, resolveRef, seriesOf } from '../engine/series';
+import { leafCount, legInstrument, seriesOf } from '../engine/series';
 import type { McxStore } from '../persistence/McxStore';
 import { referenceFutures, resolveUniverse } from '../universe/UniverseResolver';
 
@@ -74,10 +74,9 @@ interface Clock {
 interface StrategyPlan {
   strategy: McxStrategy;
   clock: Clock;
-  units: ResolvedUnit[];
-  due: ResolvedUnit[];
+  units: McxUnit[];
+  due: McxUnit[];
   states: Map<string, UnitState>;
-  fixed: Map<string, McxInstrument>;
 }
 
 function emptyRun(now: number, budget: number): McxScanRun {
@@ -179,7 +178,6 @@ export class McxScanner {
       error({ source: 'instruments', message: 'MCX V2 instrument master is empty — sync it from the Instruments tab' });
       return finish('FAILED');
     }
-    const byId = new Map(all.map((i) => [i.id, i]));
     const today = istDate(now);
 
     // 4 · clock
@@ -197,7 +195,7 @@ export class McxScanner {
           const prev = calendar.lastCompletedOpen(open, tf);
           clock = { triggerOpenMs: open, at: calendar.candleClose(open, tf), prevOpenMs: prev, prevAt: prev === null ? null : calendar.candleClose(prev, tf) };
         }
-        const states = new Map((await store.units.list(strategy.id)).map((s) => [s.targetInstrumentId, s]));
+        const states = new Map((await store.units.list(strategy.id)).map((s) => [s.unitKey, s]));
         clocked.push({ strategy, clock, states });
       } catch (err) {
         error({ source: 'clock', strategyId: strategy.id, message: msg(err) });
@@ -225,19 +223,13 @@ export class McxScanner {
         for (const e of res.errors) error({ source: 'universe', strategyId: s.id, message: e });
         let units = res.units;
         if (units.length > settings.universeCap) {
-          error({ source: 'universe', strategyId: s.id, message: `${units.length} targets exceed the cap of ${settings.universeCap}; only the first ${settings.universeCap} are scanned` });
+          error({ source: 'universe', strategyId: s.id, message: `${units.length} units exceed the cap of ${settings.universeCap}; only the first ${settings.universeCap} are scanned` });
           units = units.slice(0, settings.universeCap);
         }
         const candle = Math.floor(c.clock.triggerOpenMs / 1000);
-        const due = s.definition.evaluation.mode === 'LIVE_CANDLE' ? units : units.filter((u) => c.states.get(u.target.id)?.lastEvaluatedCandle !== candle);
-        const fixed = new Map<string, McxInstrument>();
-        for (const id of fixedIdsOf(s.definition)) {
-          const inst = byId.get(id);
-          if (inst) fixed.set(id, inst);
-          else error({ source: 'universe', strategyId: s.id, instrumentId: id, message: `Fixed instrument ${id} is no longer listed` });
-        }
+        const due = s.definition.evaluation.mode === 'LIVE_CANDLE' ? units : units.filter((u) => c.states.get(u.key)?.lastEvaluatedCandle !== candle);
         run.units += units.length;
-        plans.push({ strategy: s, clock: c.clock, units, due, states: c.states, fixed });
+        plans.push({ strategy: s, clock: c.clock, units, due, states: c.states });
       } catch (err) {
         error({ source: 'universe', strategyId: s.id, message: msg(err) });
       }
@@ -255,11 +247,11 @@ export class McxScanner {
     let deferred = 0;
     for (const p of plans) {
       const specs = seriesOf(p.strategy.definition);
-      const kept: ResolvedUnit[] = [];
+      const kept: McxUnit[] = [];
       for (const unit of p.due) {
         const need = new Map<string, { instrument: McxInstrument; tf: McxTimeframe }>();
         for (const s of specs) {
-          const inst = resolveRef(s.instrument, unit, p.fixed);
+          const inst = legInstrument(s.leg, unit);
           if (!inst) continue;
           const key = CandleService.nativeKey(inst, MCX2_TIMEFRAME[s.timeframe].native);
           if (!planned.has(key)) need.set(key, { instrument: inst, tf: s.timeframe });
@@ -309,7 +301,7 @@ export class McxScanner {
         try {
           await this.processUnit(p, unit, candles, memo, settings, now, run);
         } catch (err) {
-          error({ source: 'evaluate', strategyId: p.strategy.id, instrumentId: unit.target.id, message: msg(err) });
+          error({ source: 'evaluate', strategyId: p.strategy.id, instrumentId: unit.key, message: msg(err) });
         }
       }
     }
@@ -318,7 +310,7 @@ export class McxScanner {
 
   private async processUnit(
     p: StrategyPlan,
-    unit: ResolvedUnit,
+    unit: McxUnit,
     candles: CandleService,
     memo: Map<string, unknown>,
     settings: McxSettings,
@@ -333,7 +325,6 @@ export class McxScanner {
       version: s.version,
       definition: d,
       unit,
-      fixed: p.fixed,
       lookup: candles.lookup,
       triggerOpenMs: p.clock.triggerOpenMs,
       at: p.clock.at,
@@ -348,7 +339,7 @@ export class McxScanner {
     run.unitsEvaluated++;
     run.conditions += leafCount(d);
 
-    const state = p.states.get(unit.target.id) ?? initialState(s.id, unit.target.id);
+    const state = p.states.get(unit.key) ?? initialState(s.id, unit.key);
     const prevResult = this.previousResult(p, state, input, evaluation);
     const decision = decide({
       policy: d.alert,
@@ -366,7 +357,7 @@ export class McxScanner {
       const identity = signalIdentity({
         strategyId: s.id,
         version: s.version,
-        targetInstrumentId: unit.target.id,
+        unitKey: unit.key,
         triggerTimeframe: d.evaluation.triggerTimeframe,
         triggerCandle: evaluation.triggerCandle,
         mode: d.evaluation.mode,
@@ -377,7 +368,7 @@ export class McxScanner {
         identity,
         strategyId: s.id,
         version: s.version,
-        targetInstrumentId: unit.target.id,
+        unitKey: unit.key,
         triggerTimeframe: d.evaluation.triggerTimeframe,
         candleTime: evaluation.triggerCandle,
         signalType: 'ENTRY',
@@ -393,10 +384,9 @@ export class McxScanner {
             strategyName: s.name,
             version: s.version,
             status: 'SENT' as const,
-            instrument: unit.target,
+            unit,
             triggerTimeframe: d.evaluation.triggerTimeframe,
             candleTime: evaluation.triggerCandle,
-            price: evaluation.price ?? null,
             evaluation,
           };
           const alert = await store.alerts.insert(draft);
@@ -406,7 +396,7 @@ export class McxScanner {
             for (const del of deliveries) await store.alerts.addDelivery(alert.id, del);
             if (status !== 'SENT') await store.alerts.setStatus(alert.id, status);
             for (const del of deliveries) {
-              if (del.status === 'failed') run.errors.push({ source: `delivery:${del.channel}`, strategyId: s.id, instrumentId: unit.target.id, message: del.error ?? 'failed' });
+              if (del.status === 'failed') run.errors.push({ source: `delivery:${del.channel}`, strategyId: s.id, instrumentId: unit.key, message: del.error ?? 'failed' });
             }
           }
         }
@@ -414,13 +404,13 @@ export class McxScanner {
     }
     const next: UnitState = { ...decision.next, lastEvaluatedCandle: evaluation.triggerCandle, lastEvaluation: evaluation };
     await store.units.upsert(next);
-    p.states.set(unit.target.id, next);
+    p.states.set(unit.key, next);
   }
 
   /**
    * The unit's result on the previous trigger candle: the stored one when this
    * unit evaluated exactly that candle, otherwise re-evaluated now (first run,
-   * a gap, a new strike entering ATM ± N) so ON_TRANSITION never fires just
+   * a gap, a strike newly inside ATM ± N) so ON_TRANSITION never fires just
    * because there was no history.
    */
   private previousResult(p: StrategyPlan, state: UnitState, input: UnitEvalInput, evaluation: UnitEvaluation): TriState | null {

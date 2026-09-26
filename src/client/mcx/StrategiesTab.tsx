@@ -9,7 +9,7 @@ import { evaluationText, policyText, universeText } from '@/shared/mcx';
 import { Tooltip } from '../components/Tooltip';
 import { Badge, Card, EmptyState, IconButton, Spinner } from '../components/ui';
 import { McxApiError, mcxApi, type ExplainResult } from './api';
-import { InstrumentTag, TriBadge, UnitStateBadge } from './components';
+import { TriBadge, UnitStateBadge, UnitTag } from './components';
 import { istStampIso } from './format';
 import { H } from './help';
 import { ExplainView } from './editor/DebugViews';
@@ -26,7 +26,7 @@ function Units({ strategy }: { strategy: McxStrategy }) {
       <table className="w-full text-xs">
         <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500">
           <tr>
-            <th className="py-1 pr-3">Contract</th>
+            <th className="py-1 pr-3">Strike / future</th>
             <th className="py-1 pr-3">Result</th>
             <th className="py-1 pr-3">State</th>
             <th className="py-1 pr-3">Evaluated</th>
@@ -35,8 +35,8 @@ function Units({ strategy }: { strategy: McxStrategy }) {
         </thead>
         <tbody className="divide-y divide-ink-700/40">
           {list.map((u) => (
-            <tr key={u.targetInstrumentId}>
-              <td className="py-1 pr-3">{u.lastEvaluation ? <InstrumentTag i={u.lastEvaluation.target} /> : u.targetInstrumentId}</td>
+            <tr key={u.unitKey}>
+              <td className="py-1 pr-3">{u.lastEvaluation ? <UnitTag unit={u.lastEvaluation.unit} /> : u.unitKey}</td>
               <td className="py-1 pr-3">
                 <TriBadge value={u.lastResult} />
               </td>
@@ -128,7 +128,7 @@ function StrategyCard({ s, onEdit }: { s: McxStrategy; onEdit: () => void }) {
       <div className="flex gap-3 mt-3 text-xs">
         <Tooltip content={H.strategy.units}>
           <button type="button" className={clsx('underline-offset-2 hover:underline', panel === 'units' ? 'text-accent-soft' : 'text-slate-400')} onClick={() => setPanel(panel === 'units' ? null : 'units')}>
-            Contracts &amp; state
+            Strikes &amp; state
           </button>
         </Tooltip>
         {explain && (

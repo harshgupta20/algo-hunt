@@ -5,7 +5,7 @@
  * recorded; one channel failing never blocks the other.
  */
 import type { ConditionTrace, ExprTrace, McxAlert, McxAlertStatus, McxDelivery, McxSettings } from '@/shared/mcx';
-import { MCX2_TIMEFRAME } from '@/shared/mcx';
+import { MCX2_TIMEFRAME, unitText } from '@/shared/mcx';
 import { getConfig } from '../../config/index';
 import { childLogger } from '../../utils/logger';
 
@@ -54,15 +54,18 @@ function conditionLine(c: ConditionTrace): string {
 
 export function formatAlert(alert: Omit<McxAlert, 'id' | 'createdAt' | 'deliveries' | 'acknowledgedAt'>): McxMessage {
   const e = alert.evaluation;
-  const i = alert.instrument;
+  const u = alert.unit;
   const tf = MCX2_TIMEFRAME[alert.triggerTimeframe].label;
   const candle = `${istDay(alert.candleTime)} ${istClock(alert.candleTime)} IST`;
-  const ref = e.reference && e.reference.id !== i.id ? `Reference ${e.reference.symbol}` : undefined;
+  const prices = (['FUT', 'CE', 'PE'] as const)
+    .filter((l) => e.prices?.[l] !== undefined)
+    .map((l) => `${l} ${fmt(e.prices[l])}`)
+    .join(' · ');
   const lines = [
     `🔔 MCX · ${alert.strategyName} (v${alert.version})`,
-    `${i.symbol}${i.expiry ? ` · exp ${i.expiry}` : ''}`,
-    `${tf} candle ${candle}${alert.price != null ? ` · price ${fmt(alert.price)}` : ''}`,
-    ref,
+    unitText(u),
+    `${tf} candle ${candle}`,
+    prices || undefined,
     '',
     ...leaves(e.trace).map(conditionLine),
   ].filter((x): x is string => x !== undefined);
@@ -71,7 +74,7 @@ export function formatAlert(alert: Omit<McxAlert, 'id' | 'createdAt' | 'deliveri
   const html = `<div style="font-family:system-ui,sans-serif;font-size:14px;line-height:1.5">${lines
     .map((l, idx) => (idx === 0 ? `<h3 style="margin:0 0 8px">${esc(l)}</h3>` : l ? `<div>${esc(l)}</div>` : '<br/>'))
     .join('')}</div>`;
-  return { subject: `MCX alert · ${alert.strategyName} · ${i.symbol}`, text, html };
+  return { subject: `MCX alert · ${alert.strategyName} · ${unitText(u)}`, text, html };
 }
 
 export class TelegramMcxChannel implements McxChannel {

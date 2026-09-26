@@ -5,7 +5,8 @@ import { buildSeries, type RawCandle } from '../../src/server/mcx/engine/candles
 import { and3, compare, evaluateUnit, not3, or3, pendingReason, type SeriesLookup } from '../../src/server/mcx/engine/evaluator';
 import { indicatorValues } from '../../src/server/mcx/engine/indicators';
 import { seriesKey } from '../../src/server/mcx/engine/series';
-import { TARGET, and, candlesAt, cond, field, future, ind, ist, not, num, or, sessionTimes } from '../helpers/mcxFakes';
+import { futureUnit } from '../../src/server/mcx/universe/UniverseResolver';
+import { FUT as TARGET, and, candlesAt, cond, field, future, ind, ist, not, num, or, sessionTimes } from '../helpers/mcxFakes';
 
 const cal = new McxMarketCalendar();
 const D = '2026-10-07';
@@ -21,10 +22,10 @@ function lookupFrom(data: Record<string, RawCandle[]>, now: number): SeriesLooku
 
 function def(expression: ExprNode, triggerTimeframe: SeriesSpec['timeframe'] = '15m', mode: 'COMPLETED_CANDLE' | 'LIVE_CANDLE' = 'COMPLETED_CANDLE'): McxStrategyDefinition {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     market: 'MCX',
     name: 't',
-    universe: { underlying: 'CRUDEOIL', reference: { expiry: { mode: 'MATCH_TARGET' } }, target: { kind: 'FUTURE', expiry: { mode: 'CURRENT' } } },
+    universe: { underlying: 'CRUDEOIL', target: { kind: 'FUTURE', expiry: { mode: 'CURRENT' } } },
     evaluation: { mode, triggerTimeframe },
     expression,
     alert: { channels: { telegram: true, email: false }, trigger: 'ON_TRANSITION', cooldownMinutes: null, oncePerCandle: true },
@@ -40,8 +41,7 @@ function run(expression: ExprNode, data: Record<string, RawCandle[]>, openHHMM: 
     strategyId: 's',
     version: 1,
     definition: def(expression, tf, opts.mode),
-    unit: { target: fut, reference: fut },
-    fixed: new Map(),
+    unit: futureUnit(fut),
     lookup: lookupFrom(data, now),
     triggerOpenMs: open,
     at,
@@ -88,7 +88,7 @@ describe('unit evaluation', () => {
     expect(e.result).toBe('TRUE'); // 103 → 106
     const c = e.trace.condition!;
     expect(c.left).toMatchObject({ value: 106, prev: 103, candleTime: t15[6]! / 1000, complete: true });
-    expect(e.price).toBe(106);
+    expect(e.prices).toEqual({ FUT: 106 });
   });
 
   it('never reads the forming candle in completed mode', () => {
@@ -146,8 +146,7 @@ describe('unit evaluation', () => {
       strategyId: 's',
       version: 1,
       definition: def(cond(field(TARGET('15m')), 'GT', num(1))),
-      unit: { target: fut, reference: fut },
-      fixed: new Map(),
+      unit: futureUnit(fut),
       lookup: lookupFrom(partial, ist(D, '10:30') + 20_000),
       triggerOpenMs: open,
       at: cal.candleClose(open, '15m'),

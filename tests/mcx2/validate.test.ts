@@ -1,16 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { McxStrategyDefinition } from '../../src/shared/mcx';
 import { hasErrors, mcxStrategyDefinitionSchema, strategySummary, validateStrategy } from '../../src/shared/mcx';
-import { TARGET, UNDERLYING, and, cond, field, ind, num } from '../helpers/mcxFakes';
+import { CE as TARGET, FUT as UNDERLYING, and, cond, field, ind, num } from '../helpers/mcxFakes';
 
 const base: McxStrategyDefinition = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   market: 'MCX',
   name: 'Gold momentum',
   universe: {
     underlying: 'GOLD',
-    reference: { expiry: { mode: 'MATCH_TARGET' } },
-    target: { kind: 'OPTION', expiry: { mode: 'CURRENT' }, optionTypes: ['CE'], strikes: { mode: 'ATM_OFFSETS', offsets: [-2, -1, 0, 1, 2] } },
+    target: { kind: 'OPTION', expiry: { mode: 'CURRENT' }, strikes: { mode: 'ATM_OFFSETS', offsets: [-2, -1, 0, 1, 2] } },
   },
   evaluation: { mode: 'COMPLETED_CANDLE', triggerTimeframe: '15m' },
   expression: and(cond(ind(TARGET('15m'), 'RSI', { period: 14 }), 'CROSSED_ABOVE', num(60)), cond(ind(TARGET('15m'), 'ADX', { period: 14, smoothing: 14 }), 'GT', num(25))),
@@ -43,6 +42,12 @@ describe('strategy validation', () => {
     expect(errors(base, { forEnable: true, channelsConfigured: { telegram: true, email: false } }).map((e) => e.path).join()).toMatch(/alert/);
   });
 
+  it('rejects CE / PE conditions on a futures strategy and options on a product without them', () => {
+    const fut = { ...base, universe: { underlying: 'GOLD', target: { kind: 'FUTURE' as const, expiry: { mode: 'CURRENT' as const } } } };
+    expect(errors(fut).map((e) => e.message).join()).toMatch(/CE \/ PE conditions need Options/);
+    expect(errors(base, { optionProducts: ['SILVER'] }).map((e) => e.message).join()).toMatch(/no listed options/);
+  });
+
   it('warns when the trigger timeframe is not used by any condition', () => {
     const d = { ...base, expression: cond(field(UNDERLYING('1h')), 'GT', num(1)) };
     expect(validateStrategy(d, ctx).some((i) => i.severity === 'warning' && i.path === 'evaluation.triggerTimeframe')).toBe(true);
@@ -50,7 +55,8 @@ describe('strategy validation', () => {
 
   it('summarises the strategy as IF / THEN text', () => {
     const s = strategySummary(base);
-    expect(s).toMatch(/GOLD — Current expiry — ATM ± 2 CE/);
+    expect(s).toMatch(/GOLD — Options — Current expiry — ATM ± 2 \(FUT · CE · PE per strike\)/);
+    expect(s).toMatch(/\[GOLD CE\] \[15 min\] \[Normal\] RSI\(14\) crossed above 60/);
     expect(s).toMatch(/RSI\(14\) crossed above 60/);
     expect(s).toMatch(/cooldown 30 min · once per candle/);
   });

@@ -4,7 +4,7 @@
  *
  * Layers (never mixed): MARKET → UNIVERSE → SELECTION → DATA SERIES → CANDLES →
  * INDICATORS → CONDITION → EXPRESSION → STRATEGY → SIGNAL → ALERT POLICY → DELIVERY.
- * Every operand carries its full data context (instrument role, timeframe,
+ * Every operand carries its full data context (leg FUT / CE / PE, timeframe,
  * candle type) in the stored JSON — there are no hidden defaults.
  */
 
@@ -36,39 +36,44 @@ export interface McxInstrument {
 
 export type ExpiryMode = 'CURRENT' | 'NEXT' | 'FAR' | 'ALL' | 'SPECIFIC';
 export type ExpirySelector = { mode: 'CURRENT' | 'NEXT' | 'FAR' | 'ALL' } | { mode: 'SPECIFIC'; date: string };
-/** Reference-future selector: an expiry selector or MATCH_TARGET (the future the target devolves into). */
-export type ReferenceSelector = ExpirySelector | { mode: 'MATCH_TARGET' };
 
 export type StrikeSelector =
-  /** Offsets from ATM along the listed strikes: [0] = ATM, [-2,-1,0,1,2] = ATM ± 2. */
+  /** Offsets from ATM along the listed strikes: [0] = ATM, [-2,-1,0,1,2] = ATM ± 2, [-1,-2] = two below ATM. */
   | { mode: 'ATM_OFFSETS'; offsets: number[] }
-  /** N strikes in the money (CE: below ATM, PE: above ATM), ATM excluded. */
-  | { mode: 'ITM'; count: number }
-  /** N strikes out of the money (CE: above ATM, PE: below ATM), ATM excluded. */
-  | { mode: 'OTM'; count: number }
   | { mode: 'SPECIFIC'; strikes: number[] }
   | { mode: 'RANGE'; from: number; to: number }
   | { mode: 'ALL' };
 export type StrikeMode = StrikeSelector['mode'];
 
-export type TargetSpec =
-  | { kind: 'FUTURE'; expiry: ExpirySelector }
-  | { kind: 'OPTION'; expiry: ExpirySelector; optionTypes: OptionType[]; strikes: StrikeSelector };
+/**
+ * FUTURE: one unit per future contract (only the FUT leg exists).
+ * OPTION: one unit per strike, with three legs — FUT (the future the options expire into), CE and PE at that strike.
+ */
+export type TargetSpec = { kind: 'FUTURE'; expiry: ExpirySelector } | { kind: 'OPTION'; expiry: ExpirySelector; strikes: StrikeSelector };
 
 export interface Universe {
   /** Product symbol, e.g. GOLD. */
   underlying: string;
-  /** Which future is the UNDERLYING role (ATM is derived from its LTP). Default MATCH_TARGET. */
-  reference: { expiry: ReferenceSelector };
-  /** The instruments the strategy produces signals for (one evaluation unit each). */
   target: TargetSpec;
 }
 
-/** How an operand addresses an instrument — by role, never by a stored dynamic strike. */
-export type InstrumentRef =
-  | { role: 'UNDERLYING' }
-  | { role: 'TARGET' }
-  | { role: 'FIXED'; instrumentId: string };
+/** The three legs of a unit. Conditions address contracts by leg, never by a stored dynamic strike. */
+export type Leg = 'FUT' | 'CE' | 'PE';
+
+/** One evaluation unit: a future, or a strike with its FUT / CE / PE legs. */
+export interface McxUnit {
+  /** Stable key: `MCX:<token>` for a future unit, `<PRODUCT>:<option expiry>:<strike>` for a strike unit. */
+  key: string;
+  underlying: string;
+  /** Option expiry for strike units, the future's expiry for future units. */
+  expiry: string | null;
+  strike: number | null;
+  fut: McxInstrument | null;
+  ce: McxInstrument | null;
+  pe: McxInstrument | null;
+  /** ATM strike used when the unit was resolved (ATM-relative selections). */
+  atmStrike?: number;
+}
 
 // ---- Data series ------------------------------------------------------------------
 
@@ -82,7 +87,7 @@ export type CandleSpec =
 export type CandleType = CandleSpec['type'];
 
 export interface SeriesSpec {
-  instrument: InstrumentRef;
+  leg: Leg;
   timeframe: McxTimeframe;
   candle: CandleSpec;
 }
@@ -188,7 +193,7 @@ export interface AlertPolicy {
 }
 
 export interface McxStrategyDefinition {
-  schemaVersion: 1;
+  schemaVersion: 2;
   market: 'MCX';
   name: string;
   description?: string;
@@ -221,8 +226,10 @@ export interface McxStrategyVersion {
 export type TriState = 'TRUE' | 'FALSE' | 'UNKNOWN';
 
 export interface OperandTrace {
-  /** e.g. "GOLD 75000 CE · 15m · Normal · RSI(14)". */
+  /** e.g. "GOLD26OCT75000CE · 15 min · Normal · RSI(14)". */
   label: string;
+  /** Leg the value came from (absent for constants). */
+  leg?: Leg;
   /** Value on the current candle of the operand's series (undefined = unavailable). */
   value?: number;
   /** Value on the previous candle (used by crosses). */
@@ -259,8 +266,7 @@ export interface ExprTrace {
 export interface UnitEvaluation {
   strategyId: string;
   version: number;
-  target: McxInstrument;
-  reference?: McxInstrument;
+  unit: McxUnit;
   mode: EvaluationMode;
   triggerTimeframe: McxTimeframe;
   /** Open time (epoch s) of the trigger candle evaluated. */
@@ -269,8 +275,8 @@ export interface UnitEvaluation {
   evaluatedAt: number;
   result: TriState;
   trace: ExprTrace;
-  /** Close price of the target's trigger series at T (for alert records). */
-  price?: number;
+  /** Close of each leg's normal candle on the trigger timeframe at T (legs whose data was fetched). */
+  prices: Partial<Record<Leg, number>>;
 }
 
 // ---- Units, signals, alerts ------------------------------------------------------------
@@ -279,7 +285,7 @@ export type AlertStateName = 'IDLE' | 'TRIGGERED' | 'COOLDOWN' | 'ACKNOWLEDGED' 
 
 export interface UnitState {
   strategyId: string;
-  targetInstrumentId: string;
+  unitKey: string;
   state: AlertStateName;
   lastEvaluatedCandle: number | null;
   lastResult: TriState | null;
@@ -304,7 +310,7 @@ export interface McxSignal {
   identity: string;
   strategyId: string;
   version: number;
-  targetInstrumentId: string;
+  unitKey: string;
   triggerTimeframe: McxTimeframe;
   candleTime: number;
   signalType: 'ENTRY';
@@ -329,10 +335,9 @@ export interface McxAlert {
   strategyName: string;
   version: number;
   status: McxAlertStatus;
-  instrument: McxInstrument;
+  unit: McxUnit;
   triggerTimeframe: McxTimeframe;
   candleTime: number;
-  price: number | null;
   evaluation: UnitEvaluation;
   deliveries: McxDelivery[];
   acknowledgedAt: string | null;
@@ -343,6 +348,7 @@ export interface McxAlert {
 
 export interface McxScanError {
   strategyId?: string;
+  /** Unit key or instrument id. */
   instrumentId?: string;
   conditionId?: string;
   timeframe?: string;
@@ -374,7 +380,7 @@ export interface McxSettings {
   telegramChatId?: string;
   emailRecipients: string[];
   emailFrom: string;
-  /** Max target instruments per strategy. */
+  /** Max units (futures or strikes) per strategy. */
   universeCap: number;
   /** Max historical-candle requests per scanner cycle. */
   requestBudget: number;
@@ -394,16 +400,11 @@ export type CalendarEntry =
 
 // ---- Universe resolution (preview + scanner) ------------------------------------------------
 
-export interface ResolvedUnit {
-  target: McxInstrument;
-  reference: McxInstrument | null;
-  /** ATM strike used for this target's expiry (options with ATM-relative selection). */
-  atmStrike?: number;
-}
+export type ResolvedUnit = McxUnit;
 
 export interface UniverseResolution {
-  units: ResolvedUnit[];
-  /** Reference futures used, with the LTP that set ATM. */
+  units: McxUnit[];
+  /** Futures whose live price set ATM (ATM-relative strike selections). */
   references: Array<{ instrument: McxInstrument; ltp?: number }>;
   expiries: string[];
   errors: string[];

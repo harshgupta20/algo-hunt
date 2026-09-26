@@ -189,9 +189,9 @@ accessed only through [PgMcxStore](../src/server/mcx/persistence/PgMcxStore.ts).
 | `mcx_instruments` | MCX futures + options of the 13 supported products, synced from Kite (`token` PK) |
 | `mcx_calendar` | Holidays and special sessions (`date` PK) |
 | `mcx_strategies` / `mcx_strategy_versions` | Strategy header (`enabled`, `enabled_at`, `current_version`) and immutable JSON definitions |
-| `mcx_unit_state` | Alert state machine per (strategy, target contract) + latest evaluation |
+| `mcx_unit_state` | Alert state machine per (strategy, unit) + latest evaluation; `target_instrument_id` holds the unit key (`MCX:<token>` or `<PRODUCT>:<expiry>:<strike>`) |
 | `mcx_signals` | Every signal with its outcome; `identity` UNIQUE is the dedupe |
-| `mcx_alerts` / `mcx_deliveries` | Alerts (with the evaluation behind them) and per-channel delivery results |
+| `mcx_alerts` / `mcx_deliveries` | Alerts (`instrument` = the unit with its FUT / CE / PE legs; the evaluation behind them) and per-channel delivery results |
 | `mcx_scan_runs` / `mcx_scan_errors` | Scanner cycles and attributed errors (runs pruned after 3 days) |
 | `mcx_settings` | One JSON row (`key = 'settings'`): chat override, email recipients / sender, caps |
 

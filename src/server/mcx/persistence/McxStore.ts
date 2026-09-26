@@ -48,7 +48,7 @@ export interface McxStore {
   };
   units: {
     list(strategyId?: string): Promise<UnitState[]>;
-    get(strategyId: string, targetInstrumentId: string): Promise<UnitState | null>;
+    get(strategyId: string, unitKey: string): Promise<UnitState | null>;
     upsert(state: UnitState): Promise<void>;
     clear(strategyId: string): Promise<void>;
   };

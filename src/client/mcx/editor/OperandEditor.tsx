@@ -2,13 +2,13 @@
 
 /**
  * Operand + series pickers. Every value in a condition carries its full data
- * context — instrument role, timeframe, candle type — shown as chips so a
- * condition reads unambiguously: [Target] [15 min] [Normal] RSI(14).
+ * context — leg (FUT / CE / PE), timeframe, candle type — so a condition reads
+ * unambiguously: [GOLD CE] [15 min] [Normal] RSI(14).
  */
 import clsx from 'clsx';
-import type { CandleSpec, InstrumentRef, Operand, SeriesSpec, SourceField } from '@/shared/mcx';
-import { MCX2_CANDLE_TYPES, MCX2_INDICATOR, MCX2_INDICATORS, MCX2_TIMEFRAMES } from '@/shared/mcx';
-import { Cell } from '../components';
+import type { CandleSpec, Leg, Operand, SeriesSpec, SourceField } from '@/shared/mcx';
+import { MCX2_CANDLE_TYPES, MCX2_INDICATOR, MCX2_INDICATORS, MCX2_LEGS, MCX2_TIMEFRAMES } from '@/shared/mcx';
+import { Cell, LEG_TEXT } from '../components';
 import { H } from '../help';
 import { indicatorOperand } from './defaults';
 
@@ -21,36 +21,32 @@ const FIELDS: Array<{ value: SourceField; label: string }> = [
   { value: 'oi', label: 'OI' },
 ];
 
-const ROLE_CHIP: Record<InstrumentRef['role'], string> = {
-  TARGET: 'border-accent/40 text-accent-soft',
-  UNDERLYING: 'border-leg-fut/40 text-leg-fut',
-  FIXED: 'border-ink-600 text-slate-300',
-};
-
 export function SeriesPicker({
   value,
   onChange,
-  fixedOptions,
+  legs,
   label = 'Series',
 }: {
   value: SeriesSpec;
   onChange: (s: SeriesSpec) => void;
-  /** FIXED contracts offered (futures of the product). */
-  fixedOptions: Array<{ id: string; symbol: string }>;
+  /** Legs the strategy offers (FUT only for futures strategies). */
+  legs: Leg[];
   label?: string;
 }) {
-  const roleValue = value.instrument.role === 'FIXED' ? `FIXED:${value.instrument.instrumentId}` : value.instrument.role;
-  const setRole = (v: string) => onChange({ ...value, instrument: v.startsWith('FIXED:') ? { role: 'FIXED', instrumentId: v.slice(6) } : { role: v as 'TARGET' | 'UNDERLYING' } });
   const setCandle = (type: CandleSpec['type']) => onChange({ ...value, candle: type === 'VOLUME' ? { type, volumePerCandle: 10_000 } : { type } });
   return (
     <>
-      <Cell label={`${label} · instrument`} help={H.editor.instrumentRole}>
-        <select aria-label={`${label} instrument`} className={clsx('input py-1 text-xs border', ROLE_CHIP[value.instrument.role])} value={roleValue} onChange={(e) => setRole(e.target.value)}>
-          <option value="TARGET">Target</option>
-          <option value="UNDERLYING">Underlying (ref. future)</option>
-          {fixedOptions.map((f) => (
-            <option key={f.id} value={`FIXED:${f.id}`}>
-              {f.symbol}
+      <Cell label={`${label} · leg`} help={H.editor.leg}>
+        <select
+          aria-label={`${label} leg`}
+          className={clsx('input py-1 text-xs font-semibold', LEG_TEXT[value.leg])}
+          value={value.leg}
+          onChange={(e) => onChange({ ...value, leg: e.target.value as Leg })}
+        >
+          {MCX2_LEGS.map((l) => (
+            <option key={l.leg} value={l.leg} disabled={!legs.includes(l.leg) && l.leg !== value.leg}>
+              {l.label} — {l.name}
+              {!legs.includes(l.leg) ? ' (options only)' : ''}
             </option>
           ))}
         </select>
@@ -94,14 +90,14 @@ export function OperandEditor({
   onChange,
   side,
   defaultSeries,
-  fixedOptions,
+  legs,
   allowConstant = true,
 }: {
   value: Operand;
   onChange: (o: Operand) => void;
   side: 'Left' | 'Right';
   defaultSeries: SeriesSpec;
-  fixedOptions: Array<{ id: string; symbol: string }>;
+  legs: Leg[];
   allowConstant?: boolean;
 }) {
   const series = value.kind === 'CONSTANT' ? defaultSeries : value.series;
@@ -131,7 +127,7 @@ export function OperandEditor({
         </Cell>
       )}
 
-      {value.kind !== 'CONSTANT' && <SeriesPicker label={side} value={value.series} onChange={(s) => onChange({ ...value, series: s } as Operand)} fixedOptions={fixedOptions} />}
+      {value.kind !== 'CONSTANT' && <SeriesPicker label={side} value={value.series} onChange={(s) => onChange({ ...value, series: s } as Operand)} legs={legs} />}
 
       {value.kind === 'FIELD' && (
         <Cell label="Field" help={H.editor.field}>

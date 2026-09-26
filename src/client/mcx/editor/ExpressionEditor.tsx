@@ -7,7 +7,7 @@
  */
 import clsx from 'clsx';
 import { AlertTriangle, ArrowDown, ArrowUp, Ban, CandlestickChart, FolderPlus, Plus, Trash2, Undo2 } from 'lucide-react';
-import type { ConditionNode, ExprNode, GroupNode, McxStrategyDefinition, PatternNode, SeriesSpec } from '@/shared/mcx';
+import type { ConditionNode, ExprNode, GroupNode, Leg, McxStrategyDefinition, PatternNode, SeriesSpec } from '@/shared/mcx';
 import { MCX2_OPERATORS, MCX2_PATTERNS, conditionText, nodeText, operandUnit } from '@/shared/mcx';
 import { Tooltip } from '../../components/Tooltip';
 import { IconButton } from '../../components/ui';
@@ -19,7 +19,7 @@ import { OperandEditor, SeriesPicker } from './OperandEditor';
 interface Ctx {
   definition: McxStrategyDefinition;
   defaultSeries: SeriesSpec;
-  fixedOptions: Array<{ id: string; symbol: string }>;
+  legs: Leg[];
 }
 
 function Toolbar({ index, count, onMove, onRemove, onNot, isNot }: { index: number; count: number; onMove: (d: -1 | 1) => void; onRemove: () => void; onNot: () => void; isNot: boolean }) {
@@ -60,7 +60,7 @@ function ConditionEditor({ node, ctx, onChange }: { node: ConditionNode; ctx: Ct
   const opSpec = MCX2_OPERATORS.find((o) => o.value === node.operator);
   return (
     <div className="flex flex-col gap-3">
-      <OperandEditor side="Left" value={node.left} onChange={(left) => onChange({ ...node, left })} defaultSeries={ctx.defaultSeries} fixedOptions={ctx.fixedOptions} allowConstant={false} />
+      <OperandEditor side="Left" value={node.left} onChange={(left) => onChange({ ...node, left })} defaultSeries={ctx.defaultSeries} legs={ctx.legs} allowConstant={false} />
       <div className="flex flex-wrap items-end gap-3">
         <Cell label="Operator" help={{ ...H.editor.operator, title: `Operator — ${opSpec?.label ?? ''}` }}>
           <select aria-label="Operator" className="input py-1 text-xs" value={node.operator} onChange={(e) => onChange({ ...node, operator: e.target.value as ConditionNode['operator'] })}>
@@ -77,7 +77,7 @@ function ConditionEditor({ node, ctx, onChange }: { node: ConditionNode; ctx: Ct
         value={node.right}
         onChange={(right) => onChange({ ...node, right })}
         defaultSeries={node.left.kind === 'CONSTANT' ? ctx.defaultSeries : node.left.series}
-        fixedOptions={ctx.fixedOptions}
+        legs={ctx.legs}
       />
       <p className="text-[11px] text-slate-500">
         Reads as: <span className="font-mono text-slate-300">{conditionText(node, ctx.definition.universe)}</span>
@@ -110,7 +110,7 @@ function PatternEditor({ node, ctx, onChange }: { node: PatternNode; ctx: Ctx; o
             ))}
           </select>
         </Cell>
-        <SeriesPicker label="Pattern" value={node.series} onChange={(series) => onChange({ ...node, series })} fixedOptions={ctx.fixedOptions} />
+        <SeriesPicker label="Pattern" value={node.series} onChange={(series) => onChange({ ...node, series })} legs={ctx.legs} />
       </div>
       <p className="text-[11px] text-slate-500">
         Reads as: <span className="font-mono text-slate-300">{nodeText(node, ctx.definition.universe)}</span>
@@ -243,7 +243,7 @@ export function GroupEditor({ group, ctx, onChange, depth = 0, embedded }: { gro
 }
 
 /** Root editor: the root is always a group (a single condition is wrapped). */
-export function ExpressionEditor({ definition, onChange, defaultSeries, fixedOptions }: { definition: McxStrategyDefinition; onChange: (root: ExprNode) => void; defaultSeries: SeriesSpec; fixedOptions: Array<{ id: string; symbol: string }> }) {
+export function ExpressionEditor({ definition, onChange, defaultSeries, legs }: { definition: McxStrategyDefinition; onChange: (root: ExprNode) => void; defaultSeries: SeriesSpec; legs: Leg[] }) {
   const root: GroupNode = definition.expression.type === 'AND' || definition.expression.type === 'OR' ? definition.expression : newGroup('AND', [definition.expression]);
-  return <GroupEditor group={root} ctx={{ definition, defaultSeries, fixedOptions }} onChange={onChange} />;
+  return <GroupEditor group={root} ctx={{ definition, defaultSeries, legs }} onChange={onChange} />;
 }

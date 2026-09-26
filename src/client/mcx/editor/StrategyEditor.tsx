@@ -8,11 +8,11 @@
  *   4 ALERT        — channels, transition vs while-true, cooldown, once per candle
  * with a live preview, validation, resolved contracts, "test now" and replay.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, History, Loader2, PlayCircle, Save, X, XCircle } from 'lucide-react';
 import clsx from 'clsx';
-import type { ExprNode, McxStrategy, McxStrategyDefinition } from '@/shared/mcx';
+import type { ExprNode, Leg, McxStrategy, McxStrategyDefinition } from '@/shared/mcx';
 import { MCX2_TIMEFRAMES, strategySummary } from '@/shared/mcx';
 import { Tooltip } from '../../components/Tooltip';
 import { Spinner } from '../../components/ui';
@@ -21,7 +21,7 @@ import { Cell, Section, Segmented, Toggle } from '../components';
 import { istToday } from '../format';
 import { H } from '../help';
 import { ExplainView, ReplayView } from './DebugViews';
-import { dominantSeries, targetSeries } from './defaults';
+import { dominantSeries, legSeries } from './defaults';
 import { ExpressionEditor } from './ExpressionEditor';
 import { ResolvedInstruments, UniverseEditor } from './UniverseEditor';
 
@@ -51,9 +51,8 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: McxS
     setDef((d) => ({ ...d, ...patch }));
   };
 
-  const product = products.data?.find((p) => p.symbol === def.universe.underlying);
-  const fixedOptions = useMemo(() => (product?.futures ?? []).map((f) => ({ id: f.id, symbol: f.symbol })), [product]);
-  const defaultSeries = dominantSeries(def.expression, targetSeries(def.evaluation.triggerTimeframe));
+  const legs: Leg[] = def.universe.target.kind === 'OPTION' ? ['FUT', 'CE', 'PE'] : ['FUT'];
+  const defaultSeries = dominantSeries(def.expression, legSeries(legs.includes('CE') ? 'CE' : 'FUT', def.evaluation.triggerTimeframe));
 
   const save = useMutation({
     mutationFn: () => (strategy ? mcxApi.updateStrategy(strategy.id, def) : mcxApi.createStrategy(def)),
@@ -134,8 +133,8 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: McxS
             </div>
           </Section>
 
-          <Section step="3 · Conditions" title="When should it fire?" help={H.editor.group}>
-            <ExpressionEditor definition={def} onChange={(expression: ExprNode) => set({ expression })} defaultSeries={defaultSeries} fixedOptions={fixedOptions} />
+          <Section step="3 · Conditions" title="When should it fire?" help={H.editor.conditions}>
+            <ExpressionEditor definition={def} onChange={(expression: ExprNode) => set({ expression })} defaultSeries={defaultSeries} legs={legs} />
           </Section>
 
           <Section step="4 · Alert" title="Alert policy" help={H.editor.channels}>

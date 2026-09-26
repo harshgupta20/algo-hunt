@@ -18,14 +18,15 @@ import type {
   EvaluationMode,
   ExprNode,
   ExprTrace,
+  Leg,
   McxInstrument,
   McxOperator,
   McxStrategyDefinition,
   McxTimeframe,
+  McxUnit,
   Operand,
   OperandTrace,
   PatternNode,
-  ResolvedUnit,
   SeriesSpec,
   TriState,
   UnitEvaluation,
@@ -33,7 +34,7 @@ import type {
 import { MCX2_CANDLE_TYPES, MCX2_INDICATOR, MCX2_PATTERN, MCX2_TIMEFRAME, conditionText, nodeText, operandCore } from '@/shared/mcx';
 import type { McxCandle } from './candles';
 import { fieldValue, indicatorKey, indicatorValues, patternValues } from './indicators';
-import { forEachLeaf, resolveRef, seriesKey } from './series';
+import { forEachLeaf, legInstrument, seriesKey } from './series';
 
 export type SeriesResult = { candles: McxCandle[] } | { error: string };
 /** Returns the built series for an instrument (from the cycle's fetched data). */
@@ -43,8 +44,7 @@ export interface UnitEvalInput {
   strategyId: string;
   version: number;
   definition: McxStrategyDefinition;
-  unit: ResolvedUnit;
-  fixed: Map<string, McxInstrument>;
+  unit: McxUnit;
   lookup: SeriesLookup;
   /** Open time (ms) of the trigger candle being evaluated. */
   triggerOpenMs: number;
@@ -115,6 +115,7 @@ function seriesLabel(instrument: McxInstrument, s: SeriesSpec): string {
 
 interface ResolvedOperand {
   label: string;
+  leg?: Leg;
   constant?: number;
   values?: Array<number | undefined>;
   candles?: McxCandle[];
@@ -133,8 +134,8 @@ class UnitContext {
   }
 
   private series(s: SeriesSpec): { instrument: McxInstrument; candles: McxCandle[]; idx: number } | { error: string; instrument?: McxInstrument } {
-    const instrument = resolveRef(s.instrument, this.input.unit, this.input.fixed);
-    if (!instrument) return { error: s.instrument.role === 'FIXED' ? `instrument ${s.instrument.instrumentId} is not in the instrument master` : 'no reference future for this target' };
+    const instrument = legInstrument(s.leg, this.input.unit);
+    if (!instrument) return { error: s.leg === 'FUT' ? 'no future for this unit' : `no ${s.leg} listed at this strike` };
     const res = this.input.lookup(instrument, s);
     if ('error' in res) return { error: res.error, instrument };
     return { instrument, candles: res.candles, idx: alignIndex(res.candles, this.mode, this.input.at) };
@@ -148,8 +149,9 @@ class UnitContext {
   operand(o: Operand): ResolvedOperand {
     if (o.kind === 'CONSTANT') return { label: String(o.value), constant: o.value, idx: 0 };
     const s = this.series(o.series);
-    const label = `${s.instrument ? seriesLabel(s.instrument, o.series) : o.series.instrument.role} · ${operandCore(o)}`;
-    if ('error' in s) return { label, idx: -1, error: s.error };
+    const label = `${s.instrument ? seriesLabel(s.instrument, o.series) : o.series.leg} · ${operandCore(o)}`;
+    const leg = o.series.leg;
+    if ('error' in s) return { label, leg, idx: -1, error: s.error };
     const key = `${seriesKey(s.instrument, o.series)}|${this.mode}`;
     let values: Array<number | undefined>;
     let need = 1;
@@ -175,12 +177,12 @@ class UnitContext {
         break;
       }
     }
-    return { label, values, candles: s.candles, idx: s.idx, need };
+    return { label, leg, values, candles: s.candles, idx: s.idx, need };
   }
 
   pattern(n: PatternNode): { values?: Array<boolean | undefined>; candles?: McxCandle[]; idx: number; label: string; error?: string } {
     const s = this.series(n.series);
-    const label = `${s.instrument ? seriesLabel(s.instrument, n.series) : n.series.instrument.role} · ${MCX2_PATTERN[n.pattern]?.label ?? n.pattern}`;
+    const label = `${s.instrument ? seriesLabel(s.instrument, n.series) : n.series.leg} · ${MCX2_PATTERN[n.pattern]?.label ?? n.pattern}`;
     if ('error' in s) return { label, idx: -1, error: s.error };
     const values = this.cached(`${seriesKey(s.instrument, n.series)}|${this.mode}|P:${n.pattern}`, () => patternValues(s.candles, n.pattern));
     return { label, values, candles: s.candles, idx: s.idx };
@@ -198,6 +200,7 @@ function traceOf(r: ResolvedOperand): OperandTrace {
   const p = r.idx >= 1 ? r.candles?.[r.idx - 1] : undefined;
   return {
     label: r.label,
+    leg: r.leg,
     value: valueAt(r, r.idx),
     prev: valueAt(r, r.idx - 1),
     candleTime: c?.time,
@@ -239,7 +242,7 @@ function evalPattern(ctx: UnitContext, n: PatternNode): ConditionTrace {
     text,
     result: 'UNKNOWN',
     pattern: n.pattern,
-    left: { label: p.label, candleTime: c?.time, complete: c?.complete },
+    left: { label: p.label, leg: n.series.leg, candleTime: c?.time, complete: c?.complete },
   };
   if (p.error) return { ...base, reason: `${p.label}: ${p.error}` };
   if (p.idx < 0) return { ...base, reason: `${p.label}: no candle at or before ${istTime(ctx.input.at / 1000)} IST` };
@@ -271,12 +274,18 @@ function evalNode(ctx: UnitContext, n: ExprNode): ExprTrace {
   }
 }
 
-/** Close of the target's normal candle on the trigger timeframe at T (for alert records). */
-function priceAt(input: UnitEvalInput, mode: EvaluationMode): number | undefined {
-  const res = input.lookup(input.unit.target, { instrument: { role: 'TARGET' }, timeframe: input.definition.evaluation.triggerTimeframe, candle: { type: 'NORMAL' } });
-  if ('error' in res) return undefined;
-  const i = alignIndex(res.candles, mode, input.at);
-  return i >= 0 ? res.candles[i]!.close : undefined;
+/** Close of each leg's normal candle on the trigger timeframe at T (legs whose data was fetched). */
+function pricesAt(input: UnitEvalInput, mode: EvaluationMode): Partial<Record<Leg, number>> {
+  const out: Partial<Record<Leg, number>> = {};
+  for (const leg of ['FUT', 'CE', 'PE'] as const) {
+    const inst = legInstrument(leg, input.unit);
+    if (!inst) continue;
+    const res = input.lookup(inst, { leg, timeframe: input.definition.evaluation.triggerTimeframe, candle: { type: 'NORMAL' } });
+    if ('error' in res) continue;
+    const i = alignIndex(res.candles, mode, input.at);
+    if (i >= 0) out[leg] = res.candles[i]!.close;
+  }
+  return out;
 }
 
 export function evaluateUnit(input: UnitEvalInput): UnitEvaluation {
@@ -285,15 +294,14 @@ export function evaluateUnit(input: UnitEvalInput): UnitEvaluation {
   return {
     strategyId: input.strategyId,
     version: input.version,
-    target: input.unit.target,
-    reference: input.unit.reference ?? undefined,
+    unit: input.unit,
     mode: ctx.mode,
     triggerTimeframe: input.definition.evaluation.triggerTimeframe,
     triggerCandle: Math.floor(input.triggerOpenMs / 1000),
     evaluatedAt: input.at,
     result: trace.result,
     trace,
-    price: priceAt(input, ctx.mode),
+    prices: pricesAt(input, ctx.mode),
   };
 }
 
@@ -312,7 +320,7 @@ export function pendingReason(input: UnitEvalInput, now: number): string | undef
     const specs = leaf.type === 'PATTERN' ? [leaf.series] : [leaf.left, leaf.right].flatMap((o) => (o.kind === 'CONSTANT' ? [] : [o.series]));
     for (const s of specs) {
       if (s.timeframe !== tf || s.candle.type === 'VOLUME') continue;
-      const instrument = resolveRef(s.instrument, input.unit, input.fixed);
+      const instrument = legInstrument(s.leg, input.unit);
       if (!instrument) continue;
       const res = input.lookup(instrument, s);
       if ('error' in res || !res.candles.length) continue;

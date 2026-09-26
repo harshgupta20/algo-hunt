@@ -7,7 +7,6 @@ import type { ExprNode, McxStrategyDefinition } from './types';
 
 const timeframe = z.enum(['1m', '3m', '5m', '10m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']);
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected yyyy-mm-dd');
-const optionType = z.enum(['CE', 'PE']);
 const sourceField = z.enum(['open', 'high', 'low', 'close', 'volume', 'oi']);
 
 const expirySelector = z.union([
@@ -17,8 +16,6 @@ const expirySelector = z.union([
 
 const strikeSelector = z.union([
   z.object({ mode: z.literal('ATM_OFFSETS'), offsets: z.array(z.number().int().min(-50).max(50)).min(1).max(101) }),
-  z.object({ mode: z.literal('ITM'), count: z.number().int().min(1).max(50) }),
-  z.object({ mode: z.literal('OTM'), count: z.number().int().min(1).max(50) }),
   z.object({ mode: z.literal('SPECIFIC'), strikes: z.array(z.number().positive()).min(1).max(200) }),
   z.object({ mode: z.literal('RANGE'), from: z.number().nonnegative(), to: z.number().nonnegative() }),
   z.object({ mode: z.literal('ALL') }),
@@ -26,18 +23,11 @@ const strikeSelector = z.union([
 
 export const mcxUniverseSchema = z.object({
   underlying: z.string().min(1),
-  reference: z.object({ expiry: z.union([expirySelector, z.object({ mode: z.literal('MATCH_TARGET') })]) }),
   target: z.union([
     z.object({ kind: z.literal('FUTURE'), expiry: expirySelector }),
-    z.object({ kind: z.literal('OPTION'), expiry: expirySelector, optionTypes: z.array(optionType).min(1), strikes: strikeSelector }),
+    z.object({ kind: z.literal('OPTION'), expiry: expirySelector, strikes: strikeSelector }),
   ]),
 });
-
-const instrumentRef = z.union([
-  z.object({ role: z.literal('UNDERLYING') }),
-  z.object({ role: z.literal('TARGET') }),
-  z.object({ role: z.literal('FIXED'), instrumentId: z.string().regex(/^MCX:\d+$/) }),
-]);
 
 const candleSpec = z.union([
   z.object({ type: z.literal('NORMAL') }),
@@ -45,7 +35,7 @@ const candleSpec = z.union([
   z.object({ type: z.literal('VOLUME'), volumePerCandle: z.number().positive() }),
 ]);
 
-const series = z.object({ instrument: instrumentRef, timeframe, candle: candleSpec });
+const series = z.object({ leg: z.enum(['FUT', 'CE', 'PE']), timeframe, candle: candleSpec });
 
 const operand = z.union([
   z.object({ kind: z.literal('CONSTANT'), value: z.number().finite() }),
@@ -79,7 +69,7 @@ const exprNode: z.ZodType<ExprNode> = z.lazy(() =>
 ) as z.ZodType<ExprNode>;
 
 export const mcxStrategyDefinitionSchema: z.ZodType<McxStrategyDefinition> = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   market: z.literal('MCX'),
   name: z.string().trim().min(1, 'name is required').max(120),
   description: z.string().max(500).optional(),

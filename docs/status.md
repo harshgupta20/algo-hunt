@@ -25,7 +25,7 @@ correcting. Each item says where the behaviour lives in the code.
 | Alerts: Telegram (optional), browser notification + chime, history with filters incl. Market | Done |
 | Per-market status in the top bar (open/closed and whether monitors are running) | Done |
 | Builder: adaptive comparison, price-level warning | Done |
-| **MCX V2 (beta)** at `/mcx-v2`: isolated subsystem — explicit universes (expiry, CE/PE, ATM ± N / ITM / OTM), per-operand timeframe + candle type (incl. volume candles, 2h/4h/weekly), AND/OR/NOT, Telegram + Email (Resend), cooldown / once-per-candle / acknowledge, explain, replay, scanner runs ([mcx-v2-architecture.md](mcx-v2-architecture.md)) | Built and tested (fixtures) — **migration 006 not yet run on production; not yet verified against live Kite or real Telegram/Resend sends** |
+| **MCX V2 (beta)** at `/mcx-v2`: isolated subsystem — futures, or strikes (around ATM / specific / range / all) with FUT + CE + PE legs in conditions, per-operand timeframe + candle type (incl. volume candles, 2h/4h/weekly), AND/OR/NOT, Telegram + Email (Resend), cooldown / once-per-candle / acknowledge, explain, replay, scanner runs ([mcx-v2-architecture.md](mcx-v2-architecture.md)) | Built and tested (fixtures) — **migration 006 not yet run on production; not yet verified against live Kite or real Telegram/Resend sends** |
 
 ---
 
@@ -113,6 +113,7 @@ Severity: **High** = can cause missed alerts or wrong data · **Medium** = misle
 | 2026-09-25 | Color-rich redesign rejected and reverted; the existing look is the baseline |
 | 2026-09-25 | Top bar shows NSE/BSE and MCX separately with open/closed and monitor activity |
 | 2026-09-25 | Bollinger %B / Bandwidth added; the builder adapts comparisons and warns on price-vs-small-number |
+| 2026-09-26 | MCX V2 conditions use FUT / CE / PE legs of a strike (simpler universe: product → futures or options → expiry → strikes; reference-future and fixed-contract choices removed; old definitions auto-upgraded) |
 | 2026-09-25 | MCX V2 built as an isolated subsystem next to V1 (decisions D1–D9 accepted: Resend email, volume candles from base candles, spec cross semantics, ≤ 40 targets / ≤ 150 requests per cycle, same cron with its own lease, manual holiday calendar, 1-minute live mode, `/mcx-v2` beta page, Telegram env with MCX chat override) |
 
 ---
@@ -121,7 +122,7 @@ Severity: **High** = can cause missed alerts or wrong data · **Medium** = misle
 
 | Claim | How verified |
 | --- | --- |
-| Engines, MCX rules, sessions, multi-timeframe, patterns, ADX/DMI, Bollinger outputs | Automated tests (184 passing, 57 of them MCX V2) |
+| Engines, MCX rules, sessions, multi-timeframe, patterns, ADX/DMI, Bollinger outputs | Automated tests (188 passing, 61 of them MCX V2) |
 | MCX V2 engine, alert policy, both Definition-of-Done strategies end to end, module boundaries | Automated tests (`tests/mcx2/`) |
 | MCX V2 UI (all tabs, light + dark), create / validate / enable flows, scan without Kite | Manually, local production build + throwaway database (Kite disconnected) |
 | UI pages, MCX tab, top-bar market states, builder behaviour | Manually, in a local production build against a throwaway database with synthetic instruments and snapshots (Kite disconnected) |

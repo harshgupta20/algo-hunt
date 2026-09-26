@@ -1,25 +1,27 @@
 'use client';
 
 /**
- * WHAT + WHERE: product, target type, expiry, CE/PE, strikes and reference
- * future — plus the live list of contracts this resolves to.
+ * WHAT + WHERE: product, Futures or Options, expiry and strikes — plus the live
+ * list of what that selects. With Options, every strike is one unit with three
+ * legs for conditions: FUT (the future these options expire into), CE and PE.
  */
 import { useQuery } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
-import type { ExpirySelector, OptionType, ReferenceSelector, StrikeSelector, Universe } from '@/shared/mcx';
-import { MCX2_EXPIRY_MODES, MCX2_GROUP_LABEL, MCX2_STRIKE_MODES } from '@/shared/mcx';
+import clsx from 'clsx';
+import type { ExpirySelector, StrikeSelector, Universe } from '@/shared/mcx';
+import { MCX2_ATM_PRESETS, MCX2_EXPIRY_MODES, MCX2_GROUP_LABEL, MCX2_STRIKE_MODES } from '@/shared/mcx';
 import { InfoTip, Tooltip } from '../../components/Tooltip';
 import { IconButton, Spinner } from '../../components/ui';
 import { mcxApi, type ProductRow } from '../api';
-import { Cell, InstrumentTag, Segmented, Toggle } from '../components';
+import { Cell, InstrumentTag, LEG_TEXT, Segmented, UnitTag } from '../components';
 import { fmtNum } from '../format';
 import { H } from '../help';
 
-function ExpiryPicker({ value, onChange, expiries, label }: { value: ExpirySelector | ReferenceSelector; onChange: (e: ExpirySelector) => void; expiries: string[]; label: string }) {
+function ExpiryPicker({ value, onChange, expiries }: { value: ExpirySelector; onChange: (e: ExpirySelector) => void; expiries: string[] }) {
   return (
     <>
       <select
-        aria-label={label}
+        aria-label="Expiry"
         className="input py-1 text-xs"
         value={value.mode}
         onChange={(e) => {
@@ -34,7 +36,7 @@ function ExpiryPicker({ value, onChange, expiries, label }: { value: ExpirySelec
         ))}
       </select>
       {value.mode === 'SPECIFIC' && (
-        <select aria-label={`${label} date`} className="input py-1 text-xs" value={value.date} onChange={(e) => onChange({ mode: 'SPECIFIC', date: e.target.value })}>
+        <select aria-label="Expiry date" className="input py-1 text-xs" value={value.date} onChange={(e) => onChange({ mode: 'SPECIFIC', date: e.target.value })}>
           {!expiries.includes(value.date) && <option value={value.date}>{value.date || 'Pick a date'} (not listed)</option>}
           {expiries.map((d) => (
             <option key={d} value={d}>
@@ -47,16 +49,16 @@ function ExpiryPicker({ value, onChange, expiries, label }: { value: ExpirySelec
   );
 }
 
+const sameOffsets = (a: number[], b: number[]) => a.length === b.length && [...a].sort((x, y) => x - y).every((v, i) => v === [...b].sort((x, y) => x - y)[i]);
+
 function StrikePicker({ value, onChange }: { value: StrikeSelector; onChange: (s: StrikeSelector) => void }) {
   const setMode = (mode: StrikeSelector['mode']) => {
     if (mode === 'ATM_OFFSETS') onChange({ mode, offsets: [0] });
-    else if (mode === 'ITM' || mode === 'OTM') onChange({ mode, count: 2 });
     else if (mode === 'SPECIFIC') onChange({ mode, strikes: [] });
     else if (mode === 'RANGE') onChange({ mode, from: 0, to: 0 });
     else onChange({ mode: 'ALL' });
   };
-  const atmN = value.mode === 'ATM_OFFSETS' ? Math.max(...value.offsets.map(Math.abs)) : 0;
-  const contiguous = value.mode === 'ATM_OFFSETS' && value.offsets.length === 2 * atmN + 1;
+  const preset = value.mode === 'ATM_OFFSETS' ? MCX2_ATM_PRESETS.find((p) => sameOffsets(p.offsets, value.offsets)) : undefined;
   return (
     <>
       <select aria-label="Strike selection" className="input py-1 text-xs" value={value.mode} onChange={(e) => setMode(e.target.value as StrikeSelector['mode'])}>
@@ -68,29 +70,28 @@ function StrikePicker({ value, onChange }: { value: StrikeSelector; onChange: (s
       </select>
       {value.mode === 'ATM_OFFSETS' && (
         <>
-          <Tooltip content={{ title: 'ATM ± N', body: 'Quick pick: the ATM strike plus N listed strikes on each side.' }}>
+          <Tooltip content={H.editor.atmPreset}>
             <select
-              aria-label="ATM plus minus N"
+              aria-label="Strikes around ATM"
               className="input py-1 text-xs"
-              value={contiguous ? String(atmN) : 'custom'}
+              value={preset?.key ?? 'custom'}
               onChange={(e) => {
-                if (e.target.value === 'custom') return;
-                const n = Number(e.target.value);
-                onChange({ mode: 'ATM_OFFSETS', offsets: Array.from({ length: 2 * n + 1 }, (_, i) => i - n) });
+                const p = MCX2_ATM_PRESETS.find((x) => x.key === e.target.value);
+                if (p) onChange({ mode: 'ATM_OFFSETS', offsets: p.offsets });
               }}
             >
-              {[0, 1, 2, 3, 4, 5].map((n) => (
-                <option key={n} value={n}>
-                  {n === 0 ? 'ATM only' : `ATM ± ${n}`}
+              {MCX2_ATM_PRESETS.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.label}
                 </option>
               ))}
-              {!contiguous && <option value="custom">Custom offsets</option>}
+              {!preset && <option value="custom">Custom</option>}
             </select>
           </Tooltip>
           <Tooltip content={H.editor.offsets}>
             <input
               aria-label="ATM offsets"
-              className="input py-1 text-xs w-36 font-mono"
+              className="input py-1 text-xs w-32 font-mono"
               defaultValue={value.offsets.join(', ')}
               key={value.offsets.join(',')}
               onBlur={(e) => {
@@ -104,19 +105,6 @@ function StrikePicker({ value, onChange }: { value: StrikeSelector; onChange: (s
             />
           </Tooltip>
         </>
-      )}
-      {(value.mode === 'ITM' || value.mode === 'OTM') && (
-        <Tooltip content={H.editor.count}>
-          <input
-            type="number"
-            min={1}
-            max={50}
-            aria-label="Number of strikes"
-            className="input py-1 text-xs w-16"
-            value={value.count}
-            onChange={(e) => onChange({ mode: value.mode, count: Math.max(1, Math.round(Number(e.target.value))) })}
-          />
-        </Tooltip>
       )}
       {value.mode === 'SPECIFIC' && (
         <Tooltip content={{ title: 'Strikes', body: 'Comma-separated strike prices, e.g. 74500, 75000.' }}>
@@ -154,18 +142,10 @@ export function UniverseEditor({ value, onChange, products }: { value: Universe;
   const optionExpiries = product?.optionExpiries.map((e) => e.expiry) ?? [];
   const futureExpiries = (product?.futures.map((f) => f.expiry).filter(Boolean) as string[]) ?? [];
   const t = value.target;
-  const setTarget = (target: Universe['target']) => onChange({ ...value, target });
-  const toggleType = (type: OptionType, on: boolean) => {
-    if (t.kind !== 'OPTION') return;
-    const set = new Set(t.optionTypes);
-    if (on) set.add(type);
-    else set.delete(type);
-    setTarget({ ...t, optionTypes: (['CE', 'PE'] as const).filter((x) => set.has(x)) });
-  };
   const groups = [...new Set(products.map((p) => p.group))];
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-end gap-4">
         <Cell label="Product" help={H.editor.product}>
           <select aria-label="Product" className="input py-1 text-xs" value={value.underlying} onChange={(e) => onChange({ ...value, underlying: e.target.value })}>
@@ -183,70 +163,58 @@ export function UniverseEditor({ value, onChange, products }: { value: Universe;
             ))}
           </select>
         </Cell>
-        <Cell label="Instrument" help={H.editor.targetKind}>
+        <Cell label="Scan" help={H.editor.targetKind}>
           <Segmented
-            label="Instrument type"
+            label="Scan futures or options"
             value={t.kind}
             onChange={(k) =>
-              setTarget(k === 'FUTURE' ? { kind: 'FUTURE', expiry: { mode: 'CURRENT' } } : { kind: 'OPTION', expiry: { mode: 'CURRENT' }, optionTypes: ['CE'], strikes: { mode: 'ATM_OFFSETS', offsets: [0] } })
+              onChange({ ...value, target: k === 'FUTURE' ? { kind: 'FUTURE', expiry: { mode: 'CURRENT' } } : { kind: 'OPTION', expiry: { mode: 'CURRENT' }, strikes: { mode: 'ATM_OFFSETS', offsets: [0] } } })
             }
             options={[
-              { value: 'FUTURE', label: <span className="text-leg-fut font-semibold">FUT</span>, help: { title: 'Futures', body: 'Signals per futures contract.' } },
-              { value: 'OPTION', label: 'Options', help: { title: 'Options', body: 'Signals per selected option contract.' } },
+              { value: 'FUTURE', label: 'Futures', help: { title: 'Futures', body: 'One alert per futures contract. Conditions use the FUT leg.' } },
+              { value: 'OPTION', label: 'Options', help: { title: 'Options', body: 'One alert per strike. Conditions can use FUT, CE and PE of that strike.' } },
             ]}
           />
         </Cell>
-        <Cell label="Expiry" help={H.editor.expiry}>
-          <ExpiryPicker label="Target expiry" value={t.expiry} onChange={(expiry) => setTarget({ ...t, expiry } as Universe['target'])} expiries={t.kind === 'OPTION' ? optionExpiries : futureExpiries} />
+        <Cell label={t.kind === 'OPTION' ? 'Option expiry' : 'Expiry'} help={H.editor.expiry}>
+          <ExpiryPicker value={t.expiry} onChange={(expiry) => onChange({ ...value, target: { ...t, expiry } as Universe['target'] })} expiries={t.kind === 'OPTION' ? optionExpiries : futureExpiries} />
         </Cell>
         {t.kind === 'OPTION' && (
+          <Cell label="Strikes" help={H.editor.strikes}>
+            <StrikePicker value={t.strikes} onChange={(strikes) => onChange({ ...value, target: { ...t, strikes } })} />
+          </Cell>
+        )}
+      </div>
+      <p className="text-[11px] text-slate-500">
+        {t.kind === 'OPTION' ? (
           <>
-            <Cell label="Type" help={H.editor.optionTypes}>
-              <Toggle checked={t.optionTypes.includes('CE')} onChange={(v) => toggleType('CE', v)} label="CE" help={{ title: 'Calls (CE)', body: 'Include call options.' }} />
-              <Toggle checked={t.optionTypes.includes('PE')} onChange={(v) => toggleType('PE', v)} label="PE" help={{ title: 'Puts (PE)', body: 'Include put options.' }} />
-            </Cell>
-            <Cell label="Strikes" help={H.editor.strikes}>
-              <StrikePicker value={t.strikes} onChange={(strikes) => setTarget({ ...t, strikes })} />
-            </Cell>
+            Each strike gives your conditions three legs: <span className={clsx('font-semibold', LEG_TEXT.FUT)}>FUT</span> (the future these options expire into),{' '}
+            <span className={clsx('font-semibold', LEG_TEXT.CE)}>CE</span> and <span className={clsx('font-semibold', LEG_TEXT.PE)}>PE</span> at that strike.
+          </>
+        ) : (
+          <>
+            Conditions use the <span className={clsx('font-semibold', LEG_TEXT.FUT)}>FUT</span> leg. Switch to Options to add CE / PE conditions.
           </>
         )}
-        <Cell label="Reference future" help={H.editor.reference}>
-          <select
-            aria-label="Reference future"
-            className="input py-1 text-xs"
-            value={value.reference.expiry.mode}
-            onChange={(e) => {
-              const mode = e.target.value as ReferenceSelector['mode'];
-              onChange({ ...value, reference: { expiry: mode === 'SPECIFIC' ? { mode, date: futureExpiries[0] ?? '' } : ({ mode } as ReferenceSelector) } });
-            }}
-          >
-            <option value="MATCH_TARGET">Matching the target (recommended)</option>
-            <option value="CURRENT">Current future</option>
-            <option value="NEXT">Next future</option>
-            <option value="FAR">Far future</option>
-            <option value="SPECIFIC">Specific future</option>
-          </select>
-          {value.reference.expiry.mode === 'SPECIFIC' && (
-            <ExpiryPicker label="Reference expiry" value={value.reference.expiry} onChange={(expiry) => onChange({ ...value, reference: { expiry } })} expiries={futureExpiries} />
-          )}
-        </Cell>
-      </div>
+      </p>
     </div>
   );
 }
 
-/** The contracts the universe resolves to right now (ATM from the reference future's live price). */
+/** What the universe selects right now (ATM from the future's live price), with live quotes per leg. */
 export function ResolvedInstruments({ universe }: { universe: Universe }) {
   const q = useQuery({ queryKey: ['mcx2-universe', universe], queryFn: () => mcxApi.previewUniverse(universe), staleTime: 30_000, retry: false });
   const r = q.data;
+  const isOption = universe.target.kind === 'OPTION';
+  const quote = (id: string | undefined) => (id ? r?.quotes[id] : undefined);
   return (
     <div className="rounded-lg border border-ink-700/60 bg-ink-850 p-3">
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-xs font-semibold text-slate-300">Resolved instruments</span>
+        <span className="text-xs font-semibold text-slate-300">Selected {isOption ? 'strikes' : 'futures'}</span>
         <InfoTip content={H.editor.resolved} />
         {r && (
           <span className={r.units.length > r.cap ? 'text-xs text-warn' : 'text-xs text-slate-500'}>
-            {r.units.length} contract{r.units.length === 1 ? '' : 's'}
+            {r.units.length}
             {r.units.length > r.cap ? ` — above the cap of ${r.cap}` : ''}
           </span>
         )}
@@ -258,10 +226,10 @@ export function ResolvedInstruments({ universe }: { universe: Universe }) {
       {q.error && <p className="text-xs text-bear">{(q.error as Error).message}</p>}
       {r && (
         <>
-          {r.references.length > 0 && (
+          {isOption && r.units[0]?.fut && (
             <p className="text-[11px] text-slate-500 mb-2">
-              Reference: {r.references.map((x) => `${x.instrument.symbol}${x.ltp !== undefined ? ` @ ${fmtNum(x.ltp)}` : ' (no live price)'}`).join(' · ')}
-              {r.units[0]?.atmStrike !== undefined && <> · ATM {r.units[0].atmStrike}</>}
+              <span className={clsx('font-semibold', LEG_TEXT.FUT)}>FUT</span> {r.units[0].fut.symbol} {fmtNum(quote(r.units[0].fut.id)?.ltp ?? r.references[0]?.ltp)}
+              {r.units[0].atmStrike !== undefined && <> · ATM {r.units[0].atmStrike}</>}
             </p>
           )}
           {r.errors.map((e) => (
@@ -278,28 +246,44 @@ export function ResolvedInstruments({ universe }: { universe: Universe }) {
             <div className="overflow-x-auto mt-1">
               <table className="w-full text-xs">
                 <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="py-1 pr-3">Contract</th>
-                    <th className="py-1 pr-3 text-right">LTP</th>
-                    <th className="py-1 pr-3 text-right">Volume</th>
-                    <th className="py-1 text-right">OI</th>
-                  </tr>
+                  {isOption ? (
+                    <tr>
+                      <th className="py-1 pr-3">Strike</th>
+                      <th className={clsx('py-1 pr-3 text-right', LEG_TEXT.CE)}>CE LTP</th>
+                      <th className={clsx('py-1 pr-3 text-right', LEG_TEXT.CE)}>CE OI</th>
+                      <th className={clsx('py-1 pr-3 text-right', LEG_TEXT.PE)}>PE LTP</th>
+                      <th className={clsx('py-1 text-right', LEG_TEXT.PE)}>PE OI</th>
+                    </tr>
+                  ) : (
+                    <tr>
+                      <th className="py-1 pr-3">Contract</th>
+                      <th className="py-1 pr-3 text-right">LTP</th>
+                      <th className="py-1 pr-3 text-right">Volume</th>
+                      <th className="py-1 text-right">OI</th>
+                    </tr>
+                  )}
                 </thead>
                 <tbody className="divide-y divide-ink-700/40">
-                  {r.units.map((u) => {
-                    const quote = r.quotes[u.target.id];
-                    return (
-                      <tr key={u.target.id}>
+                  {r.units.map((u) =>
+                    isOption ? (
+                      <tr key={u.key}>
                         <td className="py-1 pr-3">
-                          <InstrumentTag i={u.target} />
-                          {u.atmStrike !== undefined && u.target.strike === u.atmStrike && <span className="ml-2 text-[10px] font-semibold text-accent-soft">ATM</span>}
+                          <UnitTag unit={u} />
                         </td>
-                        <td className="py-1 pr-3 text-right tabular-nums">{fmtNum(quote?.ltp)}</td>
-                        <td className="py-1 pr-3 text-right tabular-nums text-slate-400">{fmtNum(quote?.volume, 0)}</td>
-                        <td className="py-1 text-right tabular-nums text-slate-400">{fmtNum(quote?.oi, 0)}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums">{fmtNum(quote(u.ce?.id)?.ltp)}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums text-slate-400">{fmtNum(quote(u.ce?.id)?.oi, 0)}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums">{fmtNum(quote(u.pe?.id)?.ltp)}</td>
+                        <td className="py-1 text-right tabular-nums text-slate-400">{fmtNum(quote(u.pe?.id)?.oi, 0)}</td>
                       </tr>
-                    );
-                  })}
+                    ) : (
+                      <tr key={u.key}>
+                        <td className="py-1 pr-3">{u.fut && <InstrumentTag i={u.fut} />}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums">{fmtNum(quote(u.fut?.id)?.ltp)}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums text-slate-400">{fmtNum(quote(u.fut?.id)?.volume, 0)}</td>
+                        <td className="py-1 text-right tabular-nums text-slate-400">{fmtNum(quote(u.fut?.id)?.oi, 0)}</td>
+                      </tr>
+                    ),
+                  )}
                 </tbody>
               </table>
             </div>

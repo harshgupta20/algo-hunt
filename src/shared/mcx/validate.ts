@@ -4,7 +4,7 @@
  * Errors block enabling; warnings are shown but allowed.
  */
 import { MCX2_INDICATOR, MCX2_PRODUCT_BY_SYMBOL, MCX2_TIMEFRAME, sourceUnit, type ValueUnit } from './catalog';
-import type { ExprNode, McxStrategyDefinition, Operand } from './types';
+import type { ExprNode, Leg, McxStrategyDefinition, Operand } from './types';
 
 export interface ValidationIssue {
   path: string;
@@ -15,9 +15,11 @@ export interface ValidationIssue {
 export interface ValidationContext {
   /** Products with contracts in the synced master (omit to skip the check). */
   syncedProducts?: string[];
+  /** Products with listed options in the synced master (omit to skip the check). */
+  optionProducts?: string[];
   /** Destinations configured for each channel (omit to skip the check). */
   channelsConfigured?: { telegram: boolean; email: boolean };
-  /** Resolved target count and the cap (omit when the universe can't be resolved now). */
+  /** Resolved unit count (futures or strikes) and the cap (omit when the universe can't be resolved now). */
   resolvedTargets?: number;
   universeCap?: number;
   /** Candles fetched per series for warm-up. */
@@ -96,7 +98,13 @@ function validateOperand(o: Operand, path: string, issues: ValidationIssue[], wa
   }
 }
 
-function walk(node: ExprNode, path: string, issues: ValidationIssue[], warmup: number, stats: { leaves: number; timeframes: Set<string> }): void {
+interface WalkStats {
+  leaves: number;
+  timeframes: Set<string>;
+  legs: Set<Leg>;
+}
+
+function walk(node: ExprNode, path: string, issues: ValidationIssue[], warmup: number, stats: WalkStats): void {
   switch (node.type) {
     case 'AND':
     case 'OR':
@@ -109,14 +117,18 @@ function walk(node: ExprNode, path: string, issues: ValidationIssue[], warmup: n
     case 'PATTERN':
       stats.leaves++;
       stats.timeframes.add(node.series.timeframe);
+      stats.legs.add(node.series.leg);
       return;
     case 'CONDITION': {
       stats.leaves++;
       if (node.left.kind === 'CONSTANT') {
         issues.push({ path: `${path}.left`, message: 'The left side must read data (indicator, price, volume or OI), not a constant', severity: 'error' });
       }
-      if (node.left.kind !== 'CONSTANT') stats.timeframes.add(node.left.series.timeframe);
-      if (node.right.kind !== 'CONSTANT') stats.timeframes.add(node.right.series.timeframe);
+      for (const o of [node.left, node.right]) {
+        if (o.kind === 'CONSTANT') continue;
+        stats.timeframes.add(o.series.timeframe);
+        stats.legs.add(o.series.leg);
+      }
       validateOperand(node.left, `${path}.left`, issues, warmup);
       validateOperand(node.right, `${path}.right`, issues, warmup);
       const lu = operandUnit(node.left);
@@ -138,11 +150,12 @@ export function validateStrategy(d: McxStrategyDefinition, ctx: ValidationContex
   if (!MCX2_PRODUCT_BY_SYMBOL[u.underlying]) {
     issues.push({ path: 'universe.underlying', message: `Unknown MCX product "${u.underlying}"`, severity: 'error' });
   } else if (ctx.syncedProducts && !ctx.syncedProducts.includes(u.underlying)) {
-    issues.push({ path: 'universe.underlying', message: `No ${u.underlying} contracts in the MCX instrument master — sync instruments first`, severity: 'error' });
+    issues.push({ path: 'universe.underlying', message: `No ${u.underlying} contracts in MCX V2's instrument list yet — open Instruments → Sync from Kite`, severity: 'error' });
+  } else if (u.target.kind === 'OPTION' && ctx.optionProducts && !ctx.optionProducts.includes(u.underlying)) {
+    issues.push({ path: 'universe.target', message: `${u.underlying} has no listed options — choose Futures`, severity: 'error' });
   }
   if (u.target.kind === 'OPTION') {
     const s = u.target.strikes;
-    if (u.target.optionTypes.length === 0) issues.push({ path: 'universe.target.optionTypes', message: 'Choose CE, PE or both', severity: 'error' });
     if (s.mode === 'RANGE' && s.from > s.to) issues.push({ path: 'universe.target.strikes', message: 'Strike range: "from" must be ≤ "to"', severity: 'error' });
     if (s.mode === 'ATM_OFFSETS' && new Set(s.offsets).size !== s.offsets.length) {
       issues.push({ path: 'universe.target.strikes', message: 'Duplicate ATM offsets', severity: 'warning' });
@@ -151,16 +164,19 @@ export function validateStrategy(d: McxStrategyDefinition, ctx: ValidationContex
   if (ctx.resolvedTargets !== undefined && ctx.universeCap !== undefined && ctx.resolvedTargets > ctx.universeCap) {
     issues.push({
       path: 'universe',
-      message: `The universe resolves to ${ctx.resolvedTargets} instruments — above the cap of ${ctx.universeCap}. Narrow the strikes or expiries.`,
+      message: `This selects ${ctx.resolvedTargets} ${u.target.kind === 'OPTION' ? 'strikes' : 'futures'} — above the cap of ${ctx.universeCap}. Narrow the strikes or expiries.`,
       severity: 'error',
     });
   }
-  if (ctx.resolvedTargets === 0) issues.push({ path: 'universe', message: 'The universe currently resolves to no instruments', severity: 'error' });
+  if (ctx.resolvedTargets === 0) issues.push({ path: 'universe', message: 'The selection currently matches no contracts', severity: 'error' });
 
   // Expression
-  const stats = { leaves: 0, timeframes: new Set<string>() };
+  const stats: WalkStats = { leaves: 0, timeframes: new Set<string>(), legs: new Set<Leg>() };
   walk(d.expression, 'expression', issues, warmup, stats);
   if (stats.leaves === 0) issues.push({ path: 'expression', message: 'The strategy has no conditions', severity: 'error' });
+  if (u.target.kind === 'FUTURE' && (stats.legs.has('CE') || stats.legs.has('PE'))) {
+    issues.push({ path: 'expression', message: 'CE / PE conditions need Options — switch the strategy to Options or use FUT', severity: 'error' });
+  }
 
   // Evaluation
   if (stats.leaves > 0 && !stats.timeframes.has(d.evaluation.triggerTimeframe)) {

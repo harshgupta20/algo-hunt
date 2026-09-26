@@ -180,7 +180,7 @@ src/shared/mcx/                  Shared by server and UI (imports nothing but zo
 
 src/server/mcx/
 ├── calendar/McxMarketCalendar   Sessions (US-DST close), holidays + special sessions, candle boundaries, trigger clock
-├── universe/UniverseResolver    Expiry + strike selectors (ATM ± N, ITM/OTM, specific, range, all), CE/PE, reference future
+├── universe/UniverseResolver    Futures by expiry, or strikes (around ATM / specific / range / all) with FUT, CE, PE legs
 ├── data/                        McxDataProvider (interface) · KiteMcxDataProvider · McxInstrumentService (mcx_instruments)
 │                                · CandleService (per-cycle fetch-once store + request budget)
 ├── engine/                      candles (derived timeframes, Heikin Ashi, volume candles) · indicators (adapters over the
@@ -215,7 +215,10 @@ flowchart TB
   SH["shared/mcx (types, catalog, schema, validate, text)"] -.types.-> API & SCN & EVAL & POL
 ```
 
-## 3. Domain models (the proposal; the shipped types are in `src/shared/mcx/types.ts`)
+## 3. Domain models (the original proposal)
+
+> Superseded by the **legs model** in [§ C0](#c0-strategy-model-v2--fut--ce--pe-legs) — the shipped types are in
+> `src/shared/mcx/types.ts`. Kept for the record.
 
 ```ts
 // ---- Instruments ---------------------------------------------------------
@@ -352,7 +355,7 @@ own universe and series. Nothing is shared except cached data that happens to be
 ## 4. Evaluation semantics (the contract the tests will encode)
 
 1. **Evaluation unit** = (strategy version × target instrument). A GOLD ATM±2 CE strategy has 5 units, each with
-   its own state and signals. `UNDERLYING` operands are shared by all units; `TARGET` operands are per unit.
+   its own state and signals. (As built: a unit is a strike with FUT / CE / PE legs, or a future — see § C0.)
 2. **Clock:**
    - *Completed mode:* a unit is evaluated **once** when its trigger series (`triggerTimeframe`, on the target)
      has a newly completed candle since the unit's `last_evaluated_candle`.
@@ -407,7 +410,7 @@ try/catch, own time budget). A V2 failure can't affect NSE or MCX V1, and vice v
 | --- | --- | --- |
 | 1 | Calendar: is MCX open (session, holiday, special session)? | — |
 | 2 | Load enabled strategies (current versions) | Invalid strategy → error record, skipped |
-| 3 | Resolve universes: expiry selection → reference future (`MATCH_TARGET` = the future the option expiry devolves into) → batched LTP (1 quote call) → strike selection → target instruments | Per strategy |
+| 3 | Resolve universes: expiry selection → the future each option expiry devolves into → batched LTP (1 quote call) → strike selection → units (strike + FUT / CE / PE legs, or a future) | Per strategy |
 | 4 | Build the dependency graph: unique (instrument, native interval) fetch requirements, then derived series (aggregation, HA, volume candles), then indicator instances | — |
 | 5 | Fetch due series (new completed candle or live mode) through the budgeted, cached provider | Per series: failure → error record, dependents UNKNOWN |
 | 6 | Build candles (aggregate / HA / volume) — memoized per cycle | Per series |
@@ -476,9 +479,9 @@ Additive migration `006_mcx_v2.sql`; no V1 table is touched.
 | `mcx_calendar` | `date` PK · kind · open_min · close_min · note | Holidays / special sessions |
 | `mcx_strategies` | `id` PK · name · enabled · enabled_at · current_version · created/updated | Strategy header (`enabled_at` = the "never alert on older candles" floor) |
 | `mcx_strategy_versions` | (`strategy_id`, `version`) PK · definition jsonb · created_at | Immutable definitions; signals/alerts reference a version |
-| `mcx_unit_state` | (`strategy_id`, `target_instrument_id`) PK · state · last_evaluated_candle · last_result · last_signal_candle · last_alert_at · cooldown_until · last_evaluation jsonb | Per-unit state machine + the latest evaluation (explain) |
-| `mcx_signals` | `id` · identity UNIQUE · strategy_id · version · target_instrument_id · trigger_timeframe · candle_time · signal_type · outcome · evaluation jsonb | Every signal (delivered or suppressed, with the reason); the unique identity is the dedupe |
-| `mcx_alerts` | `id` · signal_id FK · strategy_name · version · status · instrument jsonb · trigger_timeframe · candle_time · price · evaluation jsonb · acknowledged_at | Alert history with the full "why" |
+| `mcx_unit_state` | (`strategy_id`, `target_instrument_id` = unit key) PK · state · last_evaluated_candle · last_result · last_signal_candle · last_alert_at · cooldown_until · last_evaluation jsonb | Per-unit state machine + the latest evaluation (explain) |
+| `mcx_signals` | `id` · identity UNIQUE · strategy_id · version · target_instrument_id (unit key) · trigger_timeframe · candle_time · signal_type · outcome · evaluation jsonb | Every signal (delivered or suppressed, with the reason); the unique identity is the dedupe |
+| `mcx_alerts` | `id` · signal_id FK · strategy_name · version · status · instrument jsonb (the unit with its legs) · trigger_timeframe · candle_time · price (unused since the legs model) · evaluation jsonb (incl. each leg's price) · acknowledged_at | Alert history with the full "why" |
 | `mcx_deliveries` | `id` · alert_id FK · channel · status · error · sent_at | Per-channel outcomes |
 | `mcx_scan_runs` | `id` · started/finished · status · summary jsonb (counts, budget, notes, errors) | Scanner observability (pruned after 3 days) |
 | `mcx_scan_errors` | `id` · run_id FK · strategy_id · instrument_id · condition_id · timeframe · source · message | Error attribution |
@@ -588,10 +591,44 @@ V1 keeps running untouched throughout Phases 3–9.
 
 # Part C — Implementation (as built)
 
+## C0. Strategy model v2 — FUT / CE / PE legs
+
+Added after the first build, on the owner's request ("apply future and options CE / PE conditions, keep it simple").
+It replaces the proposal's target list, reference-future selector and TARGET / UNDERLYING / FIXED roles.
+
+- **Universe** = product + **Futures** or **Options** + expiry (+ strikes for options).
+  - Futures → one unit per futures contract; conditions use the **FUT** leg.
+  - Options → one unit per strike, with three legs: **FUT** (the future the options expire into — the first
+    future expiring on/after the option expiry), **CE** and **PE** at that strike and expiry.
+- **Strikes**: around ATM (offsets along the listed ladder: ATM, ATM ± N, N above / below ATM, or custom), specific,
+  range, all. ATM comes from the FUT leg's live price and is re-resolved every cycle. (The old ITM / OTM modes map
+  to offsets: OTM puts = strikes below ATM.)
+- **Operands name a leg**: `series: { leg: 'FUT' | 'CE' | 'PE', timeframe, candle }`. A strike whose CE or PE isn't
+  listed keeps the unit; conditions on the missing leg are `UNKNOWN`.
+- **Unit key**: `MCX:<token>` (future) or `<PRODUCT>:<option expiry>:<strike>` (strike) — used for unit state,
+  signal identity, alerts, explain (`unitKey`) and replay (`unitKeys`).
+- **Evaluations and alerts** carry the unit (all legs) and `prices` — each leg's close on the trigger candle.
+- **Upgrade**: definitions saved in the earlier format (`schemaVersion: 1`) are upgraded when read
+  ([upgrade.ts](../src/shared/mcx/upgrade.ts)); new saves are `schemaVersion: 2`.
+
+```json
+{
+  "schemaVersion": 2, "market": "MCX", "name": "GOLD ATM FUT + CE + PE RSI",
+  "universe": { "underlying": "GOLD", "target": { "kind": "OPTION", "expiry": { "mode": "CURRENT" }, "strikes": { "mode": "ATM_OFFSETS", "offsets": [0] } } },
+  "evaluation": { "mode": "COMPLETED_CANDLE", "triggerTimeframe": "15m" },
+  "expression": { "type": "AND", "id": "g", "children": [
+    { "type": "CONDITION", "id": "a", "left": { "kind": "INDICATOR", "series": { "leg": "FUT", "timeframe": "15m", "candle": { "type": "NORMAL" } }, "indicator": "RSI", "params": { "period": 14 } }, "operator": "CROSSED_ABOVE", "right": { "kind": "CONSTANT", "value": 60 } },
+    { "type": "CONDITION", "id": "b", "left": { "kind": "INDICATOR", "series": { "leg": "CE",  "timeframe": "15m", "candle": { "type": "NORMAL" } }, "indicator": "RSI", "params": { "period": 14 } }, "operator": "CROSSED_ABOVE", "right": { "kind": "CONSTANT", "value": 60 } },
+    { "type": "CONDITION", "id": "c", "left": { "kind": "INDICATOR", "series": { "leg": "PE",  "timeframe": "15m", "candle": { "type": "NORMAL" } }, "indicator": "RSI", "params": { "period": 14 } }, "operator": "CROSSED_BELOW", "right": { "kind": "CONSTANT", "value": 40 } }
+  ] },
+  "alert": { "channels": { "telegram": true, "email": false }, "trigger": "ON_TRANSITION", "cooldownMinutes": 30, "oncePerCandle": true }
+}
+```
+
 ## C1. Semantics the code and tests enforce
 
-- **Evaluation unit** = strategy version × target contract. Operands address instruments by role (`TARGET`,
-  `UNDERLYING` = reference future, `FIXED`); dynamic strikes are re-resolved every cycle and never stored.
+- **Evaluation unit** = strategy version × unit (a strike with its FUT / CE / PE legs, or a future). Operands name a
+  leg; dynamic strikes are re-resolved every cycle and never stored.
 - **Clock.** Completed-candle mode evaluates a unit once per trigger candle, at T = that candle's close; every series
   reads its last candle **completed by T** (a 1h series on a 15m trigger uses the last closed hour, so a 1h cross stays
   true until the next hour closes). Live mode uses T = now and forming candles, every minute.
@@ -613,11 +650,11 @@ V1 keeps running untouched throughout Phases 3–9.
 
 ## C2. Verification
 
-- `npm test` — 57 MCX V2 tests in `tests/mcx2/` (calendar, universe, candles, evaluator, alert policy, validation,
+- `npm test` — 61 MCX V2 tests in `tests/mcx2/` (calendar, universe, candles, evaluator, alert policy, validation,
   scanner end-to-end, module boundary) on top of the existing suite. The scanner tests run **both Definition-of-Done
-  strategies side by side** on fixture data: strategy #1 alerts exactly one of the five GOLD ATM ± 2 CE strikes on
-  Telegram + Email with a 30-minute cooldown; strategy #2 independently alerts one SILVER OTM PE on 5-minute Heikin
-  Ashi candles; re-runs, lost state, pre-enable candles, a failing series, a failing channel, the budget and the
+  strategies side by side** on fixture data: strategy #1 alerts exactly one of the five GOLD ATM ± 2 strikes (CE leg) on
+  Telegram + Email with a 30-minute cooldown; strategy #2 independently alerts one SILVER OTM strike (PE leg) on
+  5-minute Heikin Ashi candles; a FUT + CE + PE strategy alerts only when all three legs agree; re-runs, lost state, pre-enable candles, a failing series, a failing channel, the budget and the
   lease are covered, as are explain and replay.
 - Checked locally against a throwaway database (no Kite): every tab renders in light and dark themes; creating,
   validating and enabling strategies works; enabling is refused while a chosen channel isn't configured; a scan
@@ -626,7 +663,7 @@ V1 keeps running untouched throughout Phases 3–9.
 ## C3. Before relying on it
 
 1. Run migration 006 on the production database (`npm run db:migrate`, or the next Vercel build runs it).
-2. Log in to Kite, open **MCX V2 → Instruments → Sync from Kite**, then check a strategy's **Resolved instruments**
+2. Log in to Kite, open **MCX V2 → Instruments → Sync from Kite**, then check a strategy's **Selected strikes**
    (ATM from the live future price) and **Explain now** during market hours.
 3. Configure channels: `TELEGRAM_BOT_TOKEN` (+ `TELEGRAM_CHAT_ID` or the MCX chat override) and, for email,
    `RESEND_API_KEY` + recipients and a verified sender in **MCX V2 → Settings**; use the test buttons.

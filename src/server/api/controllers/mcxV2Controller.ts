@@ -56,14 +56,14 @@ export function mcxV2Controller(ctx: AppContext) {
       const b = parse(z.object({ definition, forEnable: z.boolean().optional(), resolve: z.boolean().optional() }), req.body);
       return svc().validate(b.definition, { forEnable: b.forEnable, resolve: b.resolve });
     },
-    explainStrategy: (req) => svc().explain({ strategyId: req.params.id!, targetId: parse(z.object({ targetId: z.string().optional() }), req.body ?? {}).targetId }),
+    explainStrategy: (req) => svc().explain({ strategyId: req.params.id!, unitKey: parse(z.object({ unitKey: z.string().optional() }), req.body ?? {}).unitKey }),
     explainDraft: (req) => {
-      const b = parse(z.object({ definition, targetId: z.string().optional() }), req.body);
-      return svc().explain({ definition: b.definition, targetId: b.targetId });
+      const b = parse(z.object({ definition, unitKey: z.string().optional() }), req.body);
+      return svc().explain({ definition: b.definition, unitKey: b.unitKey });
     },
     replay: (req) => {
       const b = parse(
-        z.object({ strategyId: z.string().optional(), definition: definition.optional(), from: isoDate, to: isoDate, targetIds: z.array(z.string()).max(10).optional() }),
+        z.object({ strategyId: z.string().optional(), definition: definition.optional(), from: isoDate, to: isoDate, unitKeys: z.array(z.string()).max(10).optional() }),
         req.body,
       );
       return svc().replay(b);

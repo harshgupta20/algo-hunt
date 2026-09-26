@@ -7,11 +7,13 @@
 import type { ReactNode } from 'react';
 import clsx from 'clsx';
 import { CheckCircle2, CircleHelp, XCircle } from 'lucide-react';
-import type { AlertStateName, ConditionTrace, ExprTrace, McxInstrument, OperandTrace, SignalOutcome, TriState } from '@/shared/mcx';
+import type { AlertStateName, ConditionTrace, ExprTrace, Leg, McxInstrument, McxUnit, OperandTrace, SignalOutcome, TriState, UnitEvaluation } from '@/shared/mcx';
 import { InfoTip, Tooltip, type TooltipContent } from '../components/Tooltip';
 import { Badge } from '../components/ui';
 import { H } from './help';
-import { OUTCOME_LABEL, TRI_CLASS, fmtNum, instrumentLabel, istStamp, legClass, legShort } from './format';
+import { OUTCOME_LABEL, TRI_CLASS, fmtNum, instrumentLabel, istStamp, legClass, legShort, shortDate } from './format';
+
+export const LEG_TEXT: Record<Leg, string> = { FUT: 'text-leg-fut', CE: 'text-leg-ce', PE: 'text-leg-pe' };
 
 /** Captioned control: small label + ⓘ above the input (same look as the V1 builder). */
 export function Cell({ label, help, children, className }: { label: string; help: TooltipContent; children: ReactNode; className?: string }) {
@@ -54,6 +56,57 @@ export function InstrumentTag({ i, compact }: { i: McxInstrument; compact?: bool
       <span className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap">
         <span className={clsx('font-semibold', legClass(i))}>● {legShort(i)}</span>
         <span className={clsx('text-slate-200', compact ? 'font-mono' : '')}>{compact ? i.symbol : instrumentLabel(i)}</span>
+      </span>
+    </Tooltip>
+  );
+}
+
+/** A unit: a future, or "GOLD 75100 · 26 Oct ●●●" for a strike (dots = FUT / CE / PE legs; dim = not listed). */
+export function UnitTag({ unit }: { unit: McxUnit }) {
+  if (unit.strike === null && unit.fut) return <InstrumentTag i={unit.fut} />;
+  const legs: Array<[Leg, McxInstrument | null]> = [
+    ['FUT', unit.fut],
+    ['CE', unit.ce],
+    ['PE', unit.pe],
+  ];
+  return (
+    <Tooltip
+      content={{
+        title: `${unit.underlying} ${unit.strike} · options expiring ${unit.expiry}`,
+        body: legs.map(([l, i]) => `${l}: ${i ? i.symbol : 'not listed'}`).join(' · '),
+        note: unit.atmStrike !== undefined ? `ATM was ${unit.atmStrike} when resolved.` : undefined,
+      }}
+    >
+      <span className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap">
+        <span className="font-medium text-slate-200">
+          {unit.underlying} {unit.strike}
+        </span>
+        <span className="text-slate-500">{shortDate(unit.expiry)}</span>
+        <span className="inline-flex gap-1">
+          {legs.map(([l, i]) => (
+            <span key={l} className={clsx('text-[10px] font-semibold', i ? LEG_TEXT[l] : 'text-slate-600 line-through')}>
+              {l}
+            </span>
+          ))}
+        </span>
+        {unit.atmStrike !== undefined && unit.atmStrike === unit.strike && <span className="text-[10px] font-semibold text-accent-soft">ATM</span>}
+      </span>
+    </Tooltip>
+  );
+}
+
+/** "FUT 75,040 · CE 312.5 · PE 280" — each leg's close on the trigger candle. */
+export function LegPrices({ prices }: { prices: UnitEvaluation['prices'] | undefined }) {
+  const legs = (['FUT', 'CE', 'PE'] as const).filter((l) => prices?.[l] !== undefined);
+  if (!legs.length) return null;
+  return (
+    <Tooltip content={{ title: 'Closing prices', body: 'Each leg’s close on the evaluated trigger candle.' }}>
+      <span className="inline-flex gap-2 text-xs tabular-nums">
+        {legs.map((l) => (
+          <span key={l}>
+            <span className={clsx('font-semibold', LEG_TEXT[l])}>{l}</span> <span className="text-slate-300">{fmtNum(prices![l])}</span>
+          </span>
+        ))}
       </span>
     </Tooltip>
   );

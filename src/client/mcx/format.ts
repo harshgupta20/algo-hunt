@@ -39,6 +39,10 @@ export function legShort(i: Pick<McxInstrument, 'instrumentType' | 'optionType'>
   return i.instrumentType === 'MCX_FUTURE' ? 'FUT' : (i.optionType ?? 'OPT');
 }
 
+/** "26 Oct" from yyyy-mm-dd. */
+export const shortDate = (d: string | null | undefined) =>
+  d ? new Date(`${d}T00:00:00Z`).toLocaleString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }) : '';
+
 /** "GOLD 26 Oct 75100 CE" */
 export function instrumentLabel(i: McxInstrument): string {
   const exp = i.expiry ? new Date(`${i.expiry}T00:00:00Z`).toLocaleString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }) : '';

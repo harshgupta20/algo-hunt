@@ -3,6 +3,7 @@
  * conditions, alert policy, and the full preview shown before enabling.
  */
 import {
+  MCX2_ATM_PRESETS,
   MCX2_CANDLE_TYPES,
   MCX2_INDICATOR,
   MCX2_OPERATORS,
@@ -16,16 +17,16 @@ import type {
   Evaluation,
   ExpirySelector,
   ExprNode,
-  InstrumentRef,
+  Leg,
   McxStrategyDefinition,
+  McxUnit,
   Operand,
-  ReferenceSelector,
   SeriesSpec,
   StrikeSelector,
   Universe,
 } from './types';
 
-export function expiryText(e: ExpirySelector | ReferenceSelector): string {
+export function expiryText(e: ExpirySelector): string {
   switch (e.mode) {
     case 'CURRENT':
       return 'Current expiry';
@@ -37,8 +38,6 @@ export function expiryText(e: ExpirySelector | ReferenceSelector): string {
       return 'All expiries';
     case 'SPECIFIC':
       return `Expiry ${e.date}`;
-    case 'MATCH_TARGET':
-      return 'Future matching the target expiry';
   }
 }
 
@@ -46,15 +45,11 @@ export function strikeText(s: StrikeSelector): string {
   switch (s.mode) {
     case 'ATM_OFFSETS': {
       const sorted = [...new Set(s.offsets)].sort((a, b) => a - b);
-      const n = Math.max(...sorted.map(Math.abs));
-      const contiguous = sorted.length === 2 * n + 1 && sorted[0] === -n;
-      if (sorted.length === 1) return sorted[0] === 0 ? 'ATM' : `ATM ${sorted[0]! > 0 ? '+' : '−'} ${Math.abs(sorted[0]!)}`;
-      return contiguous ? `ATM ± ${n}` : `ATM offsets ${sorted.map((o) => (o > 0 ? `+${o}` : `${o}`)).join(', ')}`;
+      const preset = MCX2_ATM_PRESETS.find((p) => p.offsets.length === sorted.length && [...p.offsets].sort((a, b) => a - b).every((o, i) => o === sorted[i]));
+      if (preset) return preset.label;
+      if (sorted.length === 1) return `ATM ${sorted[0]! > 0 ? '+' : '−'} ${Math.abs(sorted[0]!)}`;
+      return `ATM offsets ${sorted.map((o) => (o > 0 ? `+${o}` : `${o}`)).join(', ')}`;
     }
-    case 'ITM':
-      return `${s.count} ITM strike${s.count === 1 ? '' : 's'}`;
-    case 'OTM':
-      return `${s.count} OTM strike${s.count === 1 ? '' : 's'}`;
     case 'SPECIFIC':
       return `Strikes ${s.strikes.join(', ')}`;
     case 'RANGE':
@@ -66,17 +61,19 @@ export function strikeText(s: StrikeSelector): string {
 
 export function universeText(u: Universe): string {
   const t = u.target;
-  if (t.kind === 'FUTURE') return `${u.underlying} — Future — ${expiryText(t.expiry)}`;
-  return `${u.underlying} — ${expiryText(t.expiry)} — ${strikeText(t.strikes)} ${t.optionTypes.join('/')}`;
+  if (t.kind === 'FUTURE') return `${u.underlying} — Futures — ${expiryText(t.expiry)}`;
+  return `${u.underlying} — Options — ${expiryText(t.expiry)} — ${strikeText(t.strikes)} (FUT · CE · PE per strike)`;
 }
 
-/** Short label of what a role points at, given the strategy universe. */
-export function roleText(ref: InstrumentRef, u?: Universe): string {
-  if (ref.role === 'FIXED') return ref.instrumentId;
-  if (!u) return ref.role === 'TARGET' ? 'Target' : 'Underlying';
-  if (ref.role === 'UNDERLYING') return `${u.underlying} FUT`;
-  const t = u.target;
-  return t.kind === 'FUTURE' ? `${u.underlying} FUT` : `${u.underlying} ${strikeText(t.strikes)} ${t.optionTypes.join('/')}`;
+/** A unit in words: the future's symbol, or "GOLD 75000 · exp 2026-10-26" for a strike. */
+export function unitText(u: McxUnit): string {
+  if (u.strike === null) return u.fut?.symbol ?? u.key;
+  return `${u.underlying} ${u.strike} · exp ${u.expiry}`;
+}
+
+/** Short label of a leg, e.g. "GOLD FUT", "GOLD CE". */
+export function legText(leg: Leg, u?: Universe): string {
+  return u ? `${u.underlying} ${leg}` : leg;
 }
 
 export function candleText(c: CandleSpec): string {
@@ -85,7 +82,7 @@ export function candleText(c: CandleSpec): string {
 }
 
 export function seriesText(s: SeriesSpec, u?: Universe): string {
-  return `[${roleText(s.instrument, u)}] [${MCX2_TIMEFRAME[s.timeframe].label}] [${candleText(s.candle)}]`;
+  return `[${legText(s.leg, u)}] [${MCX2_TIMEFRAME[s.timeframe].label}] [${candleText(s.candle)}]`;
 }
 
 const FIELD_LABEL: Record<string, string> = { open: 'Open', high: 'High', low: 'Low', close: 'Close', volume: 'Volume', oi: 'OI' };
@@ -159,7 +156,6 @@ export function policyText(p: AlertPolicy): string {
 export function strategySummary(d: McxStrategyDefinition): string {
   return [
     universeText(d.universe),
-    `Reference: ${expiryText(d.universe.reference.expiry)}`,
     `Evaluation: ${evaluationText(d.evaluation)}`,
     '',
     'IF',

@@ -12,7 +12,7 @@ import type {
   McxInstrument,
   McxStrategyDefinition,
   McxTimeframe,
-  ResolvedUnit,
+  McxUnit,
   SignalOutcome,
   TriState,
   UnitEvaluation,
@@ -27,9 +27,9 @@ import { CandleService } from '../data/CandleService';
 import type { McxDataProvider } from '../data/McxDataProvider';
 import type { McxInstrumentService } from '../data/McxInstrumentService';
 import { evaluateUnit, type UnitEvalInput } from '../engine/evaluator';
-import { fixedIdsOf, resolveRef, seriesOf } from '../engine/series';
+import { legInstrument, seriesOf } from '../engine/series';
 import type { McxStore } from '../persistence/McxStore';
-import { referenceFutures, resolveUniverse, unitForTarget } from '../universe/UniverseResolver';
+import { referenceFutures, resolveUniverse, unitForKey } from '../universe/UniverseResolver';
 
 export interface DryRunDeps {
   store: McxStore;
@@ -46,9 +46,7 @@ export interface DryStrategy {
 }
 
 export interface ExplainUnit {
-  target: McxInstrument;
-  reference: McxInstrument | null;
-  atmStrike?: number;
+  unit: McxUnit;
   evaluation?: UnitEvaluation;
   prevResult: TriState | null;
   /** What the alert policy would do with this evaluation given the unit's stored state. */
@@ -70,8 +68,8 @@ export interface ExplainResult {
 export interface ReplayRequest {
   from: string;
   to: string;
-  /** Contracts to replay; default = the strategy's current targets (current ATM). */
-  targetIds?: string[];
+  /** Units to replay (keys); default = the strategy's current units (current ATM). */
+  unitKeys?: string[];
 }
 
 export interface ReplayRow {
@@ -79,7 +77,7 @@ export interface ReplayRow {
   at: number;
   result: TriState;
   outcome?: SignalOutcome;
-  price?: number;
+  prices: UnitEvaluation['prices'];
   /** Conditions that were FALSE / UNKNOWN on this candle. */
   failing: string[];
   /** Full trace, kept for signal candles. */
@@ -87,8 +85,7 @@ export interface ReplayRow {
 }
 
 export interface ReplayUnit {
-  target: McxInstrument;
-  reference: McxInstrument | null;
+  unit: McxUnit;
   rows: ReplayRow[];
   signals: number;
 }
@@ -151,12 +148,12 @@ export function triggerOpens(cal: McxMarketCalendar, from: string, to: string, t
   return out.filter((o) => cal.candleClose(o, tf) <= until);
 }
 
-async function fetchFor(candles: CandleService, d: McxStrategyDefinition, units: ResolvedUnit[], fixed: Map<string, McxInstrument>, errors: string[]): Promise<void> {
+async function fetchFor(candles: CandleService, d: McxStrategyDefinition, units: McxUnit[], errors: string[]): Promise<void> {
   const jobs = new Map<string, { inst: McxInstrument; tf: McxTimeframe }>();
   const specs = seriesOf(d);
   for (const u of units) {
     for (const s of specs) {
-      const inst = resolveRef(s.instrument, u, fixed);
+      const inst = legInstrument(s.leg, u);
       if (inst) jobs.set(CandleService.nativeKey(inst, MCX2_TIMEFRAME[s.timeframe].native), { inst, tf: s.timeframe });
     }
   }
@@ -176,22 +173,16 @@ export class McxDryRun {
     return this.deps.clock ? this.deps.clock() : Date.now();
   }
 
-  private async context(d: McxStrategyDefinition) {
+  private async context() {
     const all = await this.deps.instruments.list();
-    const byId = new Map(all.map((i) => [i.id, i]));
-    const fixed = new Map<string, McxInstrument>();
-    for (const id of fixedIdsOf(d)) {
-      const inst = byId.get(id);
-      if (inst) fixed.set(id, inst);
-    }
     const calendar = new McxMarketCalendar(await this.deps.store.calendar.list());
-    return { all, byId, fixed, calendar };
+    return { all, calendar };
   }
 
-  async explain(s: DryStrategy, opts: { targetId?: string } = {}): Promise<ExplainResult> {
+  async explain(s: DryStrategy, opts: { unitKey?: string } = {}): Promise<ExplainResult> {
     const now = this.now();
     const d = s.definition;
-    const { all, byId, fixed, calendar } = await this.context(d);
+    const { all, calendar } = await this.context();
     const settings = await this.deps.store.settings.get();
     const errors: string[] = [];
     const today = istDate(now);
@@ -217,30 +208,29 @@ export class McxDryRun {
     }
     const res = resolveUniverse(d.universe, all, ltp, today);
     let units = res.units;
-    if (opts.targetId) {
-      const target = byId.get(opts.targetId);
-      if (!target) throw new Error(`Instrument ${opts.targetId} is not in the MCX V2 instrument master`);
-      units = [units.find((u) => u.target.id === target.id) ?? unitForTarget(d.universe, all, target, today)];
+    if (opts.unitKey) {
+      const unit = units.find((u) => u.key === opts.unitKey) ?? unitForKey(all, opts.unitKey, today);
+      if (!unit) throw new Error(`Unit ${opts.unitKey} is not in the MCX V2 instrument list`);
+      units = [unit];
     } else if (units.length > settings.universeCap) {
-      errors.push(`${units.length} targets exceed the cap of ${settings.universeCap}; showing the first ${settings.universeCap}`);
+      errors.push(`${units.length} units exceed the cap of ${settings.universeCap}; showing the first ${settings.universeCap}`);
       units = units.slice(0, settings.universeCap);
     }
 
     const candles = new CandleService(this.deps.provider, calendar, now);
-    await fetchFor(candles, d, units, fixed, errors);
+    await fetchFor(candles, d, units, errors);
     requests += candles.requests;
     const memo = new Map<string, unknown>();
-    const states = s.id ? new Map((await this.deps.store.units.list(s.id)).map((x) => [x.targetInstrumentId, x])) : new Map<string, UnitState>();
+    const states = s.id ? new Map((await this.deps.store.units.list(s.id)).map((x) => [x.unitKey, x])) : new Map<string, UnitState>();
 
     const out: ExplainUnit[] = units.map((unit) => {
-      const state = states.get(unit.target.id) ?? null;
+      const state = states.get(unit.key) ?? null;
       try {
         const input: UnitEvalInput = {
           strategyId: s.id ?? 'draft',
           version: s.version ?? 0,
           definition: d,
           unit,
-          fixed,
           lookup: candles.lookup,
           triggerOpenMs: open,
           at,
@@ -251,7 +241,7 @@ export class McxDryRun {
           prevOpen === null || prevAt === null ? null : evaluateUnit({ ...input, mode: 'COMPLETED_CANDLE', triggerOpenMs: prevOpen, at: prevAt }).result;
         const decision = decide({
           policy: d.alert,
-          state: state ?? initialState(s.id ?? 'draft', unit.target.id),
+          state: state ?? initialState(s.id ?? 'draft', unit.key),
           result: evaluation.result,
           prevResult,
           triggerCandle: evaluation.triggerCandle,
@@ -260,9 +250,9 @@ export class McxDryRun {
           enabledAt: s.enabledAt ?? null,
           mode: d.evaluation.mode,
         });
-        return { target: unit.target, reference: unit.reference, atmStrike: unit.atmStrike, evaluation, prevResult, outcome: decision.outcome, state };
+        return { unit, evaluation, prevResult, outcome: decision.outcome, state };
       } catch (err) {
-        return { target: unit.target, reference: unit.reference, atmStrike: unit.atmStrike, prevResult: null, state, error: msg(err) };
+        return { unit, prevResult: null, state, error: msg(err) };
       }
     });
 
@@ -289,18 +279,18 @@ export class McxDryRun {
     if (req.from > req.to) throw new Error('"from" must be on or before "to"');
     const span = (Date.parse(req.to) - Date.parse(req.from)) / DAY + 1;
     if (span > REPLAY_MAX_DAYS[tf]) throw new Error(`Replay of ${MCX2_TIMEFRAME[tf].label} candles is limited to ${REPLAY_MAX_DAYS[tf]} days`);
-    const { all, byId, fixed, calendar } = await this.context(d);
+    const { all, calendar } = await this.context();
     const today = istDate(now);
     const errors: string[] = [];
     const notes: string[] = [];
     let requests = 0;
 
-    let units: ResolvedUnit[];
-    if (req.targetIds?.length) {
-      units = req.targetIds.map((id) => {
-        const t = byId.get(id);
-        if (!t) throw new Error(`Instrument ${id} is not in the MCX V2 instrument master`);
-        return unitForTarget(d.universe, all, t, today);
+    let units: McxUnit[];
+    if (req.unitKeys?.length) {
+      units = req.unitKeys.map((key) => {
+        const u = unitForKey(all, key, today);
+        if (!u) throw new Error(`Unit ${key} is not in the MCX V2 instrument list`);
+        return u;
       });
     } else {
       const refs = referenceFutures(d.universe, all, today);
@@ -312,10 +302,10 @@ export class McxDryRun {
       const res = resolveUniverse(d.universe, all, ltp, today);
       errors.push(...res.errors);
       units = res.units;
-      notes.push('Targets are the strategy’s CURRENT targets (today’s ATM); past ATM shifts are not replayed. Pick contracts to replay specific strikes.');
+      if (d.universe.target.kind === 'OPTION' && d.universe.target.strikes.mode === 'ATM_OFFSETS') notes.push('Strikes are today’s ATM selection; past ATM shifts are not replayed.');
     }
     if (units.length > REPLAY_MAX_UNITS) {
-      notes.push(`Replaying the first ${REPLAY_MAX_UNITS} of ${units.length} targets`);
+      notes.push(`Replaying the first ${REPLAY_MAX_UNITS} of ${units.length} units`);
       units = units.slice(0, REPLAY_MAX_UNITS);
     }
     if (d.evaluation.mode === 'LIVE_CANDLE') notes.push('Live-candle strategies are replayed on completed candles (intra-candle history is not available)');
@@ -323,20 +313,19 @@ export class McxDryRun {
     // The replay clock stops at the end of `to` (or now): later candles never leak in.
     const until = Math.min(now, dateStartMs(addDays(req.to, 1)));
     const candles = new CandleService(this.deps.provider, calendar, until, Infinity, { from: req.from, to: req.to });
-    await fetchFor(candles, d, units, fixed, errors);
+    await fetchFor(candles, d, units, errors);
     requests += candles.requests;
 
     const opens = triggerOpens(calendar, req.from, req.to, tf, candles.now);
     const memo = new Map<string, unknown>();
     const out: ReplayUnit[] = units.map((unit) => {
       const rows: ReplayRow[] = [];
-      let state = initialState(s.id ?? 'replay', unit.target.id);
+      let state = initialState(s.id ?? 'replay', unit.key);
       const base: Omit<UnitEvalInput, 'triggerOpenMs' | 'at'> = {
         strategyId: s.id ?? 'replay',
         version: s.version ?? 0,
         definition: d,
         unit,
-        fixed,
         lookup: candles.lookup,
         mode: 'COMPLETED_CANDLE',
         memo,
@@ -368,7 +357,7 @@ export class McxDryRun {
           at,
           result: e.result,
           outcome: decision.outcome,
-          price: e.price,
+          prices: e.prices,
           failing: leaves(e.trace)
             .filter((c) => c.result !== 'TRUE')
             .map((c) => (c.result === 'UNKNOWN' && c.reason ? `${c.text} — ${c.reason}` : c.text)),
@@ -376,7 +365,7 @@ export class McxDryRun {
         });
         prev = e.result;
       }
-      return { target: unit.target, reference: unit.reference, rows, signals };
+      return { unit, rows, signals };
     });
 
     return { from: req.from, to: req.to, triggerTimeframe: tf, candles: opens.length, units: out, notes, errors, requests };

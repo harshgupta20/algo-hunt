@@ -8,8 +8,8 @@ import type { McxAlert } from '@/shared/mcx';
 import { Tooltip } from '../components/Tooltip';
 import { Badge, Card, EmptyState, IconButton, Spinner, Tabs } from '../components/ui';
 import { mcxApi } from './api';
-import { InstrumentTag, OutcomeBadge, TraceView, TriBadge } from './components';
-import { candleRange, fmtNum, istStampIso } from './format';
+import { LegPrices, OutcomeBadge, TraceView, TriBadge, UnitTag } from './components';
+import { candleRange, istStampIso } from './format';
 import { H } from './help';
 
 const STATUS_TONE: Record<McxAlert['status'], 'bull' | 'warn' | 'bear' | 'accent'> = { SENT: 'bull', PARTIAL: 'warn', FAILED: 'bear', ACKNOWLEDGED: 'accent' };
@@ -32,13 +32,13 @@ export function AlertRow({ alert: a }: { alert: McxAlert }) {
             {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
           </button>
         </Tooltip>
-        <InstrumentTag i={a.instrument} />
+        <UnitTag unit={a.unit} />
         <span className="text-xs text-slate-300 font-medium">{a.strategyName}</span>
         <Tooltip content={H.strategy.version}>
           <span className="text-[11px] text-slate-500">v{a.version}</span>
         </Tooltip>
         <span className="text-xs text-slate-400">{candleRange(a.candleTime, a.triggerTimeframe)}</span>
-        {a.price !== null && <span className="text-xs tabular-nums text-slate-300">@ {fmtNum(a.price)}</span>}
+        <LegPrices prices={a.evaluation.prices} />
         <Tooltip content={{ ...H.alerts.status, note: a.deliveries.map((d) => `${d.channel}: ${d.status}${d.error ? ` — ${d.error}` : ''}`).join(' · ') || 'Dashboard only (no channel)' }}>
           <Badge tone={STATUS_TONE[a.status]}>{a.status === 'ACKNOWLEDGED' ? 'Acknowledged' : a.deliveries.length ? a.status.toLowerCase() : 'recorded'}</Badge>
         </Tooltip>
@@ -51,9 +51,6 @@ export function AlertRow({ alert: a }: { alert: McxAlert }) {
       </div>
       {open && (
         <div className="mt-2 ml-7 rounded-lg border border-ink-700/60 bg-ink-850 p-3">
-          {a.evaluation.reference && a.evaluation.reference.id !== a.instrument.id && (
-            <p className="text-[11px] text-slate-500 mb-1">Reference future: {a.evaluation.reference.symbol}</p>
-          )}
           <TraceView trace={a.evaluation.trace} />
         </div>
       )}
@@ -129,7 +126,7 @@ export function AlertsTab() {
                 <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500 bg-ink-850">
                   <tr>
                     <th className="px-4 py-2">Recorded</th>
-                    <th className="px-4 py-2">Contract</th>
+                    <th className="px-4 py-2">Strike / future</th>
                     <th className="px-4 py-2">Candle</th>
                     <th className="px-4 py-2">Result</th>
                     <th className="px-4 py-2">Outcome</th>
@@ -141,7 +138,7 @@ export function AlertsTab() {
                     <tr key={s.id} className={clsx(s.outcome !== 'ALERTED' && 'text-slate-400')}>
                       <td className="px-4 py-2 whitespace-nowrap">{istStampIso(s.createdAt)}</td>
                       <td className="px-4 py-2">
-                        <InstrumentTag i={s.evaluation.target} />
+                        <UnitTag unit={s.evaluation.unit} />
                       </td>
                       <td className="px-4 py-2 whitespace-nowrap">{candleRange(s.candleTime, s.triggerTimeframe)}</td>
                       <td className="px-4 py-2">

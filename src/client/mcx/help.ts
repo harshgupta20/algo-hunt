@@ -7,7 +7,7 @@ import type { TooltipContent } from '../components/Tooltip';
 export const H = {
   nav: {
     title: 'MCX V2 (beta)',
-    body: 'The new, independent MCX alerting system: explicit universes (expiry, CE/PE, ATM ± N / ITM / OTM), per-condition timeframe and candle type, AND/OR/NOT logic, Telegram + Email alerts with cooldowns, and full “why did it (not) fire” explanations.',
+    body: 'The new, independent MCX alerting system: pick a product, expiry and strikes, then write conditions on the FUT, CE and PE legs — each with its own timeframe and candle type, combined with AND/OR/NOT — and get Telegram + Email alerts with cooldowns and full “why did it (not) fire” explanations.',
     note: 'Runs alongside the current MCX tab — nothing there changes.',
   },
   tabs: {
@@ -38,8 +38,8 @@ export const H = {
     enable: { title: 'Enable', body: 'Start scanning. Candles that closed before now never alert, so enabling never sends old signals.', note: 'Blocked until validation passes and the chosen channels are configured.' },
     disable: { title: 'Disable', body: 'Stop scanning. History is kept; enabling again starts fresh.' },
     version: { title: 'Version', body: 'Strategies are versioned: every save is immutable, and each alert records the version that produced it.' },
-    units: { title: 'Instruments being scanned', body: 'One evaluation unit per target contract. Shows each contract’s last result and alert state.' },
-    explain: { title: 'Explain now', body: 'Evaluates every target right now with live data and shows each condition’s values — why it would or wouldn’t fire. Nothing is saved or sent.' },
+    units: { title: 'Strikes / futures being scanned', body: 'One evaluation unit per strike (with its FUT, CE and PE) or per future. Shows each one’s last result and alert state.' },
+    explain: { title: 'Explain now', body: 'Evaluates every strike / future right now with live data and shows each condition’s values — why it would or wouldn’t fire. Nothing is saved or sent.' },
     replay: { title: 'Replay', body: 'Steps the strategy through past candles and lists where it would have signalled, with the failing conditions on every other candle.' },
   } satisfies Record<string, TooltipContent>,
 
@@ -47,31 +47,41 @@ export const H = {
     name: { title: 'Strategy name', body: 'Shown in alerts, history and messages.' },
     description: { title: 'Description', body: 'Optional notes for yourself — the idea behind the strategy.' },
     product: { title: 'Product (WHAT)', body: 'The MCX commodity this strategy scans. Only products with synced contracts can be used.' },
-    targetKind: { title: 'Instrument type', body: 'Future: one signal per futures contract. Option: one signal per selected option contract (CE / PE, strikes).' },
+    targetKind: {
+      title: 'Scan futures or options',
+      body: 'Futures: one alert per futures contract; conditions use the FUT leg. Options: one alert per strike; conditions can use three legs — FUT (the future these options expire into), CE and PE at that strike.',
+    },
     expiry: {
       title: 'Expiry',
       body: 'Which contract month(s): Current (nearest), Next, Far, every listed one, or a specific date.',
       note: 'MCX option expiries differ from futures expiries (options expire a few days earlier).',
     },
-    optionTypes: { title: 'Option type', body: 'Calls (CE), puts (PE) or both. Each selected contract is evaluated on its own.' },
     strikes: {
       title: 'Strikes',
-      body: 'ATM ± N uses listed strikes around the at-the-money strike (from the reference future’s live price). ITM / OTM pick N strikes in or out of the money. Specific / Range / All select fixed strikes.',
+      body: 'Around ATM picks listed strikes relative to the at-the-money strike (from the future’s live price). Specific / Range / All select fixed strikes. Each strike is evaluated on its own, with its CE and PE.',
       note: 'ATM-relative selections are re-resolved every scanner cycle, so they follow the market.',
     },
-    offsets: { title: 'ATM offsets', body: 'Steps along the listed strike ladder: 0 = ATM, −1 = one strike below, +2 = two above. “ATM ± 2” = −2, −1, 0, +1, +2.' },
-    count: { title: 'Number of strikes', body: 'How many strikes to pick, starting next to ATM (ATM itself is excluded).' },
-    reference: {
-      title: 'Reference future (UNDERLYING)',
-      body: 'The future used for ATM and for conditions on “Underlying”. “Matching the target” picks the future the option devolves into (first future expiring on/after the option).',
+    atmPreset: {
+      title: 'Strikes around ATM',
+      body: 'ATM, ATM ± N, or N strikes above / below ATM. Out-of-the-money calls are above ATM; out-of-the-money puts are below.',
     },
-    resolved: { title: 'Resolved instruments', body: 'The exact contracts the strategy scans right now, with the ATM strike and live quotes. This is what the scanner will evaluate.', note: 'Capped per strategy (Settings) to protect Kite’s rate limits.' },
+    offsets: { title: 'ATM offsets', body: 'Steps along the listed strike ladder: 0 = ATM, −1 = one strike below, +2 = two above. “ATM ± 2” = −2, −1, 0, +1, +2.' },
+    resolved: {
+      title: 'Selected strikes / futures',
+      body: 'Exactly what the strategy scans right now, with the ATM strike and live quotes for each leg. This is what the scanner will evaluate.',
+      note: 'Capped per strategy (Settings) to protect Kite’s rate limits.',
+    },
     mode: {
       title: 'Evaluation mode',
       body: 'Completed candle (recommended): every condition reads its last CLOSED candle, evaluated once when the trigger candle closes — no repainting. Live candle: reads forming candles, re-evaluated every minute.',
     },
     triggerTf: { title: 'Trigger timeframe (clock)', body: 'When the strategy is evaluated: at every close of this timeframe’s candle. Conditions may use other timeframes — each reads its own last closed candle at that moment.' },
     group: { title: 'Group', body: 'AND: every child must be true. OR: at least one. Groups can be nested for logic like (A AND B) OR C.' },
+    conditions: {
+      title: 'Conditions',
+      body: 'Each condition reads one leg — FUT, CE or PE of the strike — on its own timeframe and candle type. Combine them with AND / OR groups and NOT.',
+      example: 'FUT RSI(14) crossed above 60 AND CE RSI(14) crossed above 60 AND PE RSI(14) crossed below 40',
+    },
     not: { title: 'NOT', body: 'Inverts the wrapped condition or group. An unknown result (not enough data) stays unknown — it never counts as “not true”.' },
     addCondition: { title: 'Add condition', body: 'Compare two values: an indicator, price field or OI change against a number or another value.' },
     addPattern: { title: 'Add candlestick pattern', body: 'True on the candle that completes the pattern (e.g. Hammer), on the series you choose.' },
@@ -81,9 +91,10 @@ export const H = {
     remove: { title: 'Remove', body: 'Remove this item from the strategy.' },
     wrapNot: { title: 'Wrap in NOT', body: 'Make this item true only when its content is false.' },
     unwrapNot: { title: 'Remove NOT', body: 'Unwrap this item from its NOT.' },
-    instrumentRole: {
-      title: 'Instrument',
-      body: 'Target: the contract that produces the signal (each option / future in the universe). Underlying: its reference future. Fixed: one specific contract.',
+    leg: {
+      title: 'Leg',
+      body: 'Which contract of the strike this value reads: FUT = the future these options expire into, CE = the call at this strike, PE = the put at this strike.',
+      note: 'Futures strategies only have the FUT leg.',
     },
     timeframe: { title: 'Timeframe', body: 'Candle size for this value. 2h / 4h are built from 1h candles and Weekly from daily ones, aligned to the MCX session.' },
     candle: {
@@ -110,8 +121,8 @@ export const H = {
       title: 'Alert when',
       body: 'Becomes true (recommended): alert on the first candle the strategy turns true after being false. While true: alert on every trigger candle it stays true (subject to cooldown).',
     },
-    cooldown: { title: 'Cooldown', body: 'After an alert, further alerts for the same contract are suppressed for this many minutes (they are still recorded as suppressed signals).' },
-    oncePerCandle: { title: 'Once per candle', body: 'At most one alert per contract per trigger candle. Always on in completed-candle mode; in live mode, turning it off allows one alert per minute.' },
+    cooldown: { title: 'Cooldown', body: 'After an alert, further alerts for the same strike (or future) are suppressed for this many minutes (they are still recorded as suppressed signals).' },
+    oncePerCandle: { title: 'Once per candle', body: 'At most one alert per strike (or future) per trigger candle. Always on in completed-candle mode; in live mode, turning it off allows one alert per minute.' },
     save: { title: 'Save', body: 'Save as a new version. An enabled strategy stays enabled (its unit states reset).' },
     cancel: { title: 'Close editor', body: 'Discard unsaved changes and return to the list.' },
     preview: { title: 'Preview', body: 'The whole strategy in words — read this before enabling.' },
@@ -120,7 +131,7 @@ export const H = {
   } satisfies Record<string, TooltipContent>,
 
   unit: {
-    IDLE: { title: 'Idle', body: 'Waiting for the strategy to become true on this contract.' },
+    IDLE: { title: 'Idle', body: 'Waiting for the strategy to become true on this strike (or future).' },
     TRIGGERED: { title: 'Triggered', body: 'Alerted on its latest trigger candle.' },
     COOLDOWN: { title: 'Cooldown', body: 'Alerted recently; further alerts are suppressed until the cooldown ends.' },
     ACKNOWLEDGED: { title: 'Acknowledged', body: 'You acknowledged the alert; it stays quiet until the strategy turns false again.' },
@@ -134,10 +145,10 @@ export const H = {
   } satisfies Record<string, TooltipContent>,
 
   alerts: {
-    acknowledge: { title: 'Acknowledge', body: 'Mark as seen. This contract won’t alert again for the strategy until the strategy turns false and then true again.' },
+    acknowledge: { title: 'Acknowledge', body: 'Mark as seen. This strike / future won’t alert again for the strategy until the strategy turns false and then true again.' },
     status: { title: 'Delivery status', body: 'Sent: every chosen channel delivered. Partial: one failed. Failed: none delivered. Hover a channel for its result.' },
     outcome: { title: 'Signal outcome', body: 'Every time a strategy fires, a signal is recorded — delivered, or suppressed with the reason (cooldown, acknowledged, before enable, too late).' },
-    why: { title: 'Why did it fire?', body: 'The full evaluation behind this alert: every condition with its values, the candles they came from and the reference future.' },
+    why: { title: 'Why did it fire?', body: 'The full evaluation behind this alert: every condition with its leg, values and the candles they came from.' },
     view: { title: 'View', body: 'Choose which records to show.' },
   } satisfies Record<string, TooltipContent>,
 
@@ -157,7 +168,7 @@ export const H = {
     telegramChat: { title: 'Telegram chat id', body: 'Where MCX V2 alerts go. Leave empty to use TELEGRAM_CHAT_ID from the environment. The bot token always comes from TELEGRAM_BOT_TOKEN.' },
     emailTo: { title: 'Email recipients', body: 'Comma-separated addresses. Requires RESEND_API_KEY in the environment.' },
     emailFrom: { title: 'Sender', body: 'The From address. Use a domain verified in Resend, or onboarding@resend.dev for testing (delivers only to your Resend account email).' },
-    cap: { title: 'Instruments per strategy', body: 'Maximum target contracts one strategy may scan. Larger universes are cut and flagged.' },
+    cap: { title: 'Strikes / futures per strategy', body: 'Maximum units (strikes or futures) one strategy may scan. Larger selections are cut and flagged.' },
     budget: { title: 'Requests per cycle', body: 'Maximum candle requests per scanner cycle (Kite allows ~3 per second).' },
     test: { title: 'Send a test', body: 'Sends a test message on this channel right now.' },
     calendar: { title: 'Market calendar', body: 'MCX holidays and special sessions (e.g. Muhurat trading). Weekdays default to 09:00–23:30/23:55; weekends are closed.' },

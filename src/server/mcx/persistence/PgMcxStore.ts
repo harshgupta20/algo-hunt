@@ -9,15 +9,17 @@ import type {
   McxAlert,
   McxDelivery,
   McxInstrument,
+  McxUnit,
   McxScanRun,
   McxSettings,
   McxSignal,
   McxStrategy,
   McxStrategyDefinition,
   McxStrategyVersion,
+  UnitEvaluation,
   UnitState,
 } from '@/shared/mcx';
-import { DEFAULT_MCX_SETTINGS } from '@/shared/mcx';
+import { DEFAULT_MCX_SETTINGS, upgradeDefinition } from '@/shared/mcx';
 import { getPool } from '../../db/pool';
 import type { AlertFilters, McxStore } from './McxStore';
 
@@ -43,6 +45,26 @@ function mapInstrument(r: any): McxInstrument {
   };
 }
 
+/** v1 rows stored a single instrument per unit; present them as a unit. */
+function unitOf(v: any): McxUnit {
+  if (v && typeof v === 'object' && 'key' in v) return v as McxUnit;
+  const i = v as McxInstrument;
+  return {
+    key: i?.id ?? 'unknown',
+    underlying: i?.underlying ?? '',
+    expiry: i?.expiry ?? null,
+    strike: i?.strike ?? null,
+    fut: i?.instrumentType === 'MCX_FUTURE' ? i : null,
+    ce: i?.optionType === 'CE' ? i : null,
+    pe: i?.optionType === 'PE' ? i : null,
+  };
+}
+
+function evaluationOf(e: any): UnitEvaluation {
+  if (!e || e.unit) return e;
+  return { ...e, unit: unitOf(e.target), prices: e.prices ?? {} };
+}
+
 function mapStrategy(r: any): McxStrategy {
   return {
     id: r.id,
@@ -50,7 +72,7 @@ function mapStrategy(r: any): McxStrategy {
     enabled: r.enabled,
     enabledAt: iso(r.enabled_at),
     version: Number(r.current_version),
-    definition: r.definition,
+    definition: upgradeDefinition(r.definition),
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
   };
@@ -59,14 +81,14 @@ function mapStrategy(r: any): McxStrategy {
 function mapUnit(r: any): UnitState {
   return {
     strategyId: r.strategy_id,
-    targetInstrumentId: r.target_instrument_id,
+    unitKey: r.target_instrument_id,
     state: r.state,
     lastEvaluatedCandle: num(r.last_evaluated_candle),
     lastResult: r.last_result ?? null,
     lastSignalCandle: num(r.last_signal_candle),
     lastAlertAt: iso(r.last_alert_at),
     cooldownUntil: iso(r.cooldown_until),
-    lastEvaluation: r.last_evaluation ?? null,
+    lastEvaluation: r.last_evaluation ? evaluationOf(r.last_evaluation) : null,
     updatedAt: iso(r.updated_at) ?? undefined,
   };
 }
@@ -77,12 +99,12 @@ function mapSignal(r: any): McxSignal {
     identity: r.identity,
     strategyId: r.strategy_id,
     version: Number(r.version),
-    targetInstrumentId: r.target_instrument_id,
+    unitKey: r.target_instrument_id,
     triggerTimeframe: r.trigger_timeframe,
     candleTime: Number(r.candle_time),
     signalType: r.signal_type,
     outcome: r.outcome,
-    evaluation: r.evaluation,
+    evaluation: evaluationOf(r.evaluation),
     createdAt: iso(r.created_at)!,
   };
 }
@@ -95,11 +117,10 @@ function mapAlert(r: any, deliveries: McxDelivery[]): McxAlert {
     strategyName: r.strategy_name,
     version: Number(r.version),
     status: r.status,
-    instrument: r.instrument,
+    unit: unitOf(r.instrument),
     triggerTimeframe: r.trigger_timeframe,
     candleTime: Number(r.candle_time),
-    price: num(r.price),
-    evaluation: r.evaluation,
+    evaluation: evaluationOf(r.evaluation),
     deliveries,
     acknowledgedAt: iso(r.acknowledged_at),
     createdAt: iso(r.created_at)!,
@@ -218,7 +239,7 @@ export class PgMcxStore implements McxStore {
     remove: async (id: string) => ((await this.pool.query('DELETE FROM mcx_strategies WHERE id = $1', [id])).rowCount ?? 0) > 0,
     versions: async (id: string): Promise<McxStrategyVersion[]> =>
       (await this.pool.query('SELECT version, definition, created_at FROM mcx_strategy_versions WHERE strategy_id = $1 ORDER BY version DESC', [id])).rows.map(
-        (r: any) => ({ version: Number(r.version), definition: r.definition, createdAt: iso(r.created_at)! }),
+        (r: any) => ({ version: Number(r.version), definition: upgradeDefinition(r.definition), createdAt: iso(r.created_at)! }),
       ),
   };
 
@@ -228,8 +249,8 @@ export class PgMcxStore implements McxStore {
         ? await this.pool.query('SELECT * FROM mcx_unit_state WHERE strategy_id = $1', [strategyId])
         : await this.pool.query('SELECT * FROM mcx_unit_state')
       ).rows.map(mapUnit),
-    get: async (strategyId: string, target: string) => {
-      const r = (await this.pool.query('SELECT * FROM mcx_unit_state WHERE strategy_id = $1 AND target_instrument_id = $2', [strategyId, target])).rows[0];
+    get: async (strategyId: string, unitKey: string) => {
+      const r = (await this.pool.query('SELECT * FROM mcx_unit_state WHERE strategy_id = $1 AND target_instrument_id = $2', [strategyId, unitKey])).rows[0];
       return r ? mapUnit(r) : null;
     },
     upsert: async (s: UnitState) => {
@@ -243,7 +264,7 @@ export class PgMcxStore implements McxStore {
            cooldown_until = EXCLUDED.cooldown_until, last_evaluation = EXCLUDED.last_evaluation, updated_at = now()`,
         [
           s.strategyId,
-          s.targetInstrumentId,
+          s.unitKey,
           s.state,
           s.lastEvaluatedCandle,
           s.lastResult,
@@ -265,7 +286,7 @@ export class PgMcxStore implements McxStore {
         await this.pool.query(
           `INSERT INTO mcx_signals (identity, strategy_id, version, target_instrument_id, trigger_timeframe, candle_time, signal_type, outcome, evaluation)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (identity) DO NOTHING RETURNING *`,
-          [s.identity, s.strategyId, s.version, s.targetInstrumentId, s.triggerTimeframe, s.candleTime, s.signalType, s.outcome, JSON.stringify(s.evaluation)],
+          [s.identity, s.strategyId, s.version, s.unitKey, s.triggerTimeframe, s.candleTime, s.signalType, s.outcome, JSON.stringify(s.evaluation)],
         )
       ).rows[0];
       return r ? mapSignal(r) : null;
@@ -295,7 +316,8 @@ export class PgMcxStore implements McxStore {
         await this.pool.query(
           `INSERT INTO mcx_alerts (signal_id, strategy_id, strategy_name, version, status, instrument, trigger_timeframe, candle_time, price, evaluation)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-          [a.signalId, a.strategyId, a.strategyName, a.version, a.status, JSON.stringify(a.instrument), a.triggerTimeframe, a.candleTime, a.price, JSON.stringify(a.evaluation)],
+          // `instrument` holds the unit (legs); `price` is unused since v2 (leg prices live in the evaluation).
+          [a.signalId, a.strategyId, a.strategyName, a.version, a.status, JSON.stringify(a.unit), a.triggerTimeframe, a.candleTime, null, JSON.stringify(a.evaluation)],
         )
       ).rows[0];
       return mapAlert(r, []);

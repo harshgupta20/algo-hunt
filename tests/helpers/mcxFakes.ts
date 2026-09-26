@@ -114,7 +114,7 @@ export class MemoryMcxStore implements McxStore {
     list: async (strategyId?: string) => clone([...this.data.units.values()].filter((u) => !strategyId || u.strategyId === strategyId)),
     get: async (strategyId: string, target: string) => clone(this.data.units.get(`${strategyId}|${target}`) ?? null),
     upsert: async (s: UnitState) => {
-      this.data.units.set(`${s.strategyId}|${s.targetInstrumentId}`, clone({ ...s, updatedAt: new Date(this.clock()).toISOString() }));
+      this.data.units.set(`${s.strategyId}|${s.unitKey}`, clone({ ...s, updatedAt: new Date(this.clock()).toISOString() }));
     },
     clear: async (strategyId: string) => {
       for (const k of [...this.data.units.keys()]) if (k.startsWith(`${strategyId}|`)) this.data.units.delete(k);
@@ -351,8 +351,12 @@ export function candlesAt(times: number[], closes: number[], opts: { volume?: nu
   });
 }
 
-export const TARGET = (timeframe: SeriesSpec['timeframe'], candle: SeriesSpec['candle'] = { type: 'NORMAL' }): SeriesSpec => ({ instrument: { role: 'TARGET' }, timeframe, candle });
-export const UNDERLYING = (timeframe: SeriesSpec['timeframe'], candle: SeriesSpec['candle'] = { type: 'NORMAL' }): SeriesSpec => ({ instrument: { role: 'UNDERLYING' }, timeframe, candle });
+const legSeries =
+  (leg: SeriesSpec['leg']) =>
+  (timeframe: SeriesSpec['timeframe'], candle: SeriesSpec['candle'] = { type: 'NORMAL' }): SeriesSpec => ({ leg, timeframe, candle });
+export const FUT = legSeries('FUT');
+export const CE = legSeries('CE');
+export const PE = legSeries('PE');
 
 export const ind = (series: SeriesSpec, indicator: string, params: Record<string, number>, extra: Partial<Extract<Operand, { kind: 'INDICATOR' }>> = {}): Operand => ({
   kind: 'INDICATOR',
