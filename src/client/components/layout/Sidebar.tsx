@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { Tooltip } from '../Tooltip';
 import { HELP } from '../../lib/help';
 import clsx from 'clsx';
-import { Activity, BellRing, Coins, Gem, LayoutDashboard, Settings, SlidersHorizontal, Workflow } from 'lucide-react';
+import { Activity, BellRing, Coins, Gem, LayoutDashboard, Layers, Settings, SlidersHorizontal, Workflow } from 'lucide-react';
 
 const NAV = [
   // Overview: live monitors, latest alerts and performance analytics.
@@ -19,6 +19,8 @@ const NAV = [
   { to: '/mcx', label: 'MCX', icon: Coins, help: HELP.nav.mcx },
   // MCX V2 (beta): the independent MCX alerting subsystem, alongside the current MCX tab.
   { to: '/mcx-v2', label: 'MCX V2 · beta', icon: Gem, help: HELP.nav.mcxV2 },
+  // V2: product-agnostic strategies connected to any product (NSE / MCX).
+  { to: '/v2', label: 'V2 · beta', icon: Layers, help: HELP.nav.v2 },
   { to: '/settings', label: 'Settings', icon: Settings, help: HELP.nav.settings },
 ]
 

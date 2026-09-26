@@ -310,3 +310,33 @@ The independent MCX alerting subsystem ([mcx-v2-architecture.md](mcx-v2-architec
 The cron route `/api/cron/tick` also runs the MCX V2 scan after the V1 evaluation (its own lease and error
 handling) and adds `mcxV2: { status, skipped?, units, alerts, errors }` to its response.
 
+### 4.13 V2 — Strategy + Product = Alert
+
+Product-agnostic strategies and product connections ([v2-architecture.md](v2-architecture.md)). Served by
+[v2Controller.ts](../src/server/api/controllers/v2Controller.ts); types in [src/shared/v2/types.ts](../src/shared/v2/types.ts).
+Validation failures return `400` with `{ error, issues: [{ path, message, severity }] }`.
+
+| Method | Path | Params / body | Response |
+| --- | --- | --- | --- |
+| GET | `/api/v2/status` | — | Markets (NSE, MCX), Kite, instruments / products, strategies, connections, last scan, channels |
+| GET | `/api/v2/products` | `search`, `kind` (`INDEX`\|`STOCK`\|`COMMODITY`), `market`, `ids` (comma-separated), `limit` | `V2Product[]` (legs available, expiries, strike gap, lot) |
+| GET | `/api/v2/products/:id` | — | `V2Product` |
+| POST | `/api/v2/products/sync` | — | `{ instruments, products, syncedAt }` (NSE, BSE, NFO, BFO, MCX; needs Kite) |
+| GET / POST | `/api/v2/strategies` | POST `{ definition }` (1–4 legs) | list with connection counts · `201` strategy |
+| POST | `/api/v2/strategies/validate` | `{ definition }` | `{ issues, valid, summary }` |
+| GET / PUT / DELETE | `/api/v2/strategies/:id` | PUT `{ definition }` → new version | strategy · `204` |
+| POST | `/api/v2/strategies/:id/duplicate` · GET `/versions` | — | copy · versions |
+| GET / POST | `/api/v2/connections` | GET `?strategyId=` · POST `{ strategyId, productIds[], config }` | rows with product + strategy name · `201` one connection per product (switched off) |
+| POST | `/api/v2/connections/validate` · `/preview` | `{ strategyId \| definition, productId, config }` | issues · contracts per leg now (units, ATM reference, quotes) |
+| POST | `/api/v2/connections/explain` | `{ definition, productId, config? }` | Explain an unsaved strategy on a product now |
+| PUT / DELETE | `/api/v2/connections/:id` | PUT `{ config }` | connection · `204` |
+| POST | `/api/v2/connections/:id/enable` · `/disable` · `/explain` | — | connection · explain result |
+| GET | `/api/v2/connections/:id/units` | — | `UnitState[]` |
+| POST | `/api/v2/compare` | `{ strategyId \| definition, products[] (≤ 20), from, to, expiry?, strikeShift?, trigger?, cooldownMinutes? }` | Per product: alerts (with trace), candles, decided (coverage), contracts, notes — sorted by alerts |
+| GET | `/api/v2/alerts` · POST `/alerts/:id/acknowledge` · GET `/signals` | `connectionId`, `strategyId`, `active=1`, `limit` | alerts / signals |
+| POST | `/api/v2/scan` · GET `/scan-runs` | `{ force? }` · `limit` | `{ run, skipped? }` · runs |
+| GET / PUT | `/api/v2/settings` · `/calendar` | settings `{ telegramChatId?, emailRecipients, emailFrom, requestBudget }` · `{ entries: [{ market, date, kind, … }] }` | saved values |
+| GET | `/api/v2/channels` · POST `/channels/test` | `{ channel }` | status · `{ ok }` |
+
+`/api/cron/tick` also runs the V2 scan (own lease) and adds `v2: { status, skipped?, units, alerts, errors }`.
+

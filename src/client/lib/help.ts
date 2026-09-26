@@ -62,6 +62,11 @@ export const HELP = {
       body: 'The new, independent MCX alerting system: explicit contracts (expiry, CE/PE, ATM ± N / ITM / OTM), per-condition timeframe and candle type, AND/OR/NOT logic, Telegram + Email alerts with cooldowns, and “why did it fire” explanations.',
       note: 'Runs alongside the MCX tab — nothing there changes.',
     },
+    v2: {
+      title: 'V2 — Strategy + Product = Alert (beta)',
+      body: 'Build a strategy once without choosing a product (1–4 legs: Spot, Future, Call, Put), connect it to NSE indices, NSE stocks or MCX commodities for alerts, and compare which products it fires on.',
+      note: 'Runs alongside the existing pages — nothing there changes.',
+    },
     settings: { title: 'Settings', body: 'Zerodha Kite connection, notifications, theme and evaluator status.' },
   },
 

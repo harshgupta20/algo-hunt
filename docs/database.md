@@ -38,6 +38,12 @@ erDiagram
   mcx_signals ||--o{ mcx_alerts : "signal_id (cascade)"
   mcx_alerts ||--o{ mcx_deliveries : "cascade"
   mcx_scan_runs ||--o{ mcx_scan_errors : "cascade"
+  v2_strategies ||--o{ v2_strategy_versions : "cascade"
+  v2_strategies ||--o{ v2_connections : "cascade"
+  v2_connections ||--o{ v2_unit_state : "cascade"
+  v2_connections ||--o{ v2_signals : "cascade"
+  v2_signals ||--o{ v2_alerts : "signal_id (cascade)"
+  v2_alerts ||--o{ v2_deliveries : "cascade"
 ```
 
 Loose links (no foreign key): `alert_configurations.strategy` holds `'rsi-sync'` or a custom strategy UUID as text.
@@ -200,6 +206,26 @@ Deleting an MCX V2 strategy cascades to its versions, unit states, signals and a
 
 ---
 
+### V2 tables (007)
+
+Owned by V2 ([v2-architecture.md § 6](v2-architecture.md#6-persistence)); accessed only
+through [PgV2Store](../src/server/v2/persistence/PgV2Store.ts).
+
+| Table | Purpose |
+| --- | --- |
+| `v2_instruments` | Every supported contract: NSE / BSE indices and NSE cash stocks (`SPOT`), NFO / BFO / MCX futures and options (`token` PK, `product_id`, `kind`) |
+| `v2_products` | Product catalogue built at sync: kind, session market, which legs it offers, expiries, strike gap, lot |
+| `v2_calendar` | Holidays / special sessions per market (`market`, `date`) |
+| `v2_strategies` / `v2_strategy_versions` | Product-agnostic strategies and their immutable versions |
+| `v2_connections` | Strategy → product with `config` (expiry, strike shifts, alert policy), `enabled`, `enabled_at` |
+| `v2_unit_state` | Alert state per (connection, unit) + latest evaluation |
+| `v2_signals` | Every signal with its outcome; `identity` UNIQUE is the dedupe |
+| `v2_alerts` / `v2_deliveries` | Alerts (unit with its leg contracts, evaluation) and per-channel results |
+| `v2_scan_runs` | Scanner cycles (summary JSON incl. errors; pruned after 3 days) |
+| `v2_settings` | One JSON row: chat override, email recipients / sender, request budget |
+
+---
+
 ## 4. Migrations
 
 | File | Adds |
@@ -210,6 +236,7 @@ Deleting an MCX V2 strategy cascades to its versions, unit states, signals and a
 | [004_serverless_runtime.sql](../db/migrations/004_serverless_runtime.sql) | Seeds the default user + preferences; kite_session, instruments, monitor_state, app_locks, app_kv; custom dedupe index |
 | [005_light_theme_default.sql](../db/migrations/005_light_theme_default.sql) | Switches the seeded `dark` theme preference to `light` |
 | [006_mcx_v2.sql](../db/migrations/006_mcx_v2.sql) | MCX V2 tables (all `mcx_`-prefixed, additive; no existing table changes) — see § 3 MCX V2 |
+| [007_v2.sql](../db/migrations/007_v2.sql) | V2 tables (all `v2_`-prefixed, additive) — see § 3 V2 tables |
 
 How the runner works ([scripts/migrate.mjs](../scripts/migrate.mjs)):
 

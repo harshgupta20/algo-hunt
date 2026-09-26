@@ -25,6 +25,7 @@ correcting. Each item says where the behaviour lives in the code.
 | Alerts: Telegram (optional), browser notification + chime, history with filters incl. Market | Done |
 | Per-market status in the top bar (open/closed and whether monitors are running) | Done |
 | Builder: adaptive comparison, price-level warning | Done |
+| **V2 (beta)** at `/v2`: product-agnostic strategies (1–4 legs: Spot / Future / Call / Put, conditions between any legs) connected to NSE indices, NSE stocks or MCX commodities; compare a strategy across products (alerts only); explain now; Telegram + Email ([v2-architecture.md](v2-architecture.md), [trader guide](v2-user-guide.md)) | Built and tested (fixtures + local UI check) — **not yet verified against live Kite (product sync, candles) or real Telegram / Resend sends** |
 | **MCX V2 (beta)** at `/mcx-v2`: isolated subsystem — futures, or strikes (around ATM / specific / range / all) with FUT + CE + PE legs in conditions, per-operand timeframe + candle type (incl. volume candles, 2h/4h/weekly), AND/OR/NOT, Telegram + Email (Resend), cooldown / once-per-candle / acknowledge, explain, replay, scanner runs ([mcx-v2-architecture.md](mcx-v2-architecture.md)) | Built and tested (fixtures) — **migration 006 not yet run on production; not yet verified against live Kite or real Telegram/Resend sends** |
 
 ---
@@ -92,6 +93,8 @@ Severity: **High** = can cause missed alerts or wrong data · **Medium** = misle
 | Volume candles | **MCX V2 only** | Volume-based bars from the series' candles, restarting daily; V1 has none |
 | MCX V2 go-live | Pending | Run migration 006, sync MCX V2 instruments with Kite, configure Telegram/Resend, enter holidays, run side by side with V1 ([mcx-v2-architecture.md § C3](mcx-v2-architecture.md#c3-before-relying-on-it)) |
 | MCX V2 → V1 migration (Phase 10) | Not started | V2 replaces `/mcx` only after a side-by-side validation |
+| V2 handover to the trader | Pending | Sync products with Kite, configure channels, enter holidays, then the trader reviews [v2-user-guide.md](v2-user-guide.md) flows |
+| V2 arithmetic operands (differences, % gaps, strike levels) | Not started | Left open in the operand model by request |
 | Full MCX list (~26 products incl. Cardamom, Mentha Oil, Cotton, Rubber, Crude Palm Oil, Castor Seed, Black Pepper; indices Bulldex/Metldex) | Not started | Agri products need per-product session hours |
 | "Swap sides" button in the condition editor | Offered, not built | See M6 |
 | Scanner across all strikes/expiries | **Not planned** — the owner chose to keep one strike relative to ATM | |
@@ -113,6 +116,7 @@ Severity: **High** = can cause missed alerts or wrong data · **Medium** = misle
 | 2026-09-25 | Color-rich redesign rejected and reverted; the existing look is the baseline |
 | 2026-09-25 | Top bar shows NSE/BSE and MCX separately with open/closed and monitor activity |
 | 2026-09-25 | Bollinger %B / Bandwidth added; the builder adapts comparisons and warns on price-vs-small-number |
+| 2026-09-26 | New **V2** at `/v2`: strategy (product-agnostic, 1–4 legs chosen by the trader) + product connection = alert; compare products by alerts only; comparing legs is enough for now, arithmetic kept in scope for later; nothing existing replaced |
 | 2026-09-26 | MCX V2 conditions use FUT / CE / PE legs of a strike (simpler universe: product → futures or options → expiry → strikes; reference-future and fixed-contract choices removed; old definitions auto-upgraded) |
 | 2026-09-25 | MCX V2 built as an isolated subsystem next to V1 (decisions D1–D9 accepted: Resend email, volume candles from base candles, spec cross semantics, ≤ 40 targets / ≤ 150 requests per cycle, same cron with its own lease, manual holiday calendar, 1-minute live mode, `/mcx-v2` beta page, Telegram env with MCX chat override) |
 
@@ -122,7 +126,8 @@ Severity: **High** = can cause missed alerts or wrong data · **Medium** = misle
 
 | Claim | How verified |
 | --- | --- |
-| Engines, MCX rules, sessions, multi-timeframe, patterns, ADX/DMI, Bollinger outputs | Automated tests (188 passing, 61 of them MCX V2) |
+| Engines, MCX rules, sessions, multi-timeframe, patterns, ADX/DMI, Bollinger outputs | Automated tests (211 passing: 61 MCX V2, 23 V2) |
+| V2 leg resolution, product catalogue, one strategy across NSE + MCX products, compare, boundaries | Automated tests (`tests/v2/`) + local production build with a throwaway database (Kite disconnected) |
 | MCX V2 engine, alert policy, both Definition-of-Done strategies end to end, module boundaries | Automated tests (`tests/mcx2/`) |
 | MCX V2 UI (all tabs, light + dark), create / validate / enable flows, scan without Kite | Manually, local production build + throwaway database (Kite disconnected) |
 | UI pages, MCX tab, top-bar market states, builder behaviour | Manually, in a local production build against a throwaway database with synthetic instruments and snapshots (Kite disconnected) |

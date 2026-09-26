@@ -27,6 +27,8 @@ combined alert when the strategy's rules turn true. It never places trades.
 | [troubleshooting.md](troubleshooting.md) | Problems and exact error messages, with fixes |
 | [code-notes.md](code-notes.md) | The complex parts of the code and recommended inline documentation |
 | [status.md](status.md) | **Current state:** open issues to correct, limitations, deferred work, decisions log, verification status |
+| [v2-architecture.md](v2-architecture.md) | **V2 (beta, `/v2`)** — product-agnostic strategies (1–4 legs) + product connections = alerts; compare a strategy across products; architecture, persistence, scanner |
+| [v2-user-guide.md](v2-user-guide.md) | V2 guide for the trader: setup, build a strategy, compare products, connect and switch on, alerts |
 | [mcx-v2-architecture.md](mcx-v2-architecture.md) | MCX V2 (beta, `/mcx-v2`): discovery report, isolated-module architecture, evaluation semantics, alert policy, scanner, persistence, UI, accepted decisions, as-built notes and go-live steps |
 
 ## Quick start

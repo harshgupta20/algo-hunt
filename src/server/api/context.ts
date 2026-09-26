@@ -16,6 +16,7 @@ import { BacktestRunner } from '../services/analyzer/backtestRunner';
 import { MonitorService } from '../services/live/monitorService';
 import type { TickDeps } from '../services/live/liveTick';
 import { createMcxModule, type McxModule } from '../mcx';
+import { createV2Module, type V2Module } from '../v2';
 
 export interface AppContext extends TickDeps {
   store: DataStore;
@@ -27,6 +28,8 @@ export interface AppContext extends TickDeps {
   kiteAuth: KiteAuthService;
   /** MCX V2 (isolated subsystem; shares only the Kite session + historical rate gate). */
   mcx: McxModule;
+  /** V2: product-agnostic strategies + product connections (isolated; shares only the Kite session + rate gate). */
+  v2: V2Module;
 }
 
 function build(): AppContext {
@@ -48,8 +51,9 @@ function build(): AppContext {
   const analyzer = new BacktestRunner(historical, instrumentStore, engine, store);
 
   const mcx = createMcxModule({ kiteAuth, historical });
+  const v2 = createV2Module({ kiteAuth, historical });
 
-  return { store, engine, instrumentStore, alertService, monitors, analyzer, kiteAuth, mcx };
+  return { store, engine, instrumentStore, alertService, monitors, analyzer, kiteAuth, mcx, v2 };
 }
 
 const globalForCtx = globalThis as unknown as { __ashContext?: AppContext };

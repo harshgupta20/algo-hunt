@@ -39,7 +39,15 @@ async function handle(request: Request): Promise<Response> {
   } catch (err) {
     mcxV2 = { error: err instanceof Error ? err.message : String(err) };
   }
-  return Response.json({ ...(live as object), mcxV2 }, { status });
+  // V2 connections: a third isolated job with its own lease.
+  let v2: unknown;
+  try {
+    const { run, skipped } = await ctx.v2.service.scan({ force });
+    v2 = { status: run.status, skipped, units: run.unitsEvaluated, alerts: run.alerts, errors: run.errors.length };
+  } catch (err) {
+    v2 = { error: err instanceof Error ? err.message : String(err) };
+  }
+  return Response.json({ ...(live as object), mcxV2, v2 }, { status });
 }
 
 export { handle as GET, handle as POST };
