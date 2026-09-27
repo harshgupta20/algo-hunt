@@ -73,7 +73,16 @@ export function ScannerTab() {
                     <Fragment key={r.id}>
                       <tr className="hover:bg-ink-850/60 cursor-pointer" onClick={() => setOpen(isOpen ? null : r.id)}>
                         <td className="px-3 py-2 text-slate-500">{isOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}</td>
-                        <td className="px-3 py-2 whitespace-nowrap">{istStampIso(r.startedAt)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {istStampIso(r.startedAt)}
+                          {r.trigger === 'manual' && (
+                            <Tooltip content={H.scanner.manual}>
+                              <span className="ml-2">
+                                <Badge>Manual</Badge>
+                              </span>
+                            </Tooltip>
+                          )}
+                        </td>
                         <td className="px-3 py-2">
                           <Tooltip content={{ title: r.status, body: STATUS_HELP[r.status] }}>
                             <Badge tone={TONE[r.status]}>{r.status}</Badge>
@@ -81,7 +90,14 @@ export function ScannerTab() {
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums">{r.connections}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{r.units}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{r.unitsEvaluated}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {r.unitsEvaluated}
+                          {!!r.deferred && (
+                            <Tooltip content={H.scanner.deferred}>
+                              <span className="ml-1 text-slate-500">+{r.deferred} next</span>
+                            </Tooltip>
+                          )}
+                        </td>
                         <td className="px-3 py-2 text-right tabular-nums">
                           {r.requests}
                           <span className="text-slate-500"> / {r.budget}</span>

@@ -189,6 +189,29 @@ describe('V2 — strategy + product = alert', () => {
     expect(units.every((u) => u.state === 'DISABLED')).toBe(true);
   });
 
+  it('carries units over when the request budget runs out — a note, not an error', async () => {
+    await connectAll();
+    env.store.data.settings.requestBudget = 2; // FUT + CE of one product
+    const { run } = await env.svc.scan();
+    expect(run.trigger).toBe('auto');
+    expect(run.unitsEvaluated).toBe(1);
+    expect(run.deferred).toBe(2);
+    expect(run.errors).toEqual([]);
+    expect(run.status).toBe('OK');
+    expect(run.notes.join(' ')).toMatch(/2 unit\(s\) carried over to the next cycle/);
+  });
+
+  it('tags a manual scan and says when it checked the last closed candle of a closed market', async () => {
+    await connectAll();
+    env.clock.now = ist('2026-10-10', '12:00'); // Saturday
+    const auto = await env.svc.scan();
+    expect(auto.skipped).toBe('market-closed');
+    const { run } = await env.svc.scan({ force: true });
+    expect(run.trigger).toBe('manual');
+    expect(run.notes.join(' ')).toMatch(/Manual scan while NSE\/BSE and MCX are closed — each connection was checked on its last closed candle/);
+    expect(env.channels.sent).toHaveLength(0); // Friday's candle is stale — never alerts
+  });
+
   it('explains a connection now without saving anything', async () => {
     const { byProduct } = await connectAll();
     const ex = await env.svc.explainConnection(byProduct.get('NSE:BANKNIFTY')!.id);

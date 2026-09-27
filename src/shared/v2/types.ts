@@ -372,6 +372,10 @@ export interface ScanRun {
   startedAt: string;
   finishedAt: string;
   status: 'OK' | 'PARTIAL' | 'FAILED' | 'SKIPPED';
+  /** manual = "Scan now" (or ?force=1): runs even with markets closed. Absent on older runs. */
+  trigger?: 'manual' | 'auto';
+  /** Units left for the next cycle because the request budget was used up. */
+  deferred?: number;
   connections: number;
   units: number;
   unitsEvaluated: number;

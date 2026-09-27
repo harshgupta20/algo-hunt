@@ -234,6 +234,15 @@ export const H = {
   scanner: {
     budget: { title: 'Request budget', body: 'Candle requests allowed per cycle. Contracts shared by several connections are fetched once. Units beyond the budget wait for the next cycle.' },
     hideIdle: { title: 'Hide idle cycles', body: 'Hide cycles with nothing new to evaluate.' },
+    manual: {
+      title: 'Manual scan',
+      body: 'Started with “Scan now” (or the cron URL with ?force=1), so it runs even when the market is closed — then each connection is checked on its last closed candle, which never alerts if it closed before the connection was switched on or over 30 minutes ago.',
+    },
+    deferred: {
+      title: 'Carried over',
+      body: 'Units that didn’t fit this cycle’s request budget; they’re checked in the next cycles (a minute apart). Not an error.',
+      note: 'The live worker (npm run live) streams prices instead, so it has no such wait.',
+    },
     errors: { title: 'Errors', body: 'Problems in this cycle — one failure never stops the rest.' },
   } satisfies Record<string, TooltipContent>,
 

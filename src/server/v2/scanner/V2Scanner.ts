@@ -82,9 +82,9 @@ export function clockFor(cal: MarketCalendar, d: StrategyDefinition, now: number
   return { triggerOpenMs: open, at: cal.candleClose(open, tf), prevOpenMs: prev, prevAt: prev === null ? null : cal.candleClose(prev, tf) };
 }
 
-function emptyRun(now: number, budget: number): ScanRun {
+function emptyRun(now: number, budget: number, trigger: ScanRun['trigger'] = 'auto'): ScanRun {
   const at = new Date(now).toISOString();
-  return { id: randomUUID(), startedAt: at, finishedAt: at, status: 'OK', connections: 0, units: 0, unitsEvaluated: 0, instruments: 0, requests: 0, budget, conditions: 0, signals: 0, alerts: 0, errors: [], notes: [] };
+  return { id: randomUUID(), startedAt: at, finishedAt: at, status: 'OK', trigger, connections: 0, units: 0, unitsEvaluated: 0, instruments: 0, requests: 0, budget, conditions: 0, signals: 0, alerts: 0, errors: [], notes: [] };
 }
 
 export class V2Scanner {
@@ -113,7 +113,7 @@ export class V2Scanner {
     const { store } = this.deps;
     const now = this.now();
     const settings = await store.settings.get();
-    const run = emptyRun(now, settings.requestBudget);
+    const run = emptyRun(now, settings.requestBudget, opts.force ? 'manual' : 'auto');
     const error = (e: ScanError) => {
       run.errors.push(e);
       log.warn(e, 'v2 scan error');
@@ -145,6 +145,14 @@ export class V2Scanner {
     if (!live.length) {
       run.notes.push('Markets for the enabled connections are closed');
       return finish('SKIPPED', 'market-closed');
+    }
+    if (opts.force) {
+      const closed = [...new Set(live.map((c) => products.get(c.productId)?.market).filter((m): m is Market => !!m && !cals[m].isMarketOpen(now, CLOSE_GRACE_MIN)))];
+      if (closed.length) {
+        run.notes.push(
+          `Manual scan while ${closed.map((m) => (m === 'NSE' ? 'NSE/BSE' : m)).join(' and ')} ${closed.length === 1 ? 'is' : 'are'} closed — each connection was checked on its last closed candle. Candles that closed before a connection was switched on, or more than 30 minutes ago, are recorded but never alert.`,
+        );
+      }
     }
 
     // Live worker: while it streams, it handles every connection it covers — this scan only backs it up.
@@ -265,7 +273,11 @@ export class V2Scanner {
       }
       p.due = kept;
     }
-    if (deferred) error({ source: 'budget', message: `${deferred} unit(s) deferred: the ${settings.requestBudget}-request budget is used up — they run next cycle` });
+    if (deferred) {
+      // Not an error: the budget is doing its job — the rest are checked in the following cycles.
+      run.deferred = deferred;
+      run.notes.push(`${deferred} unit(s) carried over to the next cycle — the ${settings.requestBudget}-request budget was used up (Kite allows ~3 requests a second). The live worker (npm run live) avoids this wait.`);
+    }
     run.notes.push(`${plans.reduce((n, p) => n + p.due.length, 0)} unit(s) due · ${fetches.length} candle request(s) planned`);
 
     // 9 · fetch
