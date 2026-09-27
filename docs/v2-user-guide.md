@@ -12,7 +12,8 @@ Open **V2** in the sidebar (the home page opens it too). Every control has an �
 1. **Connect Kite:** Settings → Broker Connection → log in.
 2. **Load products:** V2 → **Products** → **Sync from Kite**. This takes about a minute and fetches NSE indices, NSE stocks, BSE indices and MCX commodities.
 3. **Alert destinations:** V2 → **Settings**:
-   - Telegram chat id, and/or email recipients.
+   - **Telegram chats:** everyone who should get alerts. Each person first opens your bot in Telegram and presses **Start** (for a group, add the bot to it); then press **Find chat IDs** and **Add** them, give each a name, and **Save**. Every alert goes to all of them.
+   - Email recipients (optional).
    - Press the ✈ button next to each to send a test message.
 4. **Holidays:** V2 → Settings → **Market calendar**. Add this year's NSE and MCX holidays.
 

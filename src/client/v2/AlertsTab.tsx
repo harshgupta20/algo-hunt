@@ -51,7 +51,7 @@ export function AlertRow({ alert: a }: { alert: V2Alert }) {
         <span className="text-xs text-slate-400">{candleRange(a.candleTime, a.triggerTimeframe)}</span>
         <LegPrices prices={a.evaluation.prices} legs={legs} />
         <SourceBadge source={a.evaluation.source} />
-        <Tooltip content={{ ...H.alerts.status, note: a.deliveries.map((d) => `${d.channel}: ${d.status}${d.error ? ` — ${d.error}` : ''}`).join(' · ') || 'Recorded only (no channel)' }}>
+        <Tooltip content={{ ...H.alerts.status, note: a.deliveries.map((d) => `${d.channel}${d.target ? ` → ${d.target}` : ''}: ${d.status}${d.error ? ` — ${d.error}` : ''}`).join(' · ') || 'Recorded only (no channel)' }}>
           <Badge tone={STATUS_TONE[a.status]}>{a.status === 'ACKNOWLEDGED' ? 'Acknowledged' : a.deliveries.length ? a.status.toLowerCase() : 'recorded'}</Badge>
         </Tooltip>
         <span className="ml-auto text-[11px] text-slate-500">{istStampIso(a.createdAt)}</span>

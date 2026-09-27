@@ -331,6 +331,8 @@ export type AlertStatus = 'SENT' | 'PARTIAL' | 'FAILED' | 'ACKNOWLEDGED';
 
 export interface Delivery {
   channel: 'telegram' | 'email';
+  /** Who it went to (a Telegram chat, or the email recipients). */
+  target?: string;
   status: 'sent' | 'failed';
   error?: string;
   sentAt: string;
@@ -383,9 +385,17 @@ export interface ScanRun {
   notes: string[];
 }
 
+/** A Telegram chat that receives alerts (a person who pressed Start on the bot, or a group / channel the bot is in). */
+export interface TelegramChat {
+  /** Numeric chat id (groups / channels start with -100) or @channelname. */
+  id: string;
+  /** Who it is, e.g. "Rahul" or "Trading desk". */
+  name?: string;
+}
+
 export interface V2Settings {
-  /** Overrides TELEGRAM_CHAT_ID for V2 alerts. */
-  telegramChatId?: string;
+  /** Every alert goes to all of these. Empty = TELEGRAM_CHAT_ID from the environment (comma-separated allowed). */
+  telegramChats: TelegramChat[];
   emailRecipients: string[];
   emailFrom: string;
   /** Max candle requests per scanner cycle. */
@@ -393,6 +403,7 @@ export interface V2Settings {
 }
 
 export const DEFAULT_V2_SETTINGS: V2Settings = {
+  telegramChats: [],
   emailRecipients: [],
   emailFrom: 'Algo Hunt <onboarding@resend.dev>',
   requestBudget: 150,

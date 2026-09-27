@@ -238,7 +238,21 @@ export const H = {
   } satisfies Record<string, TooltipContent>,
 
   settings: {
-    telegramChat: { title: 'Telegram chat id', body: 'Where V2 alerts go. Empty = TELEGRAM_CHAT_ID from the environment. The bot token comes from TELEGRAM_BOT_TOKEN.' },
+    telegramChats: {
+      title: 'Telegram chats',
+      body: 'Every V2 alert is sent to all of these — people, groups or channels. Each person must first open your bot in Telegram and press Start; for a group, add the bot to it.',
+      note: 'Empty = TELEGRAM_CHAT_ID from the environment (comma-separated allowed). The bot token comes from TELEGRAM_BOT_TOKEN.',
+    },
+    chatName: { title: 'Name', body: 'Who this is (e.g. “Rahul”, “Trading desk”) — shown in delivery results. Optional.' },
+    chatId: { title: 'Chat id', body: 'A number for a person (e.g. 123456789); groups and channels start with -100. A public channel can also be @channelname.' },
+    addChat: { title: 'Add chat', body: 'Add another person, group or channel to receive alerts (up to 20).' },
+    removeChat: { title: 'Remove', body: 'Stop sending alerts to this chat (after you save).' },
+    findChats: {
+      title: 'Find chat IDs',
+      body: 'List people and groups that recently messaged your bot, so you can add them with one click.',
+      note: 'Ask each person to open the bot and press Start (or send it any message) first. Telegram keeps these for about 24 hours.',
+    },
+    testTelegram: { title: 'Send a test to all', body: 'Send a test message to every saved chat and show who received it.' },
     emailTo: { title: 'Email recipients', body: 'Comma-separated addresses. Requires RESEND_API_KEY in the environment.' },
     emailFrom: { title: 'Sender', body: 'The From address — a domain verified in Resend, or onboarding@resend.dev for testing.' },
     budget: { title: 'Requests per cycle', body: 'Maximum candle requests per scanner cycle (Kite allows ~3 per second).' },

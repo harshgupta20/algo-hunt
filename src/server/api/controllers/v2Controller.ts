@@ -116,11 +116,12 @@ export function v2Controller(ctx: AppContext) {
     scanRuns: (req) => svc().scanRuns(num(req.query.get('limit'))),
 
     settings: () => svc().settings(),
-    saveSettings: (req) => svc().saveSettings(parse(settingsSchema, req.body)),
+    saveSettings: (req) => svc().saveSettings({ telegramChats: [], ...parse(settingsSchema, req.body) }),
     calendar: () => svc().calendarEntries(),
     saveCalendar: (req) => svc().saveCalendar(parse(z.object({ entries: calendarSchema }), req.body).entries),
     channels: () => svc().channelStatus(),
     testChannel: (req) => svc().testChannel(parse(z.object({ channel: z.enum(['telegram', 'email']) }), req.body).channel),
+    telegramChats: () => svc().telegramRecentChats(),
   } satisfies Record<string, Handler>;
 
   return Object.fromEntries(Object.entries(handlers).map(([k, h]) => [k, wrap(h as Handler)])) as Record<keyof typeof handlers, Handler>;

@@ -40,9 +40,9 @@ through [PgV2Store](../src/server/v2/persistence/PgV2Store.ts).
 | `v2_connections` | Strategy → product with `config` (expiry, strike shifts, alert policy), `enabled`, `enabled_at` |
 | `v2_unit_state` | Alert state per (connection, unit) + latest evaluation |
 | `v2_signals` | Every signal with its outcome; `identity` UNIQUE is the dedupe |
-| `v2_alerts` / `v2_deliveries` | Alerts (unit with its leg contracts, evaluation) and per-channel results |
+| `v2_alerts` / `v2_deliveries` | Alerts (unit with its leg contracts, evaluation) and per-recipient results (`target` = Telegram chat / email recipients) |
 | `v2_scan_runs` | Scanner cycles (summary JSON incl. errors; pruned after 3 days) |
-| `v2_settings` | One JSON row: chat override, email recipients / sender, request budget |
+| `v2_settings` | One JSON row: Telegram chats (`telegramChats: [{ id, name }]`; older rows with a single `telegramChatId` are read as a one-chat list), email recipients / sender, request budget |
 | `v2_live_status` | One row written every 5 s by the live worker (`npm run live`): heartbeat, state, sockets, contracts, accuracy counters, last candle closes; `offline_notified_at` = the backup scanner already warned (migration 008) |
 
 ---
@@ -68,6 +68,7 @@ Dropping them is optional and irreversible — only add a migration for it if yo
 | [006_mcx_v2.sql](../db/migrations/006_mcx_v2.sql) | MCX V2 tables (retired) |
 | [007_v2.sql](../db/migrations/007_v2.sql) | V2 tables (all `v2_`-prefixed) |
 | [008_v2_live.sql](../db/migrations/008_v2_live.sql) | `v2_live_status` (live worker heartbeat) |
+| [009_v2_delivery_target.sql](../db/migrations/009_v2_delivery_target.sql) | `v2_deliveries.target` — who each delivery went to (one row per Telegram chat) |
 
 Keep every migration file: the runner tracks applied files by name, and a fresh database is built by replaying them
 in order.

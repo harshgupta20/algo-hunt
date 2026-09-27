@@ -3,7 +3,8 @@
  * history, product compatibility — live in validate.ts.
  */
 import { z } from 'zod';
-import type { ConnectionConfig, ExprNode, StrategyDefinition } from './types';
+import type { ConnectionConfig, ExprNode, StrategyDefinition, V2Settings } from './types';
+import { DEFAULT_V2_SETTINGS } from './types';
 
 const timeframe = z.enum(['1m', '3m', '5m', '10m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']);
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected yyyy-mm-dd');
@@ -78,12 +79,32 @@ export const connectionConfigSchema: z.ZodType<ConnectionConfig> = z.object({
   alert: alertPolicySchema,
 }) as z.ZodType<ConnectionConfig>;
 
+export const telegramChatSchema = z.object({
+  id: z
+    .string()
+    .trim()
+    .regex(/^(-?\d{3,20}|@[A-Za-z0-9_]{5,64})$/, 'Telegram chat id: a number (groups start with -100) or @channelname'),
+  name: z.string().trim().max(40).optional(),
+});
+
 export const settingsSchema = z.object({
-  telegramChatId: z.string().trim().max(64).optional(),
+  telegramChats: z
+    .array(telegramChatSchema)
+    .max(20)
+    .refine((l) => new Set(l.map((c) => c.id)).size === l.length, 'Each Telegram chat id only once')
+    .optional(),
   emailRecipients: z.array(z.string().email()).max(20),
   emailFrom: z.string().trim().min(3).max(200),
   requestBudget: z.number().int().min(10).max(600),
 });
+
+/** Stored settings → current shape (older rows had a single `telegramChatId`). */
+export function settingsFromStored(raw: unknown): V2Settings {
+  const r = (raw ?? {}) as Partial<V2Settings> & { telegramChatId?: string };
+  const { telegramChatId, ...rest } = r;
+  const chats = Array.isArray(r.telegramChats) ? r.telegramChats : telegramChatId ? [{ id: telegramChatId }] : [];
+  return { ...DEFAULT_V2_SETTINGS, ...rest, telegramChats: chats };
+}
 
 const market = z.enum(['NSE', 'MCX']);
 export const calendarSchema = z.array(

@@ -111,8 +111,9 @@ Validation failures return `400` with `{ error, issues: [{ path, message, severi
 | POST | `/api/v2/compare` | `{ strategyId \| definition, products[] (≤ 20), from, to, expiry?, strikeShift?, trigger?, cooldownMinutes? }` | Per product: alerts (with trace), candles, decided (coverage), contracts, notes — sorted by alerts |
 | GET | `/api/v2/alerts` · POST `/alerts/:id/acknowledge` · GET `/signals` | `connectionId`, `strategyId`, `active=1`, `limit` | alerts / signals |
 | POST | `/api/v2/scan` · GET `/scan-runs` | `{ force? }` · `limit` | `{ run, skipped? }` · runs |
-| GET / PUT | `/api/v2/settings` · `/calendar` | settings `{ telegramChatId?, emailRecipients, emailFrom, requestBudget }` · `{ entries: [{ market, date, kind, … }] }` | saved values |
+| GET / PUT | `/api/v2/settings` · `/calendar` | settings `{ telegramChats: [{ id, name? }] (≤ 20), emailRecipients, emailFrom, requestBudget }` · `{ entries: [{ market, date, kind, … }] }` | saved values |
 | GET | `/api/v2/channels` · POST `/channels/test` | `{ channel }` | status · `{ ok }` |
+| GET | `/api/v2/channels/telegram/chats` | — | Chats that recently messaged the bot (Telegram `getUpdates`): `[{ id, name, type, username? }]` — for picking chat ids. `POST /channels/test` returns `{ ok, results: [{ target, ok, error? }] }` (one per Telegram chat) |
 
 `/api/cron/tick` runs the V2 scan and returns `v2: { status, skipped?, units, alerts, errors }`.
 

@@ -21,7 +21,7 @@ import type {
   V2Signal,
   V2StrategyVersion,
 } from '@/shared/v2';
-import { DEFAULT_V2_SETTINGS } from '@/shared/v2';
+import { settingsFromStored } from '@/shared/v2';
 import { getPool } from '../../db/pool';
 import type { AlertFilters, ProductFilters, V2Store } from './V2Store';
 
@@ -430,7 +430,7 @@ export class PgV2Store implements V2Store {
     const rows = (await this.pool.query('SELECT * FROM v2_deliveries WHERE alert_id = ANY($1::uuid[]) ORDER BY sent_at', [ids])).rows;
     for (const r of rows as any[]) {
       const list = out.get(r.alert_id) ?? [];
-      list.push({ channel: r.channel, status: r.status, error: r.error ?? undefined, sentAt: iso(r.sent_at)! });
+      list.push({ channel: r.channel, target: r.target ?? undefined, status: r.status, error: r.error ?? undefined, sentAt: iso(r.sent_at)! });
       out.set(r.alert_id, list);
     }
     return out;
@@ -448,7 +448,7 @@ export class PgV2Store implements V2Store {
       return mapAlert(r, []);
     },
     addDelivery: async (alertId: string, d: Delivery) => {
-      await this.pool.query('INSERT INTO v2_deliveries (alert_id, channel, status, error, sent_at) VALUES ($1,$2,$3,$4,$5)', [alertId, d.channel, d.status, d.error ?? null, d.sentAt]);
+      await this.pool.query('INSERT INTO v2_deliveries (alert_id, channel, target, status, error, sent_at) VALUES ($1,$2,$3,$4,$5,$6)', [alertId, d.channel, d.target ?? null, d.status, d.error ?? null, d.sentAt]);
     },
     setStatus: async (alertId: string, status: V2Alert['status']) => {
       await this.pool.query('UPDATE v2_alerts SET status = $2 WHERE id = $1', [alertId, status]);
@@ -498,7 +498,7 @@ export class PgV2Store implements V2Store {
   settings = {
     get: async (): Promise<V2Settings> => {
       const r = (await this.pool.query(`SELECT value FROM v2_settings WHERE key = 'settings'`)).rows[0];
-      return { ...DEFAULT_V2_SETTINGS, ...(r?.value ?? {}) };
+      return settingsFromStored(r?.value);
     },
     save: async (s: V2Settings) => {
       await this.pool.query(

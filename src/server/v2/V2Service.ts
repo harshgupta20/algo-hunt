@@ -15,7 +15,8 @@ import type {
 } from '@/shared/v2';
 import { hasErrors, incompatibility, strategySummary, validateConnection, validateStrategy } from '@/shared/v2';
 import { istDate } from '../utils/marketTime';
-import { envChannelFactory, type ChannelFactory, type ChannelName } from './alerts/notifications';
+import { envChannelFactory, recentTelegramChats, type ChannelFactory, type ChannelName } from './alerts/notifications';
+import { getConfig } from '../config/index';
 import { calendars } from './calendar/MarketCalendar';
 import type { Quote, V2DataProvider } from './data/DataProvider';
 import type { ProductService } from './data/ProductService';
@@ -416,7 +417,19 @@ export class V2Service {
     const ch = this.channels.channel(name, settings);
     if (!ch) throw new V2ServiceError(400, this.channels.status(settings)[name].detail);
     const text = `✅ Algo Hunt · V2 test message (${name}) — ${new Date(this.now()).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`;
-    await ch.send({ subject: 'Algo Hunt · V2 test', text, html: `<p>${text}</p>` });
-    return { ok: true };
+    const results = ((await ch.send({ subject: 'Algo Hunt · V2 test', text, html: `<p>${text}</p>` })) ?? [{}]).map((r) => ({ target: r.target, ok: !r.error, error: r.error }));
+    if (results.every((r) => !r.ok)) throw new V2ServiceError(400, results.map((r) => (r.target ? `${r.target}: ${r.error}` : r.error)).join(' · '));
+    return { ok: results.every((r) => r.ok), results };
+  }
+
+  /** Chats that recently messaged the Telegram bot (people who pressed Start, groups it was added to). */
+  async telegramRecentChats() {
+    const token = getConfig().telegramBotToken;
+    if (!token) throw new V2ServiceError(400, 'TELEGRAM_BOT_TOKEN is not set on the server');
+    try {
+      return await recentTelegramChats(token);
+    } catch (err) {
+      throw new V2ServiceError(400, msg(err));
+    }
   }
 }

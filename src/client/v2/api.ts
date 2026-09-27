@@ -207,5 +207,6 @@ export const v2Api = {
   calendar: () => request<CalendarEntry[]>('/calendar'),
   saveCalendar: (entries: CalendarEntry[]) => put<CalendarEntry[]>('/calendar', { entries }),
   channels: () => request<ChannelStatus>('/channels'),
-  testChannel: (channel: 'telegram' | 'email') => post<{ ok: boolean }>('/channels/test', { channel }),
+  testChannel: (channel: 'telegram' | 'email') => post<{ ok: boolean; results: Array<{ target?: string; ok: boolean; error?: string }> }>('/channels/test', { channel }),
+  telegramChats: () => request<Array<{ id: string; name: string; type: string; username?: string }>>('/channels/telegram/chats'),
 };
