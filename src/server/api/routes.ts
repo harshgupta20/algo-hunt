@@ -32,6 +32,8 @@ export function createRouter(ctx: AppContext): Router {
   r.delete('/v2/strategies/:id', v2.removeStrategy);
   r.post('/v2/strategies/:id/duplicate', v2.duplicateStrategy);
   r.get('/v2/strategies/:id/versions', v2.versions);
+  r.post('/v2/strategies/:id/connections/enable', v2.enableStrategyConnections);
+  r.post('/v2/strategies/:id/connections/disable', v2.disableStrategyConnections);
   r.get('/v2/connections', v2.listConnections);
   r.post('/v2/connections', v2.createConnections);
   r.post('/v2/connections/validate', v2.validateConnection);

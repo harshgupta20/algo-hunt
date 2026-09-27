@@ -152,6 +152,17 @@ export const H = {
   } satisfies Record<string, TooltipContent>,
 
   connection: {
+    collapse: { title: 'Minimize', body: 'Collapse this strategy’s list to its header (the products stay listed in one line). Remembered in this browser.' },
+    expand: { title: 'Expand', body: 'Show every connection of this strategy again.' },
+    collapseAll: { title: 'Collapse all', body: 'Minimize every strategy’s list to its header.' },
+    expandAll: { title: 'Expand all', body: 'Show every strategy’s connections.' },
+    onCount: { title: 'Switched on', body: 'How many of this strategy’s connections are being scanned, out of all of them.' },
+    allOn: {
+      title: 'Switch all on',
+      body: 'Switch on every connection of this strategy at once. Each is checked like a single switch-on (legs, expiry, alert channels); any that can’t start are listed and stay off.',
+      note: 'Candles that closed before now never alert.',
+    },
+    allOff: { title: 'Switch all off', body: 'Stop scanning every connection of this strategy. Click twice to confirm. History and settings are kept.' },
     new: { title: 'New connection', body: 'Connect a strategy to one or more products.' },
     strategy: { title: 'Strategy', body: 'The strategy to run. Its legs decide which products it can connect to.' },
     products: { title: 'Products', body: 'Pick one or many. Only products offering every leg the strategy needs are listed (e.g. options → F&O stocks, not cash-only ones).' },

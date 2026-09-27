@@ -73,6 +73,8 @@ export interface V2Store {
     create(strategyId: string, productId: string, config: ConnectionConfig): Promise<V2Connection>;
     update(id: string, config: ConnectionConfig): Promise<V2Connection | null>;
     setEnabled(id: string, enabled: boolean, at: string): Promise<V2Connection | null>;
+    /** Switch several connections at once; returns how many changed. */
+    setEnabledMany(ids: string[], enabled: boolean, at: string): Promise<number>;
     remove(id: string): Promise<boolean>;
   };
   units: {
@@ -84,6 +86,9 @@ export interface V2Store {
     /** Batched upsert (one statement). */
     upsertMany(states: UnitState[]): Promise<void>;
     clear(connectionId: string): Promise<void>;
+    clearMany(connectionIds: string[]): Promise<void>;
+    /** Mark every unit of these connections DISABLED (switched off). */
+    disableMany(connectionIds: string[]): Promise<void>;
   };
   signals: {
     /** Returns null when a signal with the same identity already exists (dedupe). */

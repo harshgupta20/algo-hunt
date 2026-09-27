@@ -166,6 +166,29 @@ describe('V2 — strategy + product = alert', () => {
     await expect(env.svc.enableConnection(c!.id)).rejects.toThrow(/Fix these before switching on/);
   });
 
+  it('switches all of a strategy’s connections on or off at once, refusing those that can’t start', async () => {
+    const s = await env.svc.createStrategy(S);
+    await env.svc.createConnections(s.id, ['NSE:NIFTY', 'NSE:BANKNIFTY', 'MCX:GOLD'], config());
+    // No channel configured → nothing may switch on, each reported.
+    env.channels.configured.telegram = false;
+    const refused = await env.svc.setStrategyConnections(s.id, true);
+    expect([refused.changed, refused.failed.length]).toEqual([0, 3]);
+    expect(refused.failed[0]!.message).toMatch(/Telegram/i);
+    env.channels.configured.telegram = true;
+    const on = await env.svc.setStrategyConnections(s.id, true);
+    expect([on.changed, on.unchanged, on.failed]).toEqual([3, 0, []]);
+    expect((await env.store.connections.list(s.id)).every((c) => c.enabled && c.enabledAt)).toBe(true);
+    expect((await env.svc.setStrategyConnections(s.id, true)).unchanged).toBe(3); // already on
+    await env.svc.scan();
+    const off = await env.svc.setStrategyConnections(s.id, false);
+    expect(off.changed).toBe(3);
+    const conns = await env.store.connections.list(s.id);
+    expect(conns.some((c) => c.enabled)).toBe(false);
+    const units = (await Promise.all(conns.map((c) => env.store.units.list(c.id)))).flat();
+    expect(units.length).toBeGreaterThan(0);
+    expect(units.every((u) => u.state === 'DISABLED')).toBe(true);
+  });
+
   it('explains a connection now without saving anything', async () => {
     const { byProduct } = await connectAll();
     const ex = await env.svc.explainConnection(byProduct.get('NSE:BANKNIFTY')!.id);

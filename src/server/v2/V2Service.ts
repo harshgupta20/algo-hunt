@@ -254,6 +254,42 @@ export class V2Service {
     return out!;
   }
 
+  /**
+   * Switch every connection of a strategy on or off in one go. Switching on checks each one exactly like a
+   * single switch-on (legs available, expiry listed, alert channels configured); those that fail are
+   * reported and stay off, the rest change.
+   */
+  async setStrategyConnections(strategyId: string, enabled: boolean): Promise<{ changed: number; unchanged: number; failed: Array<{ connectionId: string; productId: string; message: string }> }> {
+    const s = await this.getStrategy(strategyId);
+    const { store } = this.deps;
+    const all = await store.connections.list(strategyId);
+    const todo = all.filter((c) => c.enabled !== enabled);
+    const failed: Array<{ connectionId: string; productId: string; message: string }> = [];
+    let ok = todo;
+    if (enabled && todo.length) {
+      const [products, settings] = await Promise.all([store.products.list({ ids: [...new Set(todo.map((c) => c.productId))] }), store.settings.get()]);
+      const byId = new Map(products.map((p) => [p.id, p]));
+      const status = this.channels.status(settings);
+      ok = [];
+      for (const c of todo) {
+        const errors = validateConnection(s.definition, byId.get(c.productId) ?? null, c.config, {
+          channelsConfigured: { telegram: status.telegram.configured, email: status.email.configured },
+          forEnable: true,
+        }).filter((i) => i.severity === 'error');
+        if (errors.length) failed.push({ connectionId: c.id, productId: c.productId, message: errors.map((e) => e.message).join('; ') });
+        else ok.push(c);
+      }
+    }
+    const ids = ok.map((c) => c.id);
+    if (ids.length) {
+      const at = new Date(this.now()).toISOString();
+      if (enabled) await store.units.clearMany(ids); // same as a single switch-on: start fresh
+      await store.connections.setEnabledMany(ids, enabled, at);
+      if (!enabled) await store.units.disableMany(ids);
+    }
+    return { changed: ids.length, unchanged: all.length - todo.length, failed };
+  }
+
   async removeConnection(id: string): Promise<void> {
     if (!(await this.deps.store.connections.remove(id))) throw new V2ServiceError(404, 'Connection not found');
   }

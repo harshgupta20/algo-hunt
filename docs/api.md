@@ -101,6 +101,7 @@ Validation failures return `400` with `{ error, issues: [{ path, message, severi
 | POST | `/api/v2/strategies/validate` | `{ definition }` | `{ issues, valid, summary }` |
 | GET / PUT / DELETE | `/api/v2/strategies/:id` | PUT `{ definition }` → new version | strategy · `204` |
 | POST | `/api/v2/strategies/:id/duplicate` · GET `/versions` | — | copy · versions |
+| POST | `/api/v2/strategies/:id/connections/enable` · `/disable` | — | Switch every connection of the strategy on / off at once: `{ changed, unchanged, failed: [{ connectionId, productId, message }] }` — switching on checks each like a single switch-on; failures stay off |
 | GET / POST | `/api/v2/connections` | GET `?strategyId=` · POST `{ strategyId, productIds[] (1–500), config }` | rows with product + strategy name · `201` one connection per product (switched off); `400` if any product is already connected or can’t run the strategy |
 | POST | `/api/v2/connections/validate` · `/preview` | `{ strategyId \| definition, productId, config }` | issues · contracts per leg now (units, ATM reference, quotes) |
 | POST | `/api/v2/connections/explain` | `{ definition, productId, config? }` | Explain an unsaved strategy on a product now |

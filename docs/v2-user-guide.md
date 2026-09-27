@@ -101,7 +101,9 @@ The first time, run `npm run live -- --check`. It connects to Kite, prints a few
    - **Strike positions:** "Around ATM only", or also ±1 / ±2 / ±3 strikes. Each position alerts separately.
    - **Alert when:** "Becomes true" (the first candle it turns true) or "While true". Also set a cooldown and choose Telegram and/or Email.
 3. **Contracts now** shows the exact contracts each leg uses on that product, with live prices.
-4. Click **Connect**, then **Switch on** each connection in the list.
+4. Click **Connect**, then **Switch on** each connection in the list, or press **Switch all on** in the strategy's header to start them all at once.
+   - **Switch all off** stops every connection of that strategy; click it twice to confirm.
+   - The chevron (or the strategy's name) minimizes a strategy's list to one line; **Collapse all / Expand all** does every strategy. This is remembered in your browser.
    - Candles that closed before you switched on never alert.
    - ▶ **Explain now** shows why a connection would or wouldn't alert right now.
 

@@ -163,6 +163,9 @@ export const v2Api = {
   updateStrategy: (id: string, definition: StrategyDefinition) => put<V2Strategy>(`/strategies/${id}`, { definition }),
   deleteStrategy: (id: string) => request<void>(`/strategies/${id}`, { method: 'DELETE' }),
   duplicateStrategy: (id: string) => post<V2Strategy>(`/strategies/${id}/duplicate`),
+  /** Switch every connection of a strategy on / off. */
+  setStrategyConnections: (id: string, enabled: boolean) =>
+    post<{ changed: number; unchanged: number; failed: Array<{ connectionId: string; productId: string; message: string }> }>(`/strategies/${id}/connections/${enabled ? 'enable' : 'disable'}`),
   versions: (id: string) => request<V2StrategyVersion[]>(`/strategies/${id}/versions`),
   validateStrategy: (definition: StrategyDefinition) => post<{ issues: ValidationIssue[]; valid: boolean; summary: string }>('/strategies/validate', { definition }),
 

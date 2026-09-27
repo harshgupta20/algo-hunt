@@ -151,6 +151,11 @@ export class MemoryV2Store implements V2Store {
       if (enabled) c.enabledAt = at;
       return clone(c);
     },
+    setEnabledMany: async (ids: string[], enabled: boolean, at: string) => {
+      let n = 0;
+      for (const id of ids) if (await this.connections.setEnabled(id, enabled, at)) n++;
+      return n;
+    },
     remove: async (id: string) => this.data.connections.delete(id),
   };
 
@@ -166,6 +171,12 @@ export class MemoryV2Store implements V2Store {
     },
     clear: async (cid: string) => {
       for (const k of [...this.data.units.keys()]) if (k.startsWith(`${cid}|`)) this.data.units.delete(k);
+    },
+    clearMany: async (ids: string[]) => {
+      for (const id of ids) await this.units.clear(id);
+    },
+    disableMany: async (ids: string[]) => {
+      for (const [k, u] of this.data.units) if (ids.includes(u.connectionId)) this.data.units.set(k, { ...u, state: 'DISABLED' });
     },
   };
 

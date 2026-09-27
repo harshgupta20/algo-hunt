@@ -346,6 +346,14 @@ export class PgV2Store implements V2Store {
       ).rows[0];
       return r ? mapConnection(r) : null;
     },
+    setEnabledMany: async (ids: string[], enabled: boolean, at: string) => {
+      if (!ids.length) return 0;
+      const r = await this.pool.query(
+        `UPDATE v2_connections SET enabled = $2, enabled_at = CASE WHEN $2 THEN $3::timestamptz ELSE enabled_at END, updated_at = now() WHERE id = ANY($1::uuid[])`,
+        [ids, enabled, at],
+      );
+      return r.rowCount ?? 0;
+    },
     remove: async (id: string) => ((await this.pool.query('DELETE FROM v2_connections WHERE id = $1', [id])).rowCount ?? 0) > 0,
   };
 
@@ -380,6 +388,12 @@ export class PgV2Store implements V2Store {
     },
     clear: async (connectionId: string) => {
       await this.pool.query('DELETE FROM v2_unit_state WHERE connection_id = $1', [connectionId]);
+    },
+    clearMany: async (connectionIds: string[]) => {
+      if (connectionIds.length) await this.pool.query('DELETE FROM v2_unit_state WHERE connection_id = ANY($1::uuid[])', [connectionIds]);
+    },
+    disableMany: async (connectionIds: string[]) => {
+      if (connectionIds.length) await this.pool.query("UPDATE v2_unit_state SET state = 'DISABLED', updated_at = now() WHERE connection_id = ANY($1::uuid[])", [connectionIds]);
     },
   };
 

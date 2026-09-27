@@ -56,6 +56,8 @@ export function v2Controller(ctx: AppContext) {
       await svc().removeStrategy(req.params.id!);
     },
     duplicateStrategy: async (req) => created(await svc().duplicateStrategy(req.params.id!)),
+    enableStrategyConnections: (req) => svc().setStrategyConnections(req.params.id!, true),
+    disableStrategyConnections: (req) => svc().setStrategyConnections(req.params.id!, false),
     versions: (req) => svc().versions(req.params.id!),
     validateStrategy: (req) => svc().validateStrategy(parse(z.object({ definition }), req.body).definition),
 

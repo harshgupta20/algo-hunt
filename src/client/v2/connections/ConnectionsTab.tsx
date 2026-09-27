@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Link2, Pencil, PlayCircle, Plus, Power, PowerOff, RefreshCw, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Link2, Pencil, PlayCircle, Plus, Power, PowerOff, RefreshCw, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
 import type { ConnectionConfig, StrategyDefinition, V2Strategy } from '@/shared/v2';
 import { TIMEFRAME, candleRequestsPerProduct, expiryText, legName, policyText } from '@/shared/v2';
@@ -328,6 +328,132 @@ function ConnectionRowView({ c, definition }: { c: ConnectionRow; definition?: S
   );
 }
 
+const COLLAPSED_KEY = 'algo-hunt.connections.collapsed';
+const symbolOf = (c: ConnectionRow) => c.product?.symbol ?? c.productId.split(':')[1] ?? c.productId;
+
+/** One strategy's connections: minimize / expand, and switch them all on or off at once. */
+function StrategyGroup({ s, rows, collapsed, onToggle }: { s: V2Strategy; rows: ConnectionRow[]; collapsed: boolean; onToggle: () => void }) {
+  const qc = useQueryClient();
+  const [confirmOff, setConfirmOff] = useState(false);
+  const [result, setResult] = useState<{ text: string; warn: boolean; details?: string } | null>(null);
+  const on = rows.filter((r) => r.enabled).length;
+  const bulk = useMutation({
+    mutationFn: (enabled: boolean) => v2Api.setStrategyConnections(s.id, enabled),
+    onSuccess: (r, enabled) => {
+      qc.invalidateQueries({ queryKey: ['v2-connections'] });
+      qc.invalidateQueries({ queryKey: ['v2-strategies'] });
+      qc.invalidateQueries({ queryKey: ['v2-status'] });
+      const verb = enabled ? 'Switched on' : 'Switched off';
+      if (!r.failed.length) {
+        setResult({ text: `${verb} ${r.changed} connection${r.changed === 1 ? '' : 's'}`, warn: false });
+        return;
+      }
+      const reasons = [...new Set(r.failed.map((f) => f.message))];
+      setResult({
+        text: `${verb} ${r.changed} · ${r.failed.length} couldn’t be switched on${reasons.length === 1 ? `: ${reasons[0]}` : ''}`,
+        warn: true,
+        details: r.failed.map((f) => `${f.productId.split(':')[1] ?? f.productId}: ${f.message}`).join('\n'),
+      });
+    },
+    onError: (e) => setResult({ text: (e as Error).message, warn: true }),
+  });
+  useEffect(() => {
+    if (!confirmOff) return;
+    const t = setTimeout(() => setConfirmOff(false), 4000);
+    return () => clearTimeout(t);
+  }, [confirmOff]);
+  useEffect(() => {
+    if (!result || result.warn) return;
+    const t = setTimeout(() => setResult(null), 5000);
+    return () => clearTimeout(t);
+  }, [result]);
+  const busy = (enabled: boolean) => bulk.isPending && bulk.variables === enabled;
+  const names = rows.map(symbolOf);
+
+  return (
+    <Card className="p-0 overflow-hidden">
+      <div className={clsx('flex flex-wrap items-center gap-3 px-4 py-3', !collapsed && 'border-b border-ink-700/60')}>
+        <IconButton help={collapsed ? H.connection.expand : H.connection.collapse} onClick={onToggle} className="-ml-1 p-1 rounded-md text-slate-500 hover:text-slate-200 hover:bg-ink-800">
+          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </IconButton>
+        <Tooltip content={collapsed ? H.connection.expand : H.connection.collapse}>
+          <button type="button" onClick={onToggle} className="text-sm font-semibold text-fg hover:text-accent-soft">
+            {s.name}
+          </button>
+        </Tooltip>
+        <span className="flex flex-wrap gap-2">
+          {s.definition.legs.map((l) => (
+            <Tooltip key={l.id} content={{ title: legName(l), body: 'A leg of this strategy.' }}>
+              <span>
+                <LegBadge leg={l} />
+              </span>
+            </Tooltip>
+          ))}
+        </span>
+        {collapsed && (
+          <Tooltip content={{ title: `${rows.length} connected product${rows.length === 1 ? '' : 's'}`, body: names.join(' · ') }}>
+            <span className="min-w-0 max-w-md truncate text-[11px] text-slate-500">
+              {names.slice(0, 8).join(' · ')}
+              {names.length > 8 ? ` · +${names.length - 8}` : ''}
+            </span>
+          </Tooltip>
+        )}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {result && (
+            <Tooltip content={{ title: result.warn ? 'Some connections didn’t change' : 'Done', body: result.details ?? result.text }}>
+              <span className={clsx('max-w-xs truncate text-[11px]', result.warn ? 'text-warn' : 'text-slate-400')}>{result.text}</span>
+            </Tooltip>
+          )}
+          <Tooltip content={H.connection.onCount}>
+            <span className="text-[11px] text-slate-500 tabular-nums">
+              {on}/{rows.length} on
+            </span>
+          </Tooltip>
+          {on < rows.length && (
+            <Tooltip content={H.connection.allOn}>
+              <button
+                type="button"
+                className="btn-ghost py-1 text-xs"
+                disabled={bulk.isPending}
+                onClick={() => {
+                  setResult(null);
+                  bulk.mutate(true);
+                }}
+              >
+                {busy(true) ? <InlineSpinner className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />} Switch all on
+              </button>
+            </Tooltip>
+          )}
+          {on > 0 && (
+            <Tooltip content={H.connection.allOff}>
+              <button
+                type="button"
+                className={clsx('btn-ghost py-1 text-xs', confirmOff && 'border-warn text-warn')}
+                disabled={bulk.isPending}
+                onClick={() => {
+                  if (!confirmOff) return setConfirmOff(true);
+                  setConfirmOff(false);
+                  setResult(null);
+                  bulk.mutate(false);
+                }}
+              >
+                {busy(false) ? <InlineSpinner className="w-3.5 h-3.5" /> : <PowerOff className="w-3.5 h-3.5" />} {confirmOff ? `Confirm: switch off ${on}` : 'Switch all off'}
+              </button>
+            </Tooltip>
+          )}
+        </div>
+      </div>
+      {!collapsed && (
+        <div className="divide-y divide-ink-700/50">
+          {rows.map((c) => (
+            <ConnectionRowView key={c.id} c={c} definition={s.definition} />
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export function ConnectionsTab({ initialStrategyId }: { initialStrategyId?: string }) {
   const strategies = useQuery({ queryKey: ['v2-strategies'], queryFn: v2Api.strategies });
   const connections = useQuery({ queryKey: ['v2-connections'], queryFn: () => v2Api.connections(), refetchInterval: 60_000 });
@@ -340,19 +466,53 @@ export function ConnectionsTab({ initialStrategyId }: { initialStrategyId?: stri
     }
   }, [initialStrategyId]);
 
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try {
+      setCollapsed(new Set(JSON.parse(window.localStorage.getItem(COLLAPSED_KEY) ?? '[]') as string[]));
+    } catch {
+      /* storage unavailable — everything expanded */
+    }
+  }, []);
+  const save = (next: Set<string>) => {
+    setCollapsed(next);
+    try {
+      window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+    } catch {
+      /* ignore */
+    }
+  };
+  const toggle = (id: string) => {
+    const next = new Set(collapsed);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    save(next);
+  };
+
   if (strategies.isLoading || connections.isLoading) return <SkeletonCards count={3} />;
   const list = connections.data ?? [];
   const byStrategy = (strategies.data ?? []).map((s) => ({ s, rows: list.filter((c) => c.strategyId === s.id) })).filter((g) => g.rows.length);
+  const allCollapsed = byStrategy.length > 0 && byStrategy.every((g) => collapsed.has(g.s.id));
+  const setAll = (collapse: boolean) => save(collapse ? new Set(byStrategy.map((g) => g.s.id)) : new Set());
 
   return (
     <div className="flex flex-col gap-4">
-      {!showNew && (
-        <Tooltip content={H.connection.new}>
-          <button type="button" className="btn-primary self-start" onClick={() => setShowNew(true)} disabled={!strategies.data?.length}>
-            <Plus className="w-4 h-4" /> New connection
-          </button>
-        </Tooltip>
-      )}
+      <div className="flex flex-wrap items-center gap-3">
+        {!showNew && (
+          <Tooltip content={H.connection.new}>
+            <button type="button" className="btn-primary" onClick={() => setShowNew(true)} disabled={!strategies.data?.length}>
+              <Plus className="w-4 h-4" /> New connection
+            </button>
+          </Tooltip>
+        )}
+        {byStrategy.length > 0 && (
+          <Tooltip content={allCollapsed ? H.connection.expandAll : H.connection.collapseAll}>
+            <button type="button" className="btn-ghost ml-auto text-xs" onClick={() => setAll(!allCollapsed)}>
+              {allCollapsed ? <ChevronsUpDown className="w-4 h-4" /> : <ChevronsDownUp className="w-4 h-4" />} {allCollapsed ? 'Expand all' : 'Collapse all'}
+            </button>
+          </Tooltip>
+        )}
+      </div>
       {!strategies.data?.length && <EmptyState title="No strategies yet" hint="Create a strategy first (Strategies tab), then connect it to products here." />}
       {showNew && !!strategies.data?.length && <NewConnection
           strategies={strategies.data}
@@ -363,28 +523,7 @@ export function ConnectionsTab({ initialStrategyId }: { initialStrategyId?: stri
         />}
       {byStrategy.length === 0 && !!strategies.data?.length && <EmptyState title="No connections yet" hint="Connect a strategy to one or more products to start getting alerts." />}
       {byStrategy.map(({ s, rows }) => (
-        <Card key={s.id} className="p-0 overflow-hidden">
-          <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-ink-700/60">
-            <h3 className="text-sm font-semibold text-fg">{s.name}</h3>
-            <span className="flex flex-wrap gap-2">
-              {s.definition.legs.map((l) => (
-                <Tooltip key={l.id} content={{ title: legName(l), body: 'A leg of this strategy.' }}>
-                  <span>
-                    <LegBadge leg={l} />
-                  </span>
-                </Tooltip>
-              ))}
-            </span>
-            <span className="ml-auto text-[11px] text-slate-500">
-              {rows.filter((r) => r.enabled).length}/{rows.length} on
-            </span>
-          </div>
-          <div className="divide-y divide-ink-700/50">
-            {rows.map((c) => (
-              <ConnectionRowView key={c.id} c={c} definition={s.definition} />
-            ))}
-          </div>
-        </Card>
+        <StrategyGroup key={s.id} s={s} rows={rows} collapsed={collapsed.has(s.id)} onToggle={() => toggle(s.id)} />
       ))}
     </div>
   );
