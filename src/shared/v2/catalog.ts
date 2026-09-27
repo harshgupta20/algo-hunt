@@ -57,6 +57,9 @@ export const PRODUCT_KIND_LABEL: Record<ProductKind, string> = { INDEX: 'Index',
 // ---- Legs ---------------------------------------------------------------------------------
 
 export const LEG_IDS = ['A', 'B', 'C', 'D'] as const;
+/** The Algo Hunt Telegram bot people open and press Start on (used when the token's bot can't be looked up). */
+export const DEFAULT_TELEGRAM_BOT = 'algohuntbot';
+
 export const MAX_LEGS = 4;
 /** Products one "Connect" can link at once (covers every F&O stock, index and commodity). */
 export const MAX_CONNECT = 500;

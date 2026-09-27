@@ -58,6 +58,7 @@ export function createRouter(ctx: AppContext): Router {
   r.get('/v2/channels', v2.channels);
   r.post('/v2/channels/test', v2.testChannel);
   r.get('/v2/channels/telegram/chats', v2.telegramChats);
+  r.get('/v2/channels/telegram/bot', v2.telegramBot);
 
   const prefs = preferencesController(ctx);
   r.get('/preferences', prefs.get);

@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarOff, CalendarPlus, Plus, Save, Search, Send, Trash2 } from 'lucide-react';
+import { CalendarOff, CalendarPlus, Check, Copy, ExternalLink, Plus, Save, Search, Send, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
 import type { CalendarEntry, Market, TelegramChat, V2Settings } from '@/shared/v2';
+import { DEFAULT_TELEGRAM_BOT } from '@/shared/v2';
 import { FieldLabel, InfoTip, Tooltip } from '../components/Tooltip';
 import { Card, IconButton } from '../components/ui';
 import { v2Api } from './api';
@@ -23,12 +24,59 @@ const cleanChats = (list: TelegramChat[]) => list.filter((c) => c.id.trim()).map
 function TelegramChatsEditor({ chats, onChange, saved, detail, configured }: { chats: TelegramChat[]; onChange: (c: TelegramChat[]) => void; saved: TelegramChat[]; detail?: string; configured: boolean }) {
   const find = useMutation({ mutationFn: v2Api.telegramChats });
   const test = useMutation({ mutationFn: () => v2Api.testChannel('telegram') });
+  const bot = useQuery({ queryKey: ['v2-telegram-bot'], queryFn: v2Api.telegramBot, staleTime: 10 * 60_000 });
+  const handle = bot.data?.username ?? DEFAULT_TELEGRAM_BOT;
+  const link = `https://t.me/${handle}`;
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard blocked — the link is visible to copy by hand */
+    }
+  };
   const set = (i: number, patch: Partial<TelegramChat>) => onChange(chats.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   const has = (id: string) => chats.some((c) => c.id.trim() === id);
   const dirty = JSON.stringify(cleanChats(chats)) !== JSON.stringify(cleanChats(saved));
   return (
     <div className="md:col-span-2">
       <FieldLabel help={H.settings.telegramChats}>Telegram chats</FieldLabel>
+      <div className="mb-3 rounded-lg border border-accent/25 bg-accent/5 p-3 text-xs text-slate-300">
+        <p className="mb-1.5 font-semibold text-slate-200">
+          Connect Telegram · our bot is <span className="text-accent-soft">@{handle}</span>
+        </p>
+        <ol className="list-decimal space-y-0.5 pl-4">
+          <li>
+            Each person opens <b>@{handle}</b> in Telegram and presses <b>Start</b>. For a group, add @{handle} to the group and send a message there.
+          </li>
+          <li>
+            Press <b>Find chat IDs</b> below and <b>Add</b> them (or type a chat id).
+          </li>
+          <li>
+            Give each a name if you like, then <b>Save</b> — every alert goes to all of them.
+          </li>
+        </ol>
+        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+          <Tooltip content={H.settings.openBot}>
+            <a href={link} target="_blank" rel="noreferrer" className="btn-primary py-1 text-xs">
+              <Send className="h-3.5 w-3.5" /> Open @{handle}
+            </a>
+          </Tooltip>
+          <Tooltip content={H.settings.openBotWeb}>
+            <a href={`https://web.telegram.org/k/#@${handle}`} target="_blank" rel="noreferrer" className="btn-ghost py-1 text-xs">
+              <ExternalLink className="h-3.5 w-3.5" /> Telegram Web
+            </a>
+          </Tooltip>
+          <Tooltip content={H.settings.copyBotLink}>
+            <button type="button" className="btn-ghost py-1 text-xs" onClick={copy}>
+              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />} {copied ? 'Copied' : 'Copy invite link'}
+            </button>
+          </Tooltip>
+          <span className="font-mono text-[11px] text-slate-500">{link}</span>
+        </div>
+      </div>
       <div className="flex flex-col gap-2">
         {chats.map((c, i) => (
           <div key={i} className="flex gap-2">
@@ -79,7 +127,7 @@ function TelegramChatsEditor({ chats, onChange, saved, detail, configured }: { c
           <div className="rounded-lg border border-ink-700/60 bg-ink-850 p-2">
             {find.data.length === 0 ? (
               <p className="text-xs text-slate-500">
-                No recent chats. Ask each person to open your bot in Telegram and press <b>Start</b> (or send it any message) — for a group, add the bot and send a message there — then press Find chat IDs again.
+                No recent chats. Ask each person to open <b>@{handle}</b> in Telegram and press <b>Start</b> (or send it any message) — for a group, add @{handle} and send a message there — then press Find chat IDs again.
               </p>
             ) : (
               <div className="flex flex-col divide-y divide-ink-700/50">

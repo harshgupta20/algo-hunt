@@ -113,6 +113,7 @@ Validation failures return `400` with `{ error, issues: [{ path, message, severi
 | POST | `/api/v2/scan` · GET `/scan-runs` | `{ force? }` · `limit` | `{ run, skipped? }` · runs |
 | GET / PUT | `/api/v2/settings` · `/calendar` | settings `{ telegramChats: [{ id, name? }] (≤ 20), emailRecipients, emailFrom, requestBudget }` · `{ entries: [{ market, date, kind, … }] }` | saved values |
 | GET | `/api/v2/channels` · POST `/channels/test` | `{ channel }` | status · `{ ok }` |
+| GET | `/api/v2/channels/telegram/bot` | — | The bot people should open and press Start on: `{ username, name, verified }` (Telegram `getMe` on the token; else the default @algohuntbot, `verified: false`) |
 | GET | `/api/v2/channels/telegram/chats` | — | Chats that recently messaged the bot (Telegram `getUpdates`): `[{ id, name, type, username? }]` — for picking chat ids. `POST /channels/test` returns `{ ok, results: [{ target, ok, error? }] }` (one per Telegram chat) |
 
 `/api/cron/tick` runs the V2 scan and returns `v2: { status, skipped?, units, alerts, errors }`.

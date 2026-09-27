@@ -122,6 +122,7 @@ export function v2Controller(ctx: AppContext) {
     channels: () => svc().channelStatus(),
     testChannel: (req) => svc().testChannel(parse(z.object({ channel: z.enum(['telegram', 'email']) }), req.body).channel),
     telegramChats: () => svc().telegramRecentChats(),
+    telegramBot: () => svc().telegramBot(),
   } satisfies Record<string, Handler>;
 
   return Object.fromEntries(Object.entries(handlers).map(([k, h]) => [k, wrap(h as Handler)])) as Record<keyof typeof handlers, Handler>;

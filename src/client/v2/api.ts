@@ -209,4 +209,5 @@ export const v2Api = {
   channels: () => request<ChannelStatus>('/channels'),
   testChannel: (channel: 'telegram' | 'email') => post<{ ok: boolean; results: Array<{ target?: string; ok: boolean; error?: string }> }>('/channels/test', { channel }),
   telegramChats: () => request<Array<{ id: string; name: string; type: string; username?: string }>>('/channels/telegram/chats'),
+  telegramBot: () => request<{ username: string; name: string; verified: boolean }>('/channels/telegram/bot'),
 };

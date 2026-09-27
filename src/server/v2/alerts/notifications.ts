@@ -5,7 +5,7 @@
  * recorded; one channel failing never blocks the other.
  */
 import type { AlertStatus, ConditionTrace, Delivery, EvaluationSource, ExprTrace, LegDef, TelegramChat, V2Alert, V2Settings } from '@/shared/v2';
-import { TIMEFRAME, legName, unitText } from '@/shared/v2';
+import { DEFAULT_TELEGRAM_BOT, TIMEFRAME, legName, unitText } from '@/shared/v2';
 import { getConfig } from '../../config/index';
 import { childLogger } from '../../utils/logger';
 
@@ -108,7 +108,7 @@ function telegramHint(status: number, body: string): string {
       return body;
     }
   })().slice(0, 160);
-  if (/chat not found/i.test(d)) return `${d} — this person must open the bot in Telegram and press Start (for a group, add the bot to it)`;
+  if (/chat not found/i.test(d)) return `${d} — this person must open @${DEFAULT_TELEGRAM_BOT} in Telegram and press Start (for a group, add the bot to it)`;
   if (/blocked by the user/i.test(d)) return `${d} — they blocked the bot; they must unblock it`;
   if (/not enough rights|kicked/i.test(d)) return `${d} — add the bot back to the group / channel`;
   return `Telegram API ${status}: ${d}`;
@@ -139,6 +139,14 @@ export class TelegramChannel implements Channel {
       }),
     );
   }
+}
+
+/** The bot behind a token (Telegram getMe): its @username and display name. */
+export async function telegramBotInfo(botToken: string): Promise<{ username: string; name: string }> {
+  const res = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
+  const body = (await res.json().catch(() => ({}))) as { ok?: boolean; description?: string; result?: { username?: string; first_name?: string } };
+  if (!res.ok || !body.ok || !body.result?.username) throw new Error(`Telegram: ${body.description ?? res.status}`);
+  return { username: body.result.username, name: body.result.first_name ?? body.result.username };
 }
 
 /** Chats that recently messaged the bot (or added it to a group) — for picking chat ids. */

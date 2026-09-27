@@ -13,9 +13,9 @@ import type {
   V2Strategy,
   ValidationIssue,
 } from '@/shared/v2';
-import { hasErrors, incompatibility, strategySummary, validateConnection, validateStrategy } from '@/shared/v2';
+import { DEFAULT_TELEGRAM_BOT, hasErrors, incompatibility, strategySummary, validateConnection, validateStrategy } from '@/shared/v2';
 import { istDate } from '../utils/marketTime';
-import { envChannelFactory, recentTelegramChats, type ChannelFactory, type ChannelName } from './alerts/notifications';
+import { envChannelFactory, recentTelegramChats, telegramBotInfo, type ChannelFactory, type ChannelName } from './alerts/notifications';
 import { getConfig } from '../config/index';
 import { calendars } from './calendar/MarketCalendar';
 import type { Quote, V2DataProvider } from './data/DataProvider';
@@ -420,6 +420,25 @@ export class V2Service {
     const results = ((await ch.send({ subject: 'Algo Hunt · V2 test', text, html: `<p>${text}</p>` })) ?? [{}]).map((r) => ({ target: r.target, ok: !r.error, error: r.error }));
     if (results.every((r) => !r.ok)) throw new V2ServiceError(400, results.map((r) => (r.target ? `${r.target}: ${r.error}` : r.error)).join(' · '));
     return { ok: results.every((r) => r.ok), results };
+  }
+
+  private botCache: { at: number; info: { username: string; name: string; verified: boolean } } | null = null;
+
+  /** The Telegram bot people should open and press Start on (looked up from the token, else the default bot). */
+  async telegramBot(): Promise<{ username: string; name: string; verified: boolean }> {
+    const now = this.now();
+    if (this.botCache && now - this.botCache.at < 10 * 60_000) return this.botCache.info;
+    const token = getConfig().telegramBotToken;
+    let info = { username: DEFAULT_TELEGRAM_BOT, name: 'Algo Hunt', verified: false };
+    if (token) {
+      try {
+        info = { ...(await telegramBotInfo(token)), verified: true };
+      } catch {
+        /* offline / bad token — show the default bot */
+      }
+    }
+    this.botCache = { at: now, info };
+    return info;
   }
 
   /** Chats that recently messaged the Telegram bot (people who pressed Start, groups it was added to). */

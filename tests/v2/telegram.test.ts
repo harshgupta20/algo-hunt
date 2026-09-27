@@ -32,7 +32,7 @@ describe('Telegram to several chats', () => {
     expect(calls.sort()).toEqual(['-1001234567890', '111', '222']);
     expect(results).toEqual([
       { target: 'Rahul (111)' },
-      { target: 'Trader (222)', error: expect.stringMatching(/chat not found — this person must open the bot in Telegram and press Start/) },
+      { target: 'Trader (222)', error: expect.stringMatching(/chat not found — this person must open @algohuntbot in Telegram and press Start/) },
       { target: '-1001234567890' },
     ]);
   });

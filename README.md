@@ -72,7 +72,7 @@ With `APP_PASSWORD` unset the app is open in development (production refuses to 
 | `KITE_API_KEY`, `KITE_API_SECRET` | yes | Kite Connect app (the secret also encrypts the stored access token) |
 | `APP_PASSWORD` | production | Login password |
 | `CRON_SECRET` | production | Protects `/api/cron/tick` (`openssl rand -hex 32`) |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | no | Telegram alerts (chat id can be overridden in V2 → Settings) |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | no | Telegram alerts via our bot [@algohuntbot](https://t.me/algohuntbot). Recipients (several people / groups) are managed in V2 → Settings; `TELEGRAM_CHAT_ID` (comma-separated) is the fallback |
 | `RESEND_API_KEY` | no | Email alerts (recipients and sender in V2 → Settings) |
 
 ### Deploying
@@ -85,6 +85,9 @@ Deploy to Vercel (migrations run during `npm run build`) and call `/api/cron/tic
 
 Kite access tokens expire every morning (~06:00 IST). Each trading day: **Connect Kite** (top bar or Settings →
 Broker Connection), then start `npm run live` on your computer. See the [trader guide](docs/v2-user-guide.md).
+
+To receive Telegram alerts, open [@algohuntbot](https://t.me/algohuntbot) and press **Start**, then add yourself in
+V2 → Settings → Telegram chats (**Find chat IDs**).
 
 ## Security notes
 
