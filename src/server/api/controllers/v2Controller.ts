@@ -147,6 +147,11 @@ export function v2Controller(ctx: AppContext) {
         sources: csv(req.query.get('sources'), EVALUATION_SOURCES),
       }),
     acknowledge: (req) => svc().acknowledge(req.params.id!),
+    alert: (req) => svc().alert(req.params.id!),
+    alertFeed: (req) => {
+      const after = req.query.get('after');
+      return svc().alertFeed(after && !Number.isNaN(Date.parse(after)) ? new Date(after).toISOString() : null, num(req.query.get('limit')));
+    },
     signals: (req) => svc().signals({ ...records(req.query), outcomes: csv(req.query.get('outcomes'), SIGNAL_OUTCOMES) }),
 
     scan: (req) => svc().scan({ force: parse(z.object({ force: z.boolean().optional() }), req.body ?? {}).force }),

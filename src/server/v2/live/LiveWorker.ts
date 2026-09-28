@@ -61,6 +61,8 @@ export const CONFIRM_DEADLINE_MS = 120_000;
 const CONFIRM_RETRY_MS = 5_000;
 const SESSION_EVERY_MS = 30_000;
 const CONTEXT_EVERY_MS = 15_000;
+/** Reload connections etc. at least this often even when nothing seems changed. */
+const CONTEXT_FULL_EVERY_MS = 10 * 60_000;
 const PLAN_EVERY_MS = 60_000;
 const STATUS_EVERY_MS = 5_000;
 const PAPER_EVERY_MS = 10_000;
@@ -138,6 +140,8 @@ export class LiveWorker {
   private credsAt = -Infinity;
   private ctx: Ctx | null = null;
   private ctxAt = -Infinity;
+  private ctxStamp = '';
+  private ctxFullAt = -Infinity;
   private plan: SubscriptionPlan | null = null;
   private planAt = -Infinity;
   private covered = new Set<string>();
@@ -323,6 +327,7 @@ export class LiveWorker {
         log.info(r, 'morning instrument sync');
         this.contracts.clear();
         this.ctxAt = -Infinity;
+        this.ctxStamp = ''; // force a full reload with the new contracts
         this.planAt = -Infinity;
       }
       this.syncedToday = this.day;
@@ -336,6 +341,9 @@ export class LiveWorker {
     this.ctxAt = now;
     const { store, products } = this.deps;
     try {
+      // A one-value check first: connections, strategies, settings, calendar and products rarely change.
+      const stamp = await store.contextStamp();
+      if (this.ctx && stamp === this.ctxStamp && now - this.ctxFullAt < CONTEXT_FULL_EVERY_MS) return;
       const [settings, entries, connections] = await Promise.all([store.settings.get(), store.calendar.list(), store.connections.list()]);
       const enabled = connections.filter((c) => c.enabled);
       const strategies = new Map(await Promise.all([...new Set(enabled.map((c) => c.strategyId))].map(async (id) => [id, await store.strategies.get(id)] as const)));
@@ -355,6 +363,8 @@ export class LiveWorker {
       this.candles.setCalendars(cals);
       const changed = signature !== this.ctx?.signature;
       this.ctx = { settings, cals, list, signature };
+      this.ctxStamp = stamp; // only once the reload worked
+      this.ctxFullAt = now;
       if (changed) this.planAt = -Infinity;
     } catch (err) {
       this.error(`Loading connections failed: ${msg(err)}`);

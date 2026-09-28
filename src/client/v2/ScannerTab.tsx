@@ -23,7 +23,7 @@ const STATUS_HELP: Record<ScanRun['status'], string> = {
 export function ScannerTab() {
   const [hideIdle, setHideIdle] = useState(true);
   const [open, setOpen] = useState<string | null>(null);
-  const runs = useQuery({ queryKey: ['v2-runs'], queryFn: () => v2Api.scanRuns(200), refetchInterval: 30_000 });
+  const runs = useQuery({ queryKey: ['v2-runs'], queryFn: () => v2Api.scanRuns(60), refetchInterval: 60_000 });
   const settings = useQuery({ queryKey: ['v2-settings'], queryFn: v2Api.settings });
   const list = (runs.data ?? []).filter((r) => !hideIdle || r.unitsEvaluated > 0 || r.errors.length > 0);
 

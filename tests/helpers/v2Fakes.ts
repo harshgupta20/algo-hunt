@@ -113,6 +113,7 @@ export class MemoryV2Store implements V2Store {
   };
 
   strategies = {
+    count: async () => this.data.strategies.size,
     list: async () => [...this.data.strategies.keys()].map((id) => this.strategy(id)!),
     get: async (id: string) => this.strategy(id),
     create: async (definition: StrategyDefinition) => {
@@ -137,6 +138,7 @@ export class MemoryV2Store implements V2Store {
   };
 
   connections = {
+    counts: async () => ({ total: this.data.connections.size, enabled: [...this.data.connections.values()].filter((c) => c.enabled).length }),
     list: async (strategyId?: string) => clone([...this.data.connections.values()].filter((c) => !strategyId || c.strategyId === strategyId)),
     get: async (id: string) => clone(this.data.connections.get(id) ?? null),
     create: async (strategyId: string, productId: string, config: ConnectionConfig) => {
@@ -223,6 +225,12 @@ export class MemoryV2Store implements V2Store {
       return clone(a);
     },
     get: async (id: string) => clone(this.data.alerts.find((a) => a.id === id) ?? null),
+    feed: async (after: string | null, limit: number) =>
+      [...this.data.alerts]
+        .reverse()
+        .filter((a) => !after || a.createdAt > after)
+        .slice(0, limit)
+        .map((a) => ({ id: a.id, strategyName: a.strategyName, productId: a.productId, unit: clone(a.unit), createdAt: a.createdAt })),
     list: async (f: AlertFilters) =>
       clone(
         [...this.data.alerts]
@@ -266,6 +274,16 @@ export class MemoryV2Store implements V2Store {
       this.data.locks.delete(name);
     },
   };
+
+  contextStamp = async () =>
+    JSON.stringify([
+      [...this.data.connections.values()].map((c) => [c.id, c.enabled, c.enabledAt, c.updatedAt, c.config]),
+      [...this.data.strategies.values()].map((s) => [s.id, s.version, s.updatedAt]),
+      this.data.settings,
+      this.data.calendar,
+      this.data.products.length,
+      this.data.syncedAt,
+    ]);
 
   /** The filters alerts and signals share (as PgV2Store's recordWhere). */
   private matches(
@@ -331,6 +349,10 @@ export class MemoryV2Store implements V2Store {
       return clone(o);
     },
     listOverrides: async () => [...this.data.paperOverrides].map(([connectionId, override]) => ({ connectionId, override: clone(override) })),
+    closedVersion: async () => {
+      const closed = this.data.paperTrades.filter((t) => t.status === 'CLOSED');
+      return `${closed.length}|${closed.map((t) => t.exitAt ?? '').sort().at(-1) ?? ''}|${this.data.paperTrades.length}`;
+    },
     reset: async (id: string) => {
       const before = this.data.paperTrades.length;
       this.data.paperTrades = this.data.paperTrades.filter((t) => t.strategyId !== id);

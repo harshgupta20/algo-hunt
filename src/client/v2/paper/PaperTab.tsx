@@ -578,9 +578,9 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
   const { sources: _s, statuses: _st, outcomes: _o, ...q } = toQuery(filters, strategies.data ?? []);
   const { from: _from, to: _to, ...qOpen } = q; // open positions: every period
   const ready = !filters.groups.length || !!strategies.data;
-  const summary = useQuery({ queryKey: ['v2-paper', 'summary', q], queryFn: () => v2Api.paperSummary(q), refetchInterval: 15_000, enabled: ready, placeholderData: keepPreviousData });
+  const summary = useQuery({ queryKey: ['v2-paper', 'summary', q], queryFn: () => v2Api.paperSummary(q), refetchInterval: 60_000, enabled: ready, placeholderData: keepPreviousData });
   const open = useQuery({ queryKey: ['v2-paper', 'open', qOpen], queryFn: () => v2Api.paperTrades({ ...qOpen, status: 'OPEN', limit: 500 }), refetchInterval: 5_000, enabled: ready, placeholderData: keepPreviousData });
-  const log = useQuery({ queryKey: ['v2-paper', 'log', q], queryFn: () => v2Api.paperTrades({ ...q, status: 'CLOSED', limit: 2_000 }), refetchInterval: 30_000, enabled: ready, placeholderData: keepPreviousData });
+  const log = useQuery({ queryKey: ['v2-paper', 'log', q], queryFn: () => v2Api.paperTrades({ ...q, status: 'CLOSED', limit: 1_000 }), refetchInterval: 120_000, enabled: ready, placeholderData: keepPreviousData });
   const refresh = () => qc.invalidateQueries({ queryKey: ['v2-paper'] });
   const close = useMutation({ mutationFn: (id: string) => v2Api.closePaperTrade(id), onSettled: refresh });
   const reset = useMutation({ mutationFn: (id: string) => v2Api.resetPaper(id), onSettled: refresh });

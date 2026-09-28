@@ -43,7 +43,7 @@ function Stat({ label, value, hint, help }: { label: string; value: ReactNode; h
 }
 
 export function LiveCard() {
-  const q = useQuery({ queryKey: ['v2-live'], queryFn: v2Api.live, refetchInterval: 10_000 });
+  const q = useQuery({ queryKey: ['v2-live'], queryFn: v2Api.live, refetchInterval: 20_000 });
   const info = q.data;
   const s = info?.status;
   const online = info?.health.online ?? false;

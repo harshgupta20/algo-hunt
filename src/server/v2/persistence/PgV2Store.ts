@@ -307,6 +307,7 @@ export class PgV2Store implements V2Store {
   };
 
   strategies = {
+    count: async () => Number((await this.pool.query('SELECT count(*)::int AS n FROM v2_strategies')).rows[0]?.n ?? 0),
     list: async () =>
       (await this.pool.query(`${STRATEGY_SELECT} ORDER BY s.updated_at DESC`)).rows.map((r: any) => ({
         id: r.id,
@@ -347,6 +348,10 @@ export class PgV2Store implements V2Store {
   };
 
   connections = {
+    counts: async () => {
+      const r = (await this.pool.query('SELECT count(*)::int AS total, count(*) FILTER (WHERE enabled)::int AS enabled FROM v2_connections')).rows[0];
+      return { total: Number(r?.total ?? 0), enabled: Number(r?.enabled ?? 0) };
+    },
     list: async (strategyId?: string) =>
       (strategyId
         ? await this.pool.query('SELECT * FROM v2_connections WHERE strategy_id = $1 ORDER BY created_at', [strategyId])
@@ -451,7 +456,9 @@ export class PgV2Store implements V2Store {
         where.push(`outcome = ANY($${vals.length}::text[])`);
       }
       vals.push(Math.min(f.limit ?? 100, 1000));
-      return (await this.pool.query(`SELECT * FROM v2_signals ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT $${vals.length}`, vals)).rows.map(mapSignal);
+      // Lists leave the condition trace (most of each row's size) in the database.
+      const cols = `id, identity, connection_id, strategy_id, version, unit_key, trigger_timeframe, candle_time, outcome, evaluation - 'trace' AS evaluation, created_at`;
+      return (await this.pool.query(`SELECT ${cols} FROM v2_signals ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT $${vals.length}`, vals)).rows.map(mapSignal);
     },
   };
 
@@ -507,10 +514,19 @@ export class PgV2Store implements V2Store {
         where.push(`COALESCE(evaluation->>'source', 'HISTORICAL') = ANY($${vals.length}::text[])`);
       }
       vals.push(Math.min(f.limit ?? 200, 1000));
-      const rows = (await this.pool.query(`SELECT * FROM v2_alerts ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT $${vals.length}`, vals)).rows;
+      // Lists leave the condition trace (most of each row's size) and the duplicate unit in the database.
+      const cols = `id, signal_id, connection_id, strategy_id, strategy_name, version, product_id, status, unit, trigger_timeframe, candle_time, evaluation - 'trace' - 'unit' AS evaluation, acknowledged_at, created_at`;
+      const rows = (await this.pool.query(`SELECT ${cols} FROM v2_alerts ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT $${vals.length}`, vals)).rows;
       const deliveries = await this.deliveriesFor(rows.map((r: any) => r.id));
       return rows.map((r: any) => mapAlert(r, deliveries.get(r.id) ?? []));
     },
+    feed: async (after: string | null, limit: number) =>
+      (
+        await this.pool.query(
+          `SELECT id, strategy_name, product_id, unit, created_at FROM v2_alerts ${after ? 'WHERE created_at > $2' : ''} ORDER BY created_at DESC LIMIT $1`,
+          after ? [Math.min(limit, 100), after] : [Math.min(limit, 100)],
+        )
+      ).rows.map((r: any) => ({ id: r.id as string, strategyName: r.strategy_name as string, productId: r.product_id as string, unit: r.unit, createdAt: iso(r.created_at)! })),
   };
 
   scanRuns = {
@@ -624,11 +640,15 @@ export class PgV2Store implements V2Store {
         vals.push(f.since);
         where.push(`entry_at >= $${vals.length}`);
       }
-      vals.push(Math.min(f.limit ?? 1000, 10_000));
+      vals.push(Math.min(f.limit ?? 1000, 50_000));
       const sql = `SELECT id, trade FROM v2_paper_trades ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY entry_at DESC LIMIT $${vals.length}`;
       return (await this.pool.query(sql, vals)).rows.map(mapPaperTrade);
     },
     reset: async (strategyId: string) => (await this.pool.query('DELETE FROM v2_paper_trades WHERE strategy_id = $1', [strategyId])).rowCount ?? 0,
+    closedVersion: async () => {
+      const r = (await this.pool.query(`SELECT count(*)::int AS n, max(updated_at) AS at FROM v2_paper_trades WHERE status = 'CLOSED'`)).rows[0];
+      return `${r?.n ?? 0}|${iso(r?.at) ?? ''}`;
+    },
     // Until migration 011 runs (next `npm run dev` / `npm run db:migrate`) there are simply no own values.
     getOverride: async (connectionId: string) => {
       const r = (await this.pool.query('SELECT override FROM v2_paper_overrides WHERE connection_id = $1', [connectionId]).catch(noTable({ rows: [] }))).rows[0];
@@ -648,6 +668,18 @@ export class PgV2Store implements V2Store {
     listOverrides: async () =>
       (await this.pool.query('SELECT connection_id, override FROM v2_paper_overrides').catch(noTable({ rows: [] }))).rows.map((r: any) => ({ connectionId: r.connection_id as string, override: r.override as PaperOverride })),
   };
+
+  contextStamp = async (): Promise<string> =>
+    String(
+      (
+        await this.pool.query(`SELECT concat_ws('|',
+          (SELECT count(*) FROM v2_connections), (SELECT max(updated_at) FROM v2_connections),
+          (SELECT count(*) FROM v2_strategies), (SELECT max(updated_at) FROM v2_strategies),
+          (SELECT max(updated_at) FROM v2_settings), (SELECT max(updated_at) FROM v2_products),
+          (SELECT md5(coalesce(string_agg(market || date || kind || coalesce(open_min::text, '') || coalesce(close_min::text, ''), ',' ORDER BY market, date), '')) FROM v2_calendar)
+        ) AS stamp`)
+      ).rows[0]?.stamp ?? '',
+    );
 
   live = {
     get: async () => {

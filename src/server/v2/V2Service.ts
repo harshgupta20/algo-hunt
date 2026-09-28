@@ -88,6 +88,8 @@ export class V2Service {
   readonly tools: V2Tools;
   private readonly channels: ChannelFactory;
   private readonly paper: PaperTrader;
+  /** Closed paper trades already read, reused while none closes (they never change once closed). */
+  private closedCache: { version: string; trades: PaperTrade[] } | null = null;
 
   constructor(private readonly deps: V2ServiceDeps) {
     this.channels = deps.channels ?? envChannelFactory;
@@ -116,8 +118,8 @@ export class V2Service {
       store.instruments.count(),
       store.products.count(),
       store.instruments.syncedAt(),
-      store.strategies.list(),
-      store.connections.list(),
+      store.strategies.count(),
+      store.connections.counts(),
       store.scanRuns.list(1),
       store.settings.get(),
       this.deps.provider.isConnected().catch(() => false),
@@ -130,8 +132,8 @@ export class V2Service {
       markets: { NSE: market('NSE'), MCX: market('MCX') },
       kiteConnected: kite,
       instruments: { count: instruments, products, syncedAt },
-      strategies: strategies.length,
-      connections: { total: connections.length, enabled: connections.filter((c) => c.enabled).length },
+      strategies,
+      connections,
       lastRun: runs[0] ?? null,
       channels: this.channels.status(settings),
     };
@@ -399,6 +401,18 @@ export class V2Service {
     return this.deps.store.alerts.list({ ...rest, ...istRange(from, to), limit: Math.min(q.limit ?? 200, 1000) });
   }
 
+  /** One alert in full (with its condition trace). */
+  async alert(id: string): Promise<V2Alert> {
+    const a = await this.deps.store.alerts.get(id);
+    if (!a) throw new V2ServiceError(404, 'Alert not found');
+    return a;
+  }
+
+  /** New alerts since `after` (ISO) — small rows, polled by the app's alarm. */
+  alertFeed(after: string | null, limit = 25) {
+    return this.deps.store.alerts.feed(after, Math.min(limit, 100));
+  }
+
   async acknowledge(id: string): Promise<V2Alert> {
     const a = await this.deps.store.alerts.get(id);
     if (!a) throw new V2ServiceError(404, 'Alert not found');
@@ -453,12 +467,30 @@ export class V2Service {
   }
 
   /** Results for trades entered since `from` (IST date; all when absent), optionally one strategy's. */
+  /** Every closed paper trade — read again only when one closed or trades were deleted. */
+  private async closedTrades(): Promise<PaperTrade[]> {
+    const version = await this.deps.store.paper.closedVersion();
+    if (this.closedCache?.version !== version) this.closedCache = { version, trades: await this.deps.store.paper.listTrades({ status: 'CLOSED', limit: 50_000 }) };
+    return this.closedCache.trades;
+  }
+
+  /** Paper trades by strategy / connection / entered since: closed ones from what was read before, open ones fresh. */
+  private async paperTradesFor(q: PaperQuery): Promise<PaperTrade[]> {
+    const since = istRange(q.from).since;
+    const keep = (t: PaperTrade) => (!q.strategyId || t.strategyId === q.strategyId) && (!q.connectionId || t.connectionId === q.connectionId) && (!since || t.entryAt >= since);
+    const [closed, open] = await Promise.all([
+      q.status === 'OPEN' ? Promise.resolve([]) : this.closedTrades(),
+      q.status === 'CLOSED' ? Promise.resolve([]) : this.deps.store.paper.listTrades({ status: 'OPEN', strategyId: q.strategyId, connectionId: q.connectionId, since, limit: 5_000 }),
+    ]);
+    return [...open, ...closed.filter(keep)].sort((a, b) => b.entryAt.localeCompare(a.entryAt));
+  }
+
   /** Results for the trades matching the filters (all when none); connections are narrowed the same way. */
   async paperSummary(q: PaperQuery = {}): Promise<PaperSummary> {
     return paperTables(async () => {
       const { store } = this.deps;
       const [raw, strategies, connections, plans, overrides] = await Promise.all([
-        store.paper.listTrades({ strategyId: q.strategyId, connectionId: q.connectionId, since: istRange(q.from).since, limit: 10_000 }),
+        this.paperTradesFor({ ...q, status: undefined }),
         store.strategies.list(),
         store.connections.list(),
         store.paper.listPlans(),
@@ -525,7 +557,7 @@ export class V2Service {
     return paperTables(async () => {
       const limit = Math.min(q.limit ?? 500, 5_000);
       const filtered = !!(q.kinds?.length || q.markets?.length || q.search?.trim() || q.timeframes?.length || q.to || q.sides?.length || q.groups?.length);
-      const list = await this.deps.store.paper.listTrades({ status: q.status, strategyId: q.strategyId, connectionId: q.connectionId, since: istRange(q.from).since, limit: filtered ? 10_000 : limit });
+      const list = await this.paperTradesFor(q);
       const scope = filtered ? await this.paperScope(q, await this.deps.store.strategies.list(), list.map((t) => t.productId)) : null;
       return (scope ? list.filter(scope.trade) : list).slice(0, limit).map((t) => (t.status === 'OPEN' ? { ...t, openPnl: unrealizedPnl(t) } : t));
     });

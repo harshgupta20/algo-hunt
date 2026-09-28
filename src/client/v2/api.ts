@@ -2,6 +2,7 @@
  * Typed client for the V2 API (/api/v2/*).
  */
 import type {
+  AlertFeedItem,
   CalendarEntry,
   CompareResult,
   ConnectionConfig,
@@ -18,6 +19,8 @@ import type {
   UnitResolution,
   UnitState,
   V2Alert,
+  V2AlertItem,
+  V2SignalItem,
   V2Connection,
   V2Product,
   V2Settings,
@@ -188,9 +191,12 @@ export const v2Api = {
   compare: (body: CompareInput) => post<CompareResult>('/compare', body),
   backtest: (body: BacktestRequest) => post<BacktestResult>('/backtest', body).then((r) => ({ ...r, summary: normalizePaperSummary(r.summary) })),
 
-  alerts: (q: AlertQuery = {}) => request<V2Alert[]>(`/alerts?${filterParams(q)}`),
+  alerts: (q: AlertQuery = {}) => request<V2AlertItem[]>(`/alerts?${filterParams(q)}`),
+  alert: (id: string) => request<V2Alert>(`/alerts/${id}`),
+  /** New alerts since `after` (small rows; nothing when there are none). */
+  alertFeed: (after: string | null, limit = 25) => request<AlertFeedItem[]>(`/alerts/feed?${filterParams({ after: after ?? undefined, limit })}`),
   acknowledge: (id: string) => post<V2Alert>(`/alerts/${id}/acknowledge`),
-  signals: (q: SignalQuery = {}) => request<V2Signal[]>(`/signals?${filterParams(q)}`),
+  signals: (q: SignalQuery = {}) => request<V2SignalItem[]>(`/signals?${filterParams(q)}`),
 
 
   scan: (force = false) => post<{ run: ScanRun; skipped?: string }>('/scan', { force }),

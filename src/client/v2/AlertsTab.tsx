@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
-import type { LegDef, LegId, V2Alert, V2Unit } from '@/shared/v2';
+import type { LegDef, LegId, V2AlertItem, V2Unit } from '@/shared/v2';
 import { Tooltip } from '../components/Tooltip';
 import { Badge, Card, EmptyState, IconButton, Tabs } from '../components/ui';
 import { v2Api } from './api';
@@ -15,7 +15,7 @@ import { InlineSpinner, SkeletonRows } from '../components/loaders';
 import { stopAlarm } from '../lib/notify';
 import { FilterBar, activeCount, toQuery, useFilters } from './FilterBar';
 
-const STATUS_TONE: Record<V2Alert['status'], 'bull' | 'warn' | 'bear' | 'accent'> = { SENT: 'bull', PARTIAL: 'warn', FAILED: 'bear', ACKNOWLEDGED: 'accent' };
+const STATUS_TONE: Record<V2AlertItem['status'], 'bull' | 'warn' | 'bear' | 'accent'> = { SENT: 'bull', PARTIAL: 'warn', FAILED: 'bear', ACKNOWLEDGED: 'accent' };
 
 /** Leg definitions recovered from a unit (for colours / names in history). */
 export function legsOfUnit(u: V2Unit): LegDef[] {
@@ -24,9 +24,11 @@ export function legsOfUnit(u: V2Unit): LegDef[] {
 
 const symbolOf = (productId: string) => productId.split(':')[1] ?? productId;
 
-export function AlertRow({ alert: a }: { alert: V2Alert }) {
+export function AlertRow({ alert: a }: { alert: V2AlertItem }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  // The condition trace isn't in lists (it's most of an alert's size) — fetched when opened.
+  const detail = useQuery({ queryKey: ['v2-alert', a.id], queryFn: () => v2Api.alert(a.id), enabled: open, staleTime: Infinity });
   const ack = useMutation({
     mutationFn: () => v2Api.acknowledge(a.id),
     onSuccess: () => {
@@ -74,7 +76,7 @@ export function AlertRow({ alert: a }: { alert: V2Alert }) {
               );
             })}
           </div>
-          <TraceView trace={a.evaluation.trace} />
+          {detail.data ? <TraceView trace={detail.data.evaluation.trace} /> : detail.error ? <p className="text-xs text-bear">{(detail.error as Error).message}</p> : <SkeletonRows rows={2} dense />}
         </div>
       )}
     </div>
@@ -98,7 +100,7 @@ export function AlertsTab() {
     queryKey: ['v2-alerts', view, q],
     queryFn: () => v2Api.alerts({ ...base, sources, statuses, active: view === 'active', limit: LIMIT }),
     enabled: view !== 'signals' && ready,
-    refetchInterval: 30_000,
+    refetchInterval: 300_000, // new alerts refresh it at once (the alarm's feed)
     placeholderData: keepPreviousData,
   });
   const signals = useQuery({

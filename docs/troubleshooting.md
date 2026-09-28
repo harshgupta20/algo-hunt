@@ -17,6 +17,20 @@ the exact strings the application produces.
 | `/api/cron/tick` returns `401 Unauthorized` | Missing or wrong `CRON_SECRET` header/query | Send `Authorization: Bearer <CRON_SECRET>` |
 | `next dev` prints "Another next dev server is already running" | Next.js 16 allows one dev server per project folder | Use the running one or stop it |
 
+## 1b. Neon: "Limit reached" / "Connection Restricted"
+
+Neon limits the **data sent out of the database** per month (network transfer). When it runs out, Neon blocks
+connections — **nothing is deleted**; access returns when the allowance resets (see *Review usage* in the Neon console
+for the date) or right away on a paid plan.
+
+The app keeps its reads small (since 2026-09-29): contracts are read once per instrument sync (not every minute), the
+alarm polls a feed of alerts newer than the last one it saw (nothing when there's nothing new), alert / signal lists
+leave the condition trace in the database (opened on demand), status uses counts, closed paper trades are reused
+until one closes, and the live worker reloads connections only when a one-value check says they changed.
+
+Also make sure nothing else reads the same database: a deployed copy (e.g. on Vercel) called every minute by a
+scheduler reads as much as the local app. Stop the scheduler (or the deployment) if you only run it locally.
+
 ## 2. Kite connection
 
 | Symptom / message | Cause | Fix |

@@ -24,9 +24,16 @@ export function AlertNotifier() {
   const qc = useQueryClient();
   const router = useRouter();
   const seen = useRef<Set<string> | null>(null);
+  /** Newest alert time seen: each poll asks only for alerts after it (usually none — a few bytes). */
+  const cursor = useRef<string | null>(null);
   const [alarm, setAlarm] = useState<AlarmState>({ active: false, blocked: false, items: [] });
   useQuery({ queryKey: ['preferences'], queryFn: api.getPreferences });
-  const latest = useQuery({ queryKey: ['v2-alerts', 'notify'], queryFn: () => v2Api.alerts({ limit: 25 }), refetchInterval: POLL_MS, refetchIntervalInBackground: true });
+  const latest = useQuery({
+    queryKey: ['v2-alerts', 'notify'],
+    queryFn: () => v2Api.alertFeed(cursor.current, seen.current ? 25 : 1),
+    refetchInterval: POLL_MS,
+    refetchIntervalInBackground: true,
+  });
 
   useEffect(() => subscribeAlarm(setAlarm), []);
 
@@ -44,6 +51,7 @@ export function AlertNotifier() {
   useEffect(() => {
     const list = latest.data;
     if (!list) return;
+    if (list[0] && (!cursor.current || list[0].createdAt > cursor.current)) cursor.current = list[0].createdAt;
     if (!seen.current) {
       seen.current = new Set(list.map((a) => a.id)); // first load: don't ring for history
       return;
@@ -52,6 +60,7 @@ export function AlertNotifier() {
     if (!fresh.length) return;
     fresh.forEach((a) => seen.current!.add(a.id));
     void qc.invalidateQueries({ queryKey: ['v2-alerts'], predicate: (q) => q.queryKey[1] !== 'notify' });
+    void qc.invalidateQueries({ queryKey: ['v2-paper'] }); // an alert opens a paper trade
     const prefs = qc.getQueryData<UserPreferences>(['preferences']);
     const items = fresh.map((a) => ({ id: a.id, title: a.strategyName, detail: unitText(a.unit, symbolOf(a.productId)) }));
     raiseAlarm(items, { sound: prefs?.soundEnabled !== false, repeat: prefs?.soundRepeat !== false });

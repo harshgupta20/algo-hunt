@@ -1,7 +1,7 @@
 /**
  * V2 product catalogue: syncs every supported instrument from the data
  * provider, derives the products (indices, stocks, commodities — with which
- * legs each can offer) and serves a product's contracts, cached briefly.
+ * legs each can offer) and serves a product's contracts, cached until the next sync.
  */
 import type { Market, ProductKind, V2Instrument, V2Product } from '@/shared/v2';
 import { KNOWN_PRODUCT } from '@/shared/v2';
@@ -11,7 +11,8 @@ import type { V2DataProvider } from './DataProvider';
 
 const log = childLogger('v2-products');
 export const MAX_AGE_MS = 18 * 60 * 60_000;
-const CACHE_MS = 60_000;
+/** How often to check whether the instrument list was synced (a tiny query). */
+const SYNC_CHECK_MS = 5 * 60_000;
 
 /** Most common gap between consecutive listed strikes. */
 function strikeStepOf(strikes: number[]): number | null {
@@ -64,7 +65,10 @@ export function buildProducts(instruments: V2Instrument[], stockNames: Record<st
 }
 
 export class ProductService {
-  private cache = new Map<string, { at: number; list: V2Instrument[] }>();
+  /** A product's contracts, kept until the instrument list is synced again (they only change then). */
+  private cache = new Map<string, V2Instrument[]>();
+  private syncedAt: string | null = null;
+  private checkedAt = -Infinity;
 
   constructor(
     private readonly store: V2Store,
@@ -73,13 +77,27 @@ export class ProductService {
 
   invalidate(): void {
     this.cache.clear();
+    this.checkedAt = -Infinity;
   }
 
+  /**
+   * A product's contracts. Index / MCX option chains are thousands of rows, so they are read once and kept
+   * until the list is synced again — checked with a one-value query at most every few minutes (another
+   * process, e.g. the live worker's morning sync, may have synced).
+   */
   async instruments(productId: string, now = Date.now()): Promise<V2Instrument[]> {
+    if (now - this.checkedAt >= SYNC_CHECK_MS) {
+      this.checkedAt = now;
+      const at = await this.store.instruments.syncedAt();
+      if (at !== this.syncedAt) {
+        this.cache.clear();
+        this.syncedAt = at;
+      }
+    }
     const hit = this.cache.get(productId);
-    if (hit && now - hit.at < CACHE_MS) return hit.list;
+    if (hit) return hit;
     const list = await this.store.instruments.forProduct(productId);
-    this.cache.set(productId, { at: now, list });
+    this.cache.set(productId, list);
     return list;
   }
 

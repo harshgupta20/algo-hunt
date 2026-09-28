@@ -4,6 +4,7 @@
  * an in-memory fake with the same dedupe semantics.
  */
 import type {
+  AlertFeedItem,
   AlertStatus,
   CalendarEntry,
   ConnectionConfig,
@@ -22,6 +23,8 @@ import type {
   StrategyDefinition,
   UnitState,
   V2Alert,
+  V2AlertItem,
+  V2SignalItem,
   V2Connection,
   V2Instrument,
   V2Product,
@@ -85,6 +88,7 @@ export interface V2Store {
   };
   strategies: {
     list(): Promise<V2Strategy[]>;
+    count(): Promise<number>;
     get(id: string): Promise<V2Strategy | null>;
     create(definition: StrategyDefinition): Promise<V2Strategy>;
     /** Saves a new immutable version and makes it current. */
@@ -94,6 +98,7 @@ export interface V2Store {
   };
   connections: {
     list(strategyId?: string): Promise<V2Connection[]>;
+    counts(): Promise<{ total: number; enabled: number }>;
     get(id: string): Promise<V2Connection | null>;
     create(strategyId: string, productId: string, config: ConnectionConfig): Promise<V2Connection>;
     update(id: string, config: ConnectionConfig): Promise<V2Connection | null>;
@@ -118,7 +123,7 @@ export interface V2Store {
   signals: {
     /** Returns null when a signal with the same identity already exists (dedupe). */
     insert(signal: Omit<V2Signal, 'id' | 'createdAt'>): Promise<V2Signal | null>;
-    list(f: SignalFilters): Promise<V2Signal[]>;
+    list(f: SignalFilters): Promise<V2SignalItem[]>;
   };
   alerts: {
     insert(alert: Omit<V2Alert, 'id' | 'createdAt' | 'deliveries' | 'acknowledgedAt'>): Promise<V2Alert>;
@@ -126,7 +131,10 @@ export interface V2Store {
     setStatus(alertId: string, status: V2Alert['status']): Promise<void>;
     acknowledge(alertId: string, at: string): Promise<V2Alert | null>;
     get(id: string): Promise<V2Alert | null>;
-    list(filters: AlertFilters): Promise<V2Alert[]>;
+    /** Newest first, without the condition traces (fetch one alert for its trace). */
+    list(filters: AlertFilters): Promise<V2AlertItem[]>;
+    /** Alerts recorded after `after` (ISO), newest first — tiny rows for the new-alert alarm. */
+    feed(after: string | null, limit: number): Promise<AlertFeedItem[]>;
   };
   scanRuns: {
     insert(run: ScanRun): Promise<void>;
@@ -160,9 +168,14 @@ export interface V2Store {
     /** Save a connection's own values; an empty override removes them. */
     saveOverride(connectionId: string, override: PaperOverride): Promise<PaperOverride | null>;
     listOverrides(): Promise<Array<{ connectionId: string; override: PaperOverride }>>;
+    /** Changes whenever a trade closes or trades are deleted (count + last update) — to reuse closed trades already read. */
+    closedVersion(): Promise<string>;
     /** Delete a strategy's paper trades (start over). */
     reset(strategyId: string): Promise<number>;
   };
+  /** One short value that changes when connections, strategies, settings, the calendar or products change (to skip reloading them). */
+  contextStamp(): Promise<string>;
+
   /** Live worker heartbeat / status (single row). */
   live: {
     get(): Promise<{ status: LiveStatus; offlineNotifiedAt: string | null } | null>;

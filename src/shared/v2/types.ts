@@ -356,6 +356,19 @@ export interface V2Alert {
   createdAt: string;
 }
 
+/** An alert as listed: its evaluation without the condition trace (the heavy part) or the unit (on the alert already). */
+export type V2AlertItem = Omit<V2Alert, 'evaluation'> & { evaluation: Omit<UnitEvaluation, 'trace' | 'unit'> };
+/** A signal as listed: its evaluation without the condition trace. */
+export type V2SignalItem = Omit<V2Signal, 'evaluation'> & { evaluation: Omit<UnitEvaluation, 'trace'> };
+/** Just enough to announce a new alert (desktop alarm / notification). */
+export interface AlertFeedItem {
+  id: string;
+  strategyName: string;
+  productId: string;
+  unit: V2Unit;
+  createdAt: string;
+}
+
 // ---- Scanner, settings, calendar -----------------------------------------------------------------------
 
 export interface ScanError {

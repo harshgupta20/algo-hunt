@@ -17,7 +17,7 @@ const session = (m: MarketStatus) => (m.today.trading ? `${minutesToClock(m.toda
 export function DashboardTab() {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ['v2-status'], queryFn: v2Api.status, refetchInterval: 30_000 });
-  const active = useQuery({ queryKey: ['v2-alerts', 'active', ''], queryFn: () => v2Api.alerts({ active: true, limit: 50 }), refetchInterval: 30_000 });
+  const active = useQuery({ queryKey: ['v2-alerts', 'active', ''], queryFn: () => v2Api.alerts({ active: true, limit: 50 }), refetchInterval: 300_000 }); // new alerts refresh it at once
   const scan = useMutation({
     mutationFn: () => v2Api.scan(true),
     onSuccess: () => {
