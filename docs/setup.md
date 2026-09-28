@@ -64,33 +64,36 @@ noted otherwise.
 
 ## 4. Database
 
-```bash
-npm run db:migrate            # apply pending db/migrations/*.sql (fails if DATABASE_URL is missing)
-```
-
-`npm run dev` also runs migrations first (`predev` with `--if-configured --soft`: skipped without `DATABASE_URL`,
-and warns instead of failing). See [database.md § 4](database.md#4-migrations).
+Nothing to set up: with `DATABASE_URL` unset the app keeps its data in `data/algo-hunt.db` (SQLite built into
+Node.js), creating and updating the file itself on start. `backups/` gets a snapshot a day. Both are git-ignored.
+To use Postgres instead, set `DATABASE_URL` (migrations: `npm run db:migrate`, also run by `npm run dev` / `build`).
+To bring existing Postgres data over once: `npm run db:import -- "<postgres url>"`. See
+[database.md § 1](database.md#1-technology-and-access).
 
 ---
 
 ## 5. Run
 
 ```bash
-npm run dev                   # http://localhost:3000
+npm run setup                 # install + build
+npm start                     # http://localhost:3000 — app + live worker + database, one process
 ```
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | `predev` migrations, then `next dev` |
-| `npm run build` | Migrations (`--if-configured`), then `next build` |
-| `npm start` | `next start` (serve a production build) |
+| `npm run setup` | `npm install` + build |
+| `npm start` | `next start`: the UI, the API, the live worker inside the app and daily backups (needs `APP_PASSWORD`) |
+| `npm run update` | `git pull --ff-only` + install + build |
+| `npm run dev` | `predev` (Postgres migrations if `DATABASE_URL`), then `next dev` — no in-app live worker |
+| `npm run live` | The live worker as its own process: `-- --check` tests the stream, `-- --force` takes over from another worker |
+| `npm run backup` / `npm run restore -- <file>` | Snapshot the local database now / put a snapshot back (app stopped) |
+| `npm run db:import -- "<url>"` | Copy all data from Postgres into the local database |
 | `npm test` / `npm run test:watch` | vitest once / watch mode |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm run db:migrate` | Apply migrations |
-| `npm run live` | V2 live worker (migrations first): streams Kite ticks and alerts seconds after each candle close; `-- --check` tests the stream, `-- --force` takes over from another worker |
+| `npm run db:migrate` | Postgres migrations (the local database migrates itself) |
 
-The Next.js app serves the UI and the API. The live worker is an optional second process for instant alerts; the
-database and Kite are external.
+The live worker starts inside the app with `npm start` (`LIVE_WORKER=off` to run it separately); with `npm run dev`
+run `npm run live` alongside if you want live alerts. Only one worker runs at a time — a second one stands aside.
 
 ### Connecting Kite locally
 
@@ -102,7 +105,7 @@ database and Kite are external.
 
 ### Running alerts locally
 
-- **Live worker:** `npm run live` and leave it running during market hours (see
+- **Live worker:** inside the app with `npm start`, or `npm run live` next to `npm run dev` (see
   [v2-user-guide.md](v2-user-guide.md#live-alerts-on-your-computer-recommended)).
 - **Scanner:** keep `/v2` open (it scans once a minute during market hours), or trigger one cycle by hand. Without
   `CRON_SECRET` this is allowed outside production; `force=1` runs even when markets are closed:
@@ -117,8 +120,9 @@ database and Kite are external.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| API responds `503 Database tables are missing — run npm run db:migrate` | Schema not migrated on this database | `npm run db:migrate` |
-| `DATABASE_URL is not set. Add your Neon Postgres connection string…` | Missing env var | Add it to `.env.local` |
+| API responds `503 Database tables are missing — run npm run db:migrate` | Postgres schema not migrated | `npm run db:migrate` |
+| `This Node.js has no built-in SQLite — install Node.js 22.13 or newer` | Node.js too old for the local database | Install Node.js 24 LTS |
+| The app uses Neon instead of the local file | `DATABASE_URL` is set in `.env.local` | Remove it (after `npm run db:import` if you want the data) |
 | Settings shows "Kite Connect credentials are missing" | `KITE_API_KEY` / `KITE_API_SECRET` unset | Set both; restart |
 | V2 product lists are empty | Products not synced yet | Connect Kite, then **V2 → Products → Sync from Kite** |
 | `next dev` exits with "Another next dev server is already running" | Next.js 16 allows one dev server per project directory | Use the existing server (URL printed) or stop it |

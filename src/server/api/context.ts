@@ -5,7 +5,7 @@
  * module (it imports every service), so the container is rebuilt with the new
  * code; the Postgres pool has its own globalThis cache and is reused.
  */
-import { PgAppStore, type AppStore } from '../db/appStore';
+import { createAppStore, type AppStore } from '../db/appStore';
 import { KiteAuthService } from '../services/kite/kiteAuth';
 import { KiteHistoricalProvider } from '../services/kite/KiteHistoricalProvider';
 import { createV2Module, type V2Module } from '../v2';
@@ -14,16 +14,18 @@ export interface AppContext {
   /** Kite login session + UI preferences. */
   store: AppStore;
   kiteAuth: KiteAuthService;
+  /** Kite historical candles with the shared ~3 requests/s gate (the in-app live worker uses the same one). */
+  historical: KiteHistoricalProvider;
   /** V2: product-agnostic strategies + product connections (alerts). */
   v2: V2Module;
 }
 
 function build(): AppContext {
-  const store = new PgAppStore();
+  const store = createAppStore();
   const kiteAuth = new KiteAuthService(store);
   const historical = new KiteHistoricalProvider(kiteAuth);
   const v2 = createV2Module({ kiteAuth, historical });
-  return { store, kiteAuth, v2 };
+  return { store, kiteAuth, historical, v2 };
 }
 
 /** New on every evaluation of this module — i.e. after a dev hot reload of any service it wires. */

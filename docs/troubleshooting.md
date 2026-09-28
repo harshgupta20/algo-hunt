@@ -17,6 +17,17 @@ the exact strings the application produces.
 | `/api/cron/tick` returns `401 Unauthorized` | Missing or wrong `CRON_SECRET` header/query | Send `Authorization: Bearer <CRON_SECRET>` |
 | `next dev` prints "Another next dev server is already running" | Next.js 16 allows one dev server per project folder | Use the running one or stop it |
 
+## 1a. Local database
+
+| Symptom / message | Cause | Fix |
+| --- | --- | --- |
+| `This Node.js has no built-in SQLite — install Node.js 22.13 or newer (24 LTS recommended).` | Old Node.js | Install Node.js 24 LTS |
+| `✗ The app is running (process …) — stop it …` from `npm run restore` | The app holds the database open | Ctrl+C in the app's window, then restore |
+| `✗ Can't restore …: The file is damaged` | Not a complete snapshot (e.g. copied mid-write) | Use another snapshot from `backups/` |
+| `✗ … already has data — add --force` from `npm run db:import` | The local database isn't empty | `--force` (a `before-import` snapshot is saved first) |
+| Log: `live worker not started in the app` | Another worker is running (e.g. `npm run live`), or Kite env vars are missing | Keep one worker; check `KITE_API_KEY` / `KITE_API_SECRET` |
+| The app still uses Neon | `DATABASE_URL` is set in `.env.local` | Remove it to use the local file |
+
 ## 1b. Neon: "Limit reached" / "Connection Restricted"
 
 Neon limits the **data sent out of the database** per month (network transfer). When it runs out, Neon blocks

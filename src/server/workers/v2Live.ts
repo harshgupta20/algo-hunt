@@ -5,7 +5,7 @@
  *   npm run live -- --check  connect to the Kite stream, print a few NIFTY 50 ticks, exit (no database writes)
  *   npm run live -- --force  take over from another worker that still looks alive
  *
- * Uses the same .env (DATABASE_URL, KITE_*, TELEGRAM_*, RESEND_*) and Kite login as the app:
+ * Uses the same .env (KITE_*, TELEGRAM_*, RESEND_*; DATABASE_URL only for Postgres) and database as the app:
  * log in once each morning in the app (Settings → Broker Connection) and the worker picks it up.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -22,13 +22,13 @@ for (const file of ['.env.local', '.env']) {
 }
 
 const args = new Set(process.argv.slice(2));
-const { PgAppStore } = await import('../db/appStore');
+const { createAppStore } = await import('../db/appStore');
 const { KiteAuthService } = await import('../services/kite/kiteAuth');
 const { KiteHistoricalProvider } = await import('../services/kite/KiteHistoricalProvider');
 const { KiteStream, createV2LiveWorker, kiteLiveSession } = await import('../v2');
-const { getPool } = await import('../db/pool');
+const { closeDatabase, databaseLabel } = await import('../db/index');
 
-const kiteAuth = new KiteAuthService(new PgAppStore());
+const kiteAuth = new KiteAuthService(createAppStore());
 const istTime = (ms: number) => new Date(ms + 330 * 60_000).toISOString().slice(11, 19);
 
 if (args.has('--check')) {
@@ -43,7 +43,7 @@ if (args.has('--check')) {
   const finish = (code: number, text: string) => {
     console.log(text);
     stream.stop();
-    void getPool().end();
+    void closeDatabase();
     process.exit(code);
   };
   stream.start(creds, {
@@ -66,10 +66,10 @@ if (args.has('--check')) {
     await worker.start({ force: args.has('--force') });
   } catch (err) {
     console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
-    await getPool().end();
+    await closeDatabase();
     process.exit(1);
   }
-  console.log(`V2 live worker ${worker.id.slice(0, 8)} started — Ctrl+C to stop.`);
+  console.log(`V2 live worker ${worker.id.slice(0, 8)} started on the ${databaseLabel()} — Ctrl+C to stop.`);
 
   // One status line a minute (and on every state change).
   let last = '';
@@ -96,7 +96,7 @@ if (args.has('--check')) {
     stopping = true;
     console.log('Stopping…');
     await worker.stop();
-    await getPool().end().catch(() => undefined);
+    await closeDatabase().catch(() => undefined);
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown());

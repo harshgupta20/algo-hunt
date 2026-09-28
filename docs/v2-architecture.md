@@ -146,10 +146,14 @@ src/server/v2/
 ├── paper/            PaperTrader (open on alerts, exits) · charges (Zerodha charges, margin estimate) · summary
 │                     · backtest (Compare's alerts traded with money on 1-minute candles)
 ├── debug/            tools (explain now, compare across products)
-├── persistence/      V2Store · PgV2Store (v2_* tables, migrations 007–011)
+├── persistence/      V2Store · SqliteV2Store (local file, default) · PgV2Store (v2_* tables, migrations 007–011)
+│                     · createStore (Postgres when DATABASE_URL is set)
 ├── V2Service.ts      operations behind /api/v2/*
 └── index.ts          createV2Module() — wired into the API context · createV2LiveWorker()
 src/server/workers/v2Live.ts   the `npm run live` process (also `--check`, `--force`)
+src/server/background.ts       started by src/instrumentation.ts with the app: the live worker inside `npm start`,
+                               daily backups of the local database
+src/server/db/                 sqlite (open + schema) · appStore (Kite session, preferences) · backup
 src/client/v2/        V2Hub (tabs) · strategies/ (editor, legs, conditions) · connections/ · compare/ · alerts, products,
                       paper/ (Paper tab, charts, paper settings fields + connection editor) · backtest/ (Backtest tab)
                       · FilterBar · scanner, settings, dashboard · ProductPicker · ExplainView · help.ts (tooltips)

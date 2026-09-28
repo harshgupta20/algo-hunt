@@ -4,9 +4,25 @@
 
 ## 1. Technology and access
 
+Two interchangeable engines behind the same store interfaces (`V2Store`, `AppStore`); the choice is made at start:
+
+| | **Local SQLite (default)** | **Postgres** (when `DATABASE_URL` is set) |
+| --- | --- | --- |
+| Where | One file, `DATABASE_FILE` (default `data/algo-hunt.db`, git-ignored) | Neon (or any Postgres) |
+| Engine | SQLite built into Node.js (`node:sqlite`, Node 22.13+) — no server, no install | PostgreSQL via `pg` |
+| Code | [sqlite.ts](../src/server/db/sqlite.ts) (open, WAL, foreign keys, busy timeout), [SqliteV2Store](../src/server/v2/persistence/SqliteV2Store.ts), `SqliteAppStore` | [PgV2Store](../src/server/v2/persistence/PgV2Store.ts), `PgAppStore`, [pool.ts](../src/server/db/pool.ts) |
+| Schema | [sqliteSchema.ts](../src/server/db/sqliteSchema.ts) — applied automatically when the file is opened | [db/migrations/](../db/migrations) via [scripts/migrate.mjs](../scripts/migrate.mjs) |
+| Backups | A snapshot a day to `BACKUP_DIR` (default `backups/`, newest 14 kept), `npm run backup`, `npm run restore -- <file>` ([backup.ts](../src/server/db/backup.ts)) | The provider's |
+| Moving data | `npm run db:import -- "<postgres url>"` copies every table in use from Postgres, row for row | — |
+
+The SQLite schema mirrors the Postgres `v2_*` tables used by the app, with SQLite types (ISO-8601 UTC text
+timestamps, 0 / 1 booleans, JSON as text); the same unique / partial indexes give the same guarantees (signal
+dedupe, one open paper trade per slot). The app and a separate `npm run live` can share the file (WAL mode).
+The rest of this page describes the Postgres side; table names and meanings are the same in both.
+
 | Item | Value |
 | --- | --- |
-| Engine | PostgreSQL. Production uses **Neon** (Singapore, `ap-southeast-1`; Vercel functions pinned to `sin1` in [vercel.json](../vercel.json)) |
+| Engine | PostgreSQL. The hosted copy uses **Neon** (Singapore, `ap-southeast-1`; Vercel functions pinned to `sin1` in [vercel.json](../vercel.json)) |
 | Driver | `pg` (node-postgres) — raw SQL, no ORM |
 | Pool | [src/server/db/pool.ts](../src/server/db/pool.ts): `max` 5, `idleTimeoutMillis` 10 000, TLS (`rejectUnauthorized: false`) for every non-`localhost`/`127.0.0.1` host, cached on `globalThis` |
 | Access | V2 through [PgV2Store](../src/server/v2/persistence/PgV2Store.ts) (interface `V2Store`); the Kite session and UI preferences through [appStore.ts](../src/server/db/appStore.ts) |

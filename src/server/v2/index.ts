@@ -12,7 +12,7 @@ import { KiteDataProvider } from './data/KiteDataProvider';
 import { KiteStream } from './live/KiteStream';
 import { LiveWorker, type LiveSession } from './live/LiveWorker';
 import { ProductService } from './data/ProductService';
-import { PgV2Store } from './persistence/PgV2Store';
+import { createV2Store } from './persistence/createStore';
 import { V2Service } from './V2Service';
 
 export { V2Service, V2ServiceError } from './V2Service';
@@ -24,7 +24,7 @@ export interface V2Module {
 }
 
 export function createV2Module(deps: { kiteAuth: KiteAuthService; historical: KiteHistoricalProvider }): V2Module {
-  const store = new PgV2Store();
+  const store = createV2Store();
   const provider = new KiteDataProvider(deps.kiteAuth, deps.historical);
   const products = new ProductService(store, provider);
   return { service: new V2Service({ store, provider, products }) };
@@ -42,7 +42,7 @@ export function kiteLiveSession(kiteAuth: KiteAuthService): LiveSession {
 
 /** The streaming live worker (`npm run live`), on the same database and Kite session as the app. */
 export function createV2LiveWorker(deps: { kiteAuth: KiteAuthService; historical: KiteHistoricalProvider }): LiveWorker {
-  const store = new PgV2Store();
+  const store = createV2Store();
   const provider = new KiteDataProvider(deps.kiteAuth, deps.historical);
   const products = new ProductService(store, provider);
   return new LiveWorker({ store, provider, products, channels: envChannelFactory, stream: new KiteStream(), session: kiteLiveSession(deps.kiteAuth) });

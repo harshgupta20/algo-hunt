@@ -29,13 +29,11 @@ const soft = process.argv.includes('--soft');
 // pg treats sslmode=require as verify-full and prints a warning; state it explicitly (same behavior).
 const url = process.env.DATABASE_URL?.replace(/([?&]sslmode=)(require|prefer|verify-ca)(?=&|$)/, '$1verify-full');
 
+// No Postgres: the app uses its local SQLite database, which migrates itself when the app starts.
 if (!url) {
-  if (ifConfigured) {
-    console.warn('[migrate] DATABASE_URL not set — skipping migrations.');
-    process.exit(0);
-  }
-  console.error('[migrate] DATABASE_URL is not set.');
-  process.exit(1);
+  if (ifConfigured) process.exit(0);
+  console.log('[migrate] DATABASE_URL not set — the app uses the local database (data/algo-hunt.db), which updates itself on start.');
+  process.exit(0);
 }
 
 const isLocal = /@(localhost|127\.0\.0\.1)/.test(url);

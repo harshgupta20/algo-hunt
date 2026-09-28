@@ -11,3 +11,7 @@ coverage/
 .DS_Store
 *.tsbuildinfo
 next-env.d.ts
+
+# Local database and its snapshots — data never goes into git (git pull must not touch it)
+data/
+backups/
