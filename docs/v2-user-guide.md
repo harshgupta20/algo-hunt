@@ -91,6 +91,27 @@ The first time, run `npm run live -- --check`. It connects to Kite, prints a few
    - **Coverage** shows how many candles had enough data. Low coverage means the count isn't reliable, e.g. an option that didn't exist yet.
 4. Press **Connect** on the products you want to follow.
 
+## 2b. Backtest with money (Backtest tab)
+
+"If I had traded this strategy on these products with this money, what would I have made?" Nothing is saved or sent.
+
+1. Pick a strategy (or press **Backtest** on its card), up to 20 products and a period (**5 days / 10 days / Max** —
+   as far back as the trigger timeframe allows, e.g. 20 days of 15-minute candles).
+2. Set the **starting capital** (₹1,00,000 by default, or **No limit**). The trade settings start from the strategy's
+   paper settings — cash per trade, target, stop-loss, square-off, charges, slippage, and what each group trades —
+   change them here just for this test.
+3. **Backtest**: every alert the strategy would have sent is traded like a paper trade — entered at the alert
+   candle's close (± slippage), followed minute by minute on the contract's Kite 1-minute candles to the target,
+   stop-loss (if both fall in the same minute the stop counts; a gap through the stop fills at that minute's open),
+   the other group, the 15:20 / 23:20 square-off, expiry, or the end of the test. A trade opens only if the money
+   that's free (capital + profit so far − money in open trades) covers it; otherwise it's listed under **Alerts not
+   traded** with the reason.
+4. Results: **final capital** (and the lowest the account went), net P&L, return on capital, win rate, profit factor,
+   drawdown, the P&L charts, **by product** (open a row for the contracts used and data notes), every trade (CSV).
+
+Limits (as Compare): contracts are the ones listed today, with option strikes fixed around ATM at the start of the
+period; Kite has no candles for expired contracts.
+
 ## 3. Connect and switch on (Connections tab)
 
 1. Click **New connection**, pick the strategy, then tick one or more products.

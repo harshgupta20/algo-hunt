@@ -27,7 +27,7 @@ import type {
   V2Unit,
   ValidationIssue,
 } from '@/shared/v2';
-import { filterParams, normalizePaperSummary, type AlertQuery, type PaperQuery, type SignalQuery } from '@/shared/v2';
+import { filterParams, normalizePaperSummary, type AlertQuery, type BacktestRequest, type BacktestResult, type PaperQuery, type SignalQuery } from '@/shared/v2';
 
 const BASE = '/api/v2';
 
@@ -186,6 +186,7 @@ export const v2Api = {
   explainDraft: (definition: StrategyDefinition, productId: string, config?: ConnectionConfig) => post<ExplainResult>('/connections/explain', { definition, productId, config }),
 
   compare: (body: CompareInput) => post<CompareResult>('/compare', body),
+  backtest: (body: BacktestRequest) => post<BacktestResult>('/backtest', body).then((r) => ({ ...r, summary: normalizePaperSummary(r.summary) })),
 
   alerts: (q: AlertQuery = {}) => request<V2Alert[]>(`/alerts?${filterParams(q)}`),
   acknowledge: (id: string) => post<V2Alert>(`/alerts/${id}/acknowledge`),

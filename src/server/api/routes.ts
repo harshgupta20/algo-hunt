@@ -46,6 +46,7 @@ export function createRouter(ctx: AppContext): Router {
   r.get('/v2/connections/:id/units', v2.units);
   r.post('/v2/connections/:id/explain', v2.explainConnection);
   r.post('/v2/compare', v2.compare);
+  r.post('/v2/backtest', v2.backtest);
   r.get('/v2/alerts', v2.alerts);
   r.post('/v2/alerts/:id/acknowledge', v2.acknowledge);
   r.get('/v2/signals', v2.signals);

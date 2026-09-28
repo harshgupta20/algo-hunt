@@ -31,7 +31,7 @@ const byExit = (a: PaperTrade, b: PaperTrade) => (a.exitAt ?? '').localeCompare(
 const closedOf = (trades: PaperTrade[]) => trades.filter((t) => t.status === 'CLOSED').sort(byExit);
 
 /** Cumulative net P&L after each closed trade, thinned to at most `max` points (for sparklines). */
-function spark(trades: PaperTrade[], max = SPARK_POINTS): number[] {
+export function spark(trades: PaperTrade[], max = SPARK_POINTS): number[] {
   let cum = 0;
   const all = closedOf(trades).map((t) => round2((cum += t.netPnl ?? 0)));
   if (all.length <= max) return all;
@@ -82,6 +82,41 @@ export function paperStats(trades: PaperTrade[], now: number): PaperStats {
   };
 }
 
+/** Equity curve, P&L per day, per exit reason and per entry hour, from the closed trades. */
+export function breakdowns(trades: PaperTrade[]): Pick<PaperSummary, 'equity' | 'daily' | 'reasons' | 'hours'> {
+  const closed = closedOf(trades);
+  let cum = 0;
+  const daily = new Map<string, { date: string; pnl: number; trades: number; wins: number }>();
+  const reasons = new Map<PaperExitReason, { reason: PaperExitReason; trades: number; pnl: number }>();
+  const hours = new Map<number, { hour: number; trades: number; pnl: number; wins: number }>();
+  for (const t of closed) {
+    const net = t.netPnl ?? 0;
+    const d = istDate(Date.parse(t.exitAt!));
+    const day = daily.get(d) ?? { date: d, pnl: 0, trades: 0, wins: 0 };
+    day.pnl = round2(day.pnl + net);
+    day.trades++;
+    if (net > 0) day.wins++;
+    daily.set(d, day);
+    const r = t.exitReason ?? 'MANUAL';
+    const rr = reasons.get(r) ?? { reason: r, trades: 0, pnl: 0 };
+    rr.trades++;
+    rr.pnl = round2(rr.pnl + net);
+    reasons.set(r, rr);
+    const h = new Date(Date.parse(t.entryAt) + IST_OFFSET_MS).getUTCHours();
+    const hh = hours.get(h) ?? { hour: h, trades: 0, pnl: 0, wins: 0 };
+    hh.trades++;
+    hh.pnl = round2(hh.pnl + net);
+    if (net > 0) hh.wins++;
+    hours.set(h, hh);
+  }
+  return {
+    equity: closed.map((t) => ({ at: t.exitAt!, pnl: round2((cum += t.netPnl ?? 0)) })),
+    daily: [...daily.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    reasons: [...reasons.values()].sort((a, b) => b.trades - a.trades),
+    hours: [...hours.values()].sort((a, b) => a.hour - b.hour),
+  };
+}
+
 export interface SummaryInput {
   trades: PaperTrade[];
   strategies: V2Strategy[];
@@ -108,32 +143,6 @@ export function paperSummary(x: SummaryInput): PaperSummary {
   const overrides = new Map(x.overrides.map((o) => [o.connectionId, o.override]));
   const byId = new Map(strategies.map((s) => [s.id, s]));
   const conns = x.connections.filter((c) => byId.has(c.strategyId) && (c.enabled || byConnection.has(c.id)));
-
-  const closed = closedOf(trades);
-  let cum = 0;
-  const daily = new Map<string, { date: string; pnl: number; trades: number; wins: number }>();
-  const reasons = new Map<PaperExitReason, { reason: PaperExitReason; trades: number; pnl: number }>();
-  const hours = new Map<number, { hour: number; trades: number; pnl: number; wins: number }>();
-  for (const t of closed) {
-    const net = t.netPnl ?? 0;
-    const d = istDate(Date.parse(t.exitAt!));
-    const day = daily.get(d) ?? { date: d, pnl: 0, trades: 0, wins: 0 };
-    day.pnl = round2(day.pnl + net);
-    day.trades++;
-    if (net > 0) day.wins++;
-    daily.set(d, day);
-    const r = t.exitReason ?? 'MANUAL';
-    const rr = reasons.get(r) ?? { reason: r, trades: 0, pnl: 0 };
-    rr.trades++;
-    rr.pnl = round2(rr.pnl + net);
-    reasons.set(r, rr);
-    const h = new Date(Date.parse(t.entryAt) + IST_OFFSET_MS).getUTCHours();
-    const hh = hours.get(h) ?? { hour: h, trades: 0, pnl: 0, wins: 0 };
-    hh.trades++;
-    hh.pnl = round2(hh.pnl + net);
-    if (net > 0) hh.wins++;
-    hours.set(h, hh);
-  }
 
   return {
     from: x.from ?? null,
@@ -162,9 +171,6 @@ export function paperSummary(x: SummaryInput): PaperSummary {
         spark: spark(list),
       };
     }),
-    equity: closed.map((t) => ({ at: t.exitAt!, pnl: round2((cum += t.netPnl ?? 0)) })),
-    daily: [...daily.values()].sort((a, b) => a.date.localeCompare(b.date)),
-    reasons: [...reasons.values()].sort((a, b) => b.trades - a.trades),
-    hours: [...hours.values()].sort((a, b) => a.hour - b.hour),
+    ...breakdowns(trades),
   };
 }

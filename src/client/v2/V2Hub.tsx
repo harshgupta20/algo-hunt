@@ -3,11 +3,12 @@
 import { useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, BarChart3, BellRing, Boxes, LayoutGrid, Link2, Settings, Wallet, Workflow } from 'lucide-react';
+import { Activity, BarChart3, BellRing, Boxes, FlaskConical, LayoutGrid, Link2, Settings, Wallet, Workflow } from 'lucide-react';
 import { Tooltip } from '../components/Tooltip';
 import { Badge, PageHeader, Tabs } from '../components/ui';
 import { v2Api } from './api';
 import { AlertsTab } from './AlertsTab';
+import { BacktestTab } from './backtest/BacktestTab';
 import { CompareTab } from './compare/CompareTab';
 import { ConnectionsTab } from './connections/ConnectionsTab';
 import { DashboardTab } from './DashboardTab';
@@ -18,12 +19,13 @@ import { ScannerTab } from './ScannerTab';
 import { SettingsTab } from './SettingsTab';
 import { StrategiesTab } from './strategies/StrategiesTab';
 
-type Tab = 'dashboard' | 'strategies' | 'connections' | 'compare' | 'alerts' | 'paper' | 'products' | 'scanner' | 'settings';
+type Tab = 'dashboard' | 'strategies' | 'connections' | 'compare' | 'backtest' | 'alerts' | 'paper' | 'products' | 'scanner' | 'settings';
 const TABS = [
   { value: 'dashboard' as const, label: 'Dashboard', icon: LayoutGrid, help: H.tabs.dashboard },
   { value: 'strategies' as const, label: 'Strategies', icon: Workflow, help: H.tabs.strategies },
   { value: 'connections' as const, label: 'Connections', icon: Link2, help: H.tabs.connections },
   { value: 'compare' as const, label: 'Compare', icon: BarChart3, help: H.tabs.compare },
+  { value: 'backtest' as const, label: 'Backtest', icon: FlaskConical, help: H.tabs.backtest },
   { value: 'alerts' as const, label: 'Alerts', icon: BellRing, help: H.tabs.alerts },
   { value: 'paper' as const, label: 'Paper', icon: Wallet, help: H.tabs.paper },
   { value: 'products' as const, label: 'Products', icon: Boxes, help: H.tabs.products },
@@ -84,6 +86,7 @@ export function V2Hub() {
       {tab === 'strategies' && <StrategiesTab key={strategy ?? ''} onGo={(t, id) => go(t, id)} editId={strategy} />}
       {tab === 'connections' && <ConnectionsTab initialStrategyId={strategy} />}
       {tab === 'compare' && <CompareTab initialStrategyId={strategy} />}
+      {tab === 'backtest' && <BacktestTab initialStrategyId={strategy} />}
       {tab === 'alerts' && <AlertsTab />}
       {tab === 'paper' && <PaperTab initialStrategyId={strategy} onEditStrategy={(id) => go('strategies', id)} />}
       {tab === 'products' && <ProductsTab />}

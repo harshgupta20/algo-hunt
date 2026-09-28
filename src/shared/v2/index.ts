@@ -6,3 +6,4 @@ export * from './validate';
 export * from './text';
 export * from './paper';
 export * from './filters';
+export * from './backtest';

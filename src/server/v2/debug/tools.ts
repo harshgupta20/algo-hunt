@@ -24,7 +24,7 @@ import type {
   V2Product,
   V2Unit,
 } from '@/shared/v2';
-import { TIMEFRAME } from '@/shared/v2';
+import { COMPARE_MAX_DAYS, TIMEFRAME } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { decide, initialState } from '../alerts/alertPolicy';
 import { calendars, dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
@@ -76,20 +76,7 @@ export interface CompareRequest {
 }
 
 export const COMPARE_MAX_PRODUCTS = 20;
-/** Longest comparison span (calendar days) per trigger timeframe. */
-export const COMPARE_MAX_DAYS: Record<Timeframe, number> = {
-  '1m': 2,
-  '3m': 5,
-  '5m': 7,
-  '10m': 10,
-  '15m': 20,
-  '30m': 30,
-  '1h': 60,
-  '2h': 90,
-  '4h': 120,
-  '1d': 365,
-  '1w': 730,
-};
+export { COMPARE_MAX_DAYS };
 
 const DAY = 86_400_000;
 const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);

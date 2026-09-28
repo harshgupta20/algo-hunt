@@ -40,6 +40,8 @@ Snapshot as of **2026-09-28**. Use this page as the working list of what still n
 - **Kite streams at most 9,000 contracts per login**; connections beyond that are checked by the scanner.
 - **Holidays and special sessions are data**: enter them in V2 → Settings → Market calendar.
 - **Option legs have short histories**, so long Daily/Weekly indicators on CE / PE may never warm up.
+- **Backtests use today's contracts** (Kite has no candles for expired ones), with option strikes fixed around ATM at
+  the start of the period, and are limited in length per timeframe (as Compare).
 - **Paper trading is an approximation:** fills are the last traded price ± slippage (no order book); without the live
   worker, stops and targets are checked once a minute on the latest price; futures / sold-option margin is estimated
   (≈12 % indices, 20 % stocks, 10 % MCX), not Kite's exact SPAN + exposure; charges use Zerodha's published rates
@@ -54,6 +56,7 @@ Snapshot as of **2026-09-28**. Use this page as the working list of what still n
 
 | Date | Decision |
 | --- | --- |
+| 2026-09-28 | **Backtest tab**: a strategy on up to 20 products over a past period with a starting capital and paper settings — alerts found as in Compare, each traded like a paper trade with exits walked on the contract's 1-minute Kite candles (stop wins a same-minute tie, gaps fill at the open); trades the money can't cover are skipped and listed; final capital, return, the paper figures and charts, by product, every trade |
 | 2026-09-28 | One filter bar for Alerts (active / history / signals) and Paper: strategy, period (today … custom), product, type, market, timeframe, fired group, candles, delivery, outcome, side — filtered on the server. Dev hot reloads now rebuild the API's service container (a stale container served old paper results and crashed the Paper tab) |
 | 2026-09-28 | Paper trading **on by default for every connection** (existing and new); each connection can change its own values (📄 chip) over its strategy's; the Paper tab reworked for decisions (period filter, profit factor, P&L by day / entry time, how trades closed, sortable connection ranking, stop → target bars) |
 | 2026-09-28 | Paper trading: optional per strategy (off until switched on), prefilled with ₹10,000 per trade for every strategy, +20 % / −10 %, square-off 15:20 NSE / 23:20 MCX, exit on the other group, charges + 0.5 % slippage; one position per connection and strike position; results on a dedicated Paper tab |

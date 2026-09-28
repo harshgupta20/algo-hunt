@@ -144,13 +144,15 @@ src/server/v2/
 ├── live/             LiveWorker · KiteStream · ticks (Kite binary protocol) · LiveCandles · plan · verify
 │                     · FetchQueue · health
 ├── paper/            PaperTrader (open on alerts, exits) · charges (Zerodha charges, margin estimate) · summary
+│                     · backtest (Compare's alerts traded with money on 1-minute candles)
 ├── debug/            tools (explain now, compare across products)
 ├── persistence/      V2Store · PgV2Store (v2_* tables, migrations 007–011)
 ├── V2Service.ts      operations behind /api/v2/*
 └── index.ts          createV2Module() — wired into the API context · createV2LiveWorker()
 src/server/workers/v2Live.ts   the `npm run live` process (also `--check`, `--force`)
 src/client/v2/        V2Hub (tabs) · strategies/ (editor, legs, conditions) · connections/ · compare/ · alerts, products,
-                      paper/ (Paper tab, charts, paper settings fields + connection editor) · scanner, settings, dashboard · ProductPicker · ExplainView · help.ts (tooltips)
+                      paper/ (Paper tab, charts, paper settings fields + connection editor) · backtest/ (Backtest tab)
+                      · FilterBar · scanner, settings, dashboard · ProductPicker · ExplainView · help.ts (tooltips)
 ```
 
 A boundary test (`tests/v2/boundary.test.ts`) keeps V2 independent of the retired V1 / MCX V2 module paths,

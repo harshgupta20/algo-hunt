@@ -29,9 +29,9 @@ import { inr, pct, pnlClass, signedInr } from './money';
 import { PaperChip, PaperConnectionEditor, paperBrief } from './PaperFields';
 
 const symbolOf = (productId: string) => productId.split(':')[1] ?? productId;
-const th = 'px-2.5 py-2 font-medium whitespace-nowrap';
-const td = 'px-2.5 py-2 whitespace-nowrap align-middle';
-const FEW_TRADES = 10;
+export const th = 'px-2.5 py-2 font-medium whitespace-nowrap';
+export const td = 'px-2.5 py-2 whitespace-nowrap align-middle';
+export const FEW_TRADES = 10;
 
 function held(t: PaperTrade): string {
   const ms = Date.parse(t.exitAt ?? new Date().toISOString()) - Date.parse(t.entryAt);
@@ -48,10 +48,10 @@ function ago(iso: string | null): string {
 }
 
 const qty = (t: PaperTrade) => (t.lotSize > 1 ? `${t.lots} × ${t.lotSize}` : `${t.quantity}`);
-const pf = (s: PaperStats) => (typeof s.profitFactor === 'number' ? s.profitFactor.toFixed(2) : s.wins ? 'no losses' : '—');
+export const pf = (s: PaperStats) => (typeof s.profitFactor === 'number' ? s.profitFactor.toFixed(2) : s.wins ? 'no losses' : '—');
 
 /** A column header with its explanation (the tooltip sits inside the cell); sortable when `sort` is given. */
-function Th({ help, children, sort }: { help: TooltipContent; children: string; sort?: { active: boolean; desc: boolean; onClick: () => void } }) {
+export function Th({ help, children, sort }: { help: TooltipContent; children: string; sort?: { active: boolean; desc: boolean; onClick: () => void } }) {
   return (
     <th className={th} aria-sort={sort?.active ? (sort.desc ? 'descending' : 'ascending') : undefined}>
       <Tooltip content={sort ? { ...help, note: H.paper.sort.body } : help}>
@@ -118,7 +118,7 @@ function ContractCell({ t }: { t: PaperTrade }) {
   );
 }
 
-function toCsv(trades: PaperTrade[], names: Map<string, string>): string {
+export function toCsv(trades: PaperTrade[], names: Map<string, string>): string {
   const head = ['entry_at', 'exit_at', 'strategy', 'product', 'group', 'contract', 'side', 'lots', 'quantity', 'entry_price', 'exit_price', 'exit_reason', 'money_used', 'gross_pnl', 'charges', 'net_pnl', 'status'];
   const cell = (v: unknown) => {
     const s = v === null || v === undefined ? '' : String(v);
@@ -132,7 +132,7 @@ function toCsv(trades: PaperTrade[], names: Map<string, string>): string {
   return [head.join(','), ...rows].join('\n');
 }
 
-function download(name: string, text: string) {
+export function download(name: string, text: string) {
   const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
   const a = document.createElement('a');
   a.href = url;
@@ -141,7 +141,7 @@ function download(name: string, text: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
-function Panel({ title, help, aside, children, className, flush }: { title: string; help: TooltipContent; aside?: ReactNode; children: ReactNode; className?: string; flush?: boolean }) {
+export function Panel({ title, help, aside, children, className, flush }: { title: string; help: TooltipContent; aside?: ReactNode; children: ReactNode; className?: string; flush?: boolean }) {
   return (
     <section className={clsx('card overflow-hidden', className)}>
       <div className="flex flex-wrap items-center gap-2 px-4 pt-3 pb-2">
@@ -184,9 +184,9 @@ function Headline({ o }: { o: PaperStats }) {
 
 // ---- charts ----------------------------------------------------------------------------------
 
-const REASON_ORDER = ['TARGET', 'STOP', 'SQUARE_OFF', 'OPPOSITE', 'EXPIRY', 'MANUAL'] as const;
+const REASON_ORDER = ['TARGET', 'STOP', 'SQUARE_OFF', 'OPPOSITE', 'EXPIRY', 'MANUAL', 'END'] as const;
 
-function HowClosed({ sum }: { sum: PaperSummary }) {
+export function HowClosed({ sum }: { sum: PaperSummary }) {
   const total = sum.reasons.reduce((a, r) => a + r.trades, 0);
   if (!total) return <p className="py-6 text-center text-xs text-slate-500">No closed trades in this period.</p>;
   const rows = REASON_ORDER.map((k) => sum.reasons.find((r) => r.reason === k)).filter((r): r is PaperSummary['reasons'][number] => !!r);
@@ -210,7 +210,7 @@ function HowClosed({ sum }: { sum: PaperSummary }) {
   );
 }
 
-function ByHour({ sum }: { sum: PaperSummary }) {
+export function ByHour({ sum }: { sum: PaperSummary }) {
   if (!sum.hours.length) return <p className="py-6 text-center text-xs text-slate-500">No closed trades in this period.</p>;
   const lo = Math.min(...sum.hours.map((h) => h.hour));
   const hi = Math.max(...sum.hours.map((h) => h.hour));
@@ -228,7 +228,7 @@ function ByHour({ sum }: { sum: PaperSummary }) {
   return <PnlBars items={items} height={150} ariaLabel="Net P&L by the hour trades were opened" />;
 }
 
-function PnlPanel({ sum }: { sum: PaperSummary }) {
+export function PnlPanel({ sum }: { sum: PaperSummary }) {
   const [view, setView] = useState<'cum' | 'day'>('cum');
   const days = sum.daily.map((d) => ({
     key: d.date,
@@ -300,7 +300,7 @@ function WinRate({ s }: { s: PaperStats }) {
   );
 }
 
-function StatCells({ s }: { s: PaperStats }) {
+export function StatCells({ s }: { s: PaperStats }) {
   const few = s.trades > 0 && s.trades < FEW_TRADES;
   return (
     <>
@@ -500,6 +500,73 @@ function Ranking({ sum, onEditStrategy, onReset, resetting }: { sum: PaperSummar
   );
 }
 
+/** Closed trades: when, product, contract, side, size, fills, why it closed, how long, charges, net P&L. */
+export function TradeTable({ trades, names, rows, onMore, opened }: { trades: PaperTrade[]; names: Map<string, string>; rows: number; onMore: () => void; opened?: boolean }) {
+  return (
+    <>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-ink-850 text-left text-[10px] uppercase tracking-wide text-slate-500">
+            <tr>
+              {opened && <th className={th}>Opened</th>}
+              <th className={th}>Closed</th>
+              <th className={th}>Product · strategy</th>
+              <th className={th}>Contract</th>
+              <th className={th}>Side</th>
+              <Th help={{ title: 'Quantity', body: 'Lots × lot size (or shares for stocks).' }}>Qty</Th>
+              <Th help={{ title: 'Entry → exit', body: 'Fill prices, including slippage (a target fills at its own price).' }}>Entry → exit</Th>
+              <Th help={{ title: 'Why it closed', body: 'Target, stop-loss, square-off, the other group firing, expiry, closed by hand or the end of a backtest — hover a badge for details.' }}>Why</Th>
+              <Th help={{ title: 'Held', body: 'Time from entry to exit.' }}>Held</Th>
+              <Th help={H.paper.charges}>Charges</Th>
+              <Th help={H.paper.net}>Net P&L</Th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-ink-700/50">
+            {trades.slice(0, rows).map((t) => (
+              <tr key={t.id}>
+                {opened && <td className={clsx(td, 'text-slate-400')}>{istStampIso(t.entryAt)}</td>}
+                <td className={clsx(td, 'text-slate-400')}>{t.exitAt ? istStampIso(t.exitAt) : '—'}</td>
+                <td className={td}>
+                  <ProductCell t={t} strategy={names.get(t.strategyId)} />
+                </td>
+                <td className={td}>
+                  <ContractCell t={t} />
+                </td>
+                <td className={td}>
+                  <SideBadge side={t.side} />
+                </td>
+                <td className={clsx(td, 'tabular-nums')}>{qty(t)}</td>
+                <td className={clsx(td, 'tabular-nums')}>
+                  {inr(t.entryPrice)} → {t.exitPrice === null ? '—' : inr(t.exitPrice)}
+                </td>
+                <td className={td}>
+                  {t.exitReason && (
+                    <Tooltip content={H.paper.reasons[t.exitReason]}>
+                      <Badge>{H.paper.reasons[t.exitReason].title}</Badge>
+                    </Tooltip>
+                  )}
+                </td>
+                <td className={clsx(td, 'text-slate-400')}>{held(t)}</td>
+                <td className={clsx(td, 'tabular-nums text-slate-400')}>{inr(t.charges ?? 0)}</td>
+                <td className={clsx(td, 'tabular-nums font-semibold', pnlClass(t.netPnl))}>{signedInr(t.netPnl ?? 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {trades.length > rows && (
+        <div className="flex justify-center p-3">
+          <Tooltip content={H.paper.more}>
+            <button type="button" className="btn-ghost py-1 text-xs" onClick={onMore}>
+              Show 50 more of {trades.length - rows}
+            </button>
+          </Tooltip>
+        </div>
+      )}
+    </>
+  );
+}
+
 // ---- the tab ---------------------------------------------------------------------------------
 
 export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrategyId?: string; onEditStrategy: (strategyId?: string) => void }) {
@@ -673,65 +740,7 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
         {log.isLoading ? (
           <SkeletonRows rows={4} dense />
         ) : trades.length ? (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead className="bg-ink-850 text-left text-[10px] uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className={th}>Closed</th>
-                    <th className={th}>Product · strategy</th>
-                    <th className={th}>Contract</th>
-                    <th className={th}>Side</th>
-                    <Th help={{ title: 'Quantity', body: 'Lots × lot size (or shares for stocks).' }}>Qty</Th>
-                    <Th help={{ title: 'Entry → exit', body: 'Fill prices, including slippage (a target fills at its own price).' }}>Entry → exit</Th>
-                    <Th help={{ title: 'Why it closed', body: 'Target, stop-loss, square-off, the other group firing, expiry or closed by hand — hover a badge for details.' }}>Why</Th>
-                    <Th help={{ title: 'Held', body: 'Time from entry to exit.' }}>Held</Th>
-                    <Th help={H.paper.charges}>Charges</Th>
-                    <Th help={H.paper.net}>Net P&L</Th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-ink-700/50">
-                  {trades.slice(0, logRows).map((t) => (
-                    <tr key={t.id}>
-                      <td className={clsx(td, 'text-slate-400')}>{t.exitAt ? istStampIso(t.exitAt) : '—'}</td>
-                      <td className={td}>
-                        <ProductCell t={t} strategy={names.get(t.strategyId)} />
-                      </td>
-                      <td className={td}>
-                        <ContractCell t={t} />
-                      </td>
-                      <td className={td}>
-                        <SideBadge side={t.side} />
-                      </td>
-                      <td className={clsx(td, 'tabular-nums')}>{qty(t)}</td>
-                      <td className={clsx(td, 'tabular-nums')}>
-                        {inr(t.entryPrice)} → {t.exitPrice === null ? '—' : inr(t.exitPrice)}
-                      </td>
-                      <td className={td}>
-                        {t.exitReason && (
-                          <Tooltip content={H.paper.reasons[t.exitReason]}>
-                            <Badge>{H.paper.reasons[t.exitReason].title}</Badge>
-                          </Tooltip>
-                        )}
-                      </td>
-                      <td className={clsx(td, 'text-slate-400')}>{held(t)}</td>
-                      <td className={clsx(td, 'tabular-nums text-slate-400')}>{inr(t.charges ?? 0)}</td>
-                      <td className={clsx(td, 'tabular-nums font-semibold', pnlClass(t.netPnl))}>{signedInr(t.netPnl ?? 0)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {trades.length > logRows && (
-              <div className="flex justify-center p-3">
-                <Tooltip content={H.paper.more}>
-                  <button type="button" className="btn-ghost py-1 text-xs" onClick={() => setLogRows((n) => n + 50)}>
-                    Show 50 more of {trades.length - logRows}
-                  </button>
-                </Tooltip>
-              </div>
-            )}
-          </>
+          <TradeTable trades={trades} names={names} rows={logRows} onMore={() => setLogRows((n) => n + 50)} />
         ) : (
           <EmptyState title={logView === 'all' ? 'No closed paper trades in this period' : logView === 'win' ? 'No winning trades in this period' : 'No losing trades in this period'} />
         )}

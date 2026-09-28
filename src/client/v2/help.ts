@@ -13,6 +13,11 @@ export const H = {
     strategies: { title: 'Strategies', body: 'Your strategies — pure logic with 1–4 legs (Spot, Future, Call, Put) and conditions. No product is chosen here.' },
     connections: { title: 'Connections', body: 'Connect a strategy to products (NIFTY, RELIANCE, GOLD…) with an expiry, strike positions and alert settings. Each connection switches on and off by itself.' },
     compare: { title: 'Compare', body: 'Run one strategy over past candles on many products and see where it would have alerted — to pick the products that suit it.' },
+    backtest: {
+      title: 'Backtest',
+      body: 'What would I have made? Run a strategy over past candles on the products you choose, with your money — every alert traded like a paper trade (cash per trade, target, stop-loss, square-off, charges) — and see the profit or loss, trade by trade.',
+      note: 'Nothing is saved or sent.',
+    },
     alerts: { title: 'Alerts', body: 'Active alerts (acknowledge them), the full history and every signal, including suppressed ones.' },
     paper: {
       title: 'Paper trading',
@@ -80,6 +85,7 @@ export const H = {
     remove: { title: 'Delete', body: 'Delete the strategy with its versions, connections and alerts. This cannot be undone.' },
     connect: { title: 'Connect to products', body: 'Go to Connections with this strategy selected.' },
     compare: { title: 'Compare on products', body: 'Go to Compare with this strategy selected.' },
+    backtest: { title: 'Backtest with money', body: 'Go to Backtest with this strategy selected: see what it would have made on products you choose, with your capital and paper settings.' },
     version: { title: 'Version', body: 'Every save is an immutable version; each alert records the version that produced it.' },
     name: { title: 'Name', body: 'Shown in alerts and messages.' },
     description: { title: 'Description', body: 'Optional notes — the idea behind the strategy.' },
@@ -251,6 +257,32 @@ export const H = {
     errors: { title: 'Errors', body: 'Problems in this cycle — one failure never stops the rest.' },
   } satisfies Record<string, TooltipContent>,
 
+  backtest: {
+    section: {
+      title: 'Backtest with money',
+      body: 'Pick a strategy, products, a period and your money. Every alert the strategy would have sent is traded like a paper trade and followed minute by minute on the contract’s Kite candles to its exit.',
+      note: 'Starts from the strategy’s paper settings — change anything here just for this test. Nothing is saved or sent.',
+    },
+    strategy: { title: 'Strategy', body: 'The saved strategy to test (its current version).' },
+    products: { title: 'Products', body: 'Up to 20 products to trade it on. Only products offering every leg the strategy uses are listed.' },
+    period: { title: 'Period', body: 'Trading days to test (IST, inclusive). How far back depends on the trigger timeframe (Kite candle limits).' },
+    quick: { title: 'Quick period', body: 'Fill in the most recent days, up to the longest period this timeframe allows.' },
+    capital: { title: 'Starting capital', body: 'The money in the account at the start. A trade opens only if what’s free (capital + profit so far − money in open trades) covers it — otherwise it’s skipped and listed.' },
+    noLimit: { title: 'No limit', body: 'Take every trade whatever it costs (money is still counted per trade).' },
+    advanced: { title: 'Alert settings', body: 'Which expiry and strike the legs use, and when an alert counts — as on a connection.' },
+    run: { title: 'Run backtest', body: 'Fetch the candles, find every alert and trade it. Kite allows ~3 requests a second, so many products or long periods take a little while.' },
+    finalCapital: { title: 'Final capital', body: 'Starting capital + net P&L of every trade (after charges and slippage).' },
+    returnOnCapital: { title: 'Return on capital', body: 'Net P&L ÷ starting capital.' },
+    lowest: { title: 'Lowest balance', body: 'The least the account held after a closed trade — capital + the worst running P&L.' },
+    byProduct: { title: 'By product', body: 'What each product made with this strategy — sorted by net P&L. Open a row for the contracts used and any data notes.' },
+    alerts: { title: 'Alerts', body: 'Alerts the strategy would have sent on this product in the period.' },
+    skipped: { title: 'Skipped', body: 'Alerts that didn’t become trades: not enough money, after the square-off, a trade already open, a group that doesn’t trade, no price.' },
+    skippedList: { title: 'Alerts not traded', body: 'Every alert that didn’t become a trade, and why.' },
+    trades: { title: 'Trades', body: 'Every simulated trade: entry, exit, why it closed, charges and net P&L.' },
+    contracts: { title: 'Contracts', body: 'The contract each leg used — fixed at the strikes around ATM at the start of the period (contracts listed today).' },
+    notes: { title: 'How it was tested', body: 'Assumptions and data limits of this backtest.' },
+  } satisfies Record<string, TooltipContent>,
+
   filters: {
     strategy: { title: 'Strategy', body: 'Only this strategy’s records (all its connected products).' },
     period: { title: 'Period', body: 'When the alert / signal was recorded, or the paper trade opened (IST calendar days). Custom: pick the first and last day.' },
@@ -367,6 +399,7 @@ export const H = {
       OPPOSITE: { title: 'Other group', body: 'Closed because another group of the strategy fired.' },
       EXPIRY: { title: 'Expiry', body: 'Closed at the contract’s expiry (last price of the session).' },
       MANUAL: { title: 'Closed by hand', body: 'You closed it from the Paper tab.' },
+      END: { title: 'End of test', body: 'The backtest period ended with the trade still open — closed at the last price.' },
     } satisfies Record<string, TooltipContent>,
   },
 

@@ -8,7 +8,8 @@ import { z } from 'zod';
 import type { ExprNode, LegDef, LegId, StrategyDefinition, V2Instrument } from './types';
 
 export type PaperSide = 'BUY' | 'SELL';
-export type PaperExitReason = 'TARGET' | 'STOP' | 'SQUARE_OFF' | 'OPPOSITE' | 'EXPIRY' | 'MANUAL';
+/** END: a backtest ended with the trade still open (closed at the last price). */
+export type PaperExitReason = 'TARGET' | 'STOP' | 'SQUARE_OFF' | 'OPPOSITE' | 'EXPIRY' | 'MANUAL' | 'END';
 
 /** What to trade when a group (or the whole strategy) fires. `leg: null` = don't trade that group. */
 export interface PaperRule {

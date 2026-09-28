@@ -6,6 +6,8 @@ import type {
   CalendarEntry,
   ConnectionConfig,
   AlertQuery,
+  BacktestRequest,
+  BacktestResult,
   PaperOverride,
   PaperPlan,
   PaperQuery,
@@ -32,6 +34,7 @@ import type { ProductFilters, V2Store } from './persistence/V2Store';
 import { liveHealth } from './live/health';
 import { PaperTrader, unrealizedPnl } from './paper/PaperTrader';
 import { paperSummary } from './paper/summary';
+import { runBacktest } from './paper/backtest';
 import { V2Scanner, type ScanOptions } from './scanner/V2Scanner';
 import { atmReference, resolveUnits, unitInstruments } from './universe/resolve';
 
@@ -416,6 +419,19 @@ export class V2Service {
 
   scanRuns(limit = 100) {
     return this.deps.store.scanRuns.list(Math.min(limit, 500));
+  }
+
+  // ---- backtest ----------------------------------------------------------------------------
+
+  /** What the strategy would have made on these products with this money over past candles (nothing saved). */
+  async backtest(req: BacktestRequest): Promise<BacktestResult> {
+    const s = await this.getStrategy(req.strategyId);
+    if (req.from > req.to) throw new V2ServiceError(400, '“From” must be on or before “to”');
+    try {
+      return await runBacktest({ store: this.deps.store, provider: this.deps.provider, tools: this.tools, now: () => this.now() }, s, req);
+    } catch (err) {
+      throw new V2ServiceError(400, msg(err));
+    }
   }
 
   // ---- paper trading -----------------------------------------------------------------------

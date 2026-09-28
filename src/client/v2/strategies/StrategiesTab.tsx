@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BarChart3, Copy, Link2, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { BarChart3, Copy, Link2, Pencil, Plus, Sparkles, Trash2, FlaskConical } from 'lucide-react';
 import type { StrategyDefinition, V2Strategy } from '@/shared/v2';
 import { TIMEFRAME, nodeText } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
@@ -16,7 +16,7 @@ import { StrategyEditor } from './StrategyEditor';
 import { pnlClass, signedInr } from '../paper/money';
 import { SkeletonCards } from '../../components/loaders';
 
-type GoTab = 'connections' | 'compare' | 'paper';
+type GoTab = 'connections' | 'compare' | 'backtest' | 'paper';
 
 type PaperBrief = { enabled: boolean; netPnl: number; trades: number; open: number } | undefined;
 
@@ -75,6 +75,11 @@ function StrategyCard({ s, paper, onEdit, onGo }: { s: StrategyRow; paper: Paper
           <Tooltip content={H.strategy.compare}>
             <button type="button" className="btn-ghost py-1 text-xs" onClick={() => onGo('compare', s.id)}>
               <BarChart3 className="w-3.5 h-3.5" /> Compare
+            </button>
+          </Tooltip>
+          <Tooltip content={H.strategy.backtest}>
+            <button type="button" className="btn-ghost py-1 text-xs" onClick={() => onGo('backtest', s.id)}>
+              <FlaskConical className="w-3.5 h-3.5" /> Backtest
             </button>
           </Tooltip>
           <IconButton help={H.strategy.edit} onClick={onEdit} className={btn}>

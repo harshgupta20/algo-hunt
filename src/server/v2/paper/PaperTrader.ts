@@ -12,7 +12,7 @@
  * scanner (once a minute, while the worker is off) drive exits; closing is conditional on the trade
  * still being open, so the two can never close a trade twice.
  */
-import type { Market, PaperExitReason, PaperRule, PaperTrade, UnitEvaluation, V2Connection, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
+import type { LegId, Market, PaperExitReason, PaperPlan, PaperRule, PaperSide, PaperTrade, ProductKind, StrategyDefinition, UnitEvaluation, V2Connection, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
 import { defaultPaperPlan, effectivePlan, marketOfExchange, paperGroups, resolveRules } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
@@ -106,14 +106,81 @@ const REASON_TEXT: Record<PaperExitReason, string> = {
   OPPOSITE: 'the other group fired',
   EXPIRY: 'expiry',
   MANUAL: 'closed by hand',
+  END: 'end of the backtest',
 };
 
+/** A new open trade for `ref` (the market price): whole lots for the cash per trade (≥ 1), slippage, target / stop. */
+export function buildTrade(x: {
+  plan: PaperPlan;
+  instrument: V2Instrument;
+  productKind: ProductKind;
+  side: PaperSide;
+  ref: number;
+  at: number;
+  ids: Pick<PaperTrade, 'strategyId' | 'connectionId' | 'productId' | 'slot' | 'unitKey' | 'alertId'>;
+  group: { id: string; label: string } | null;
+  leg: LegId;
+}): Omit<PaperTrade, 'id'> {
+  const { plan, instrument: inst, side, ref } = x;
+  const slip = plan.slippagePct / 100;
+  const entryPrice = toTick(side === 'BUY' ? ref * (1 + slip) : ref * (1 - slip), inst.tickSize, side === 'BUY' ? 'up' : 'down');
+  const lotSize = Math.max(1, inst.lotSize || 1);
+  const money = moneyPerUnit(inst, x.productKind, side, entryPrice);
+  const perLot = money.perUnit * lotSize;
+  const lots = Math.max(1, Math.floor(plan.cashPerTrade / perLot));
+  const pct = (n: number | null, up: boolean) => (n === null ? null : toTick(entryPrice * (1 + (up ? n : -n) / 100), inst.tickSize));
+  const at = new Date(x.at).toISOString();
+  return {
+    ...x.ids,
+    group: x.group?.id ?? null,
+    groupLabel: x.group?.label,
+    leg: x.leg,
+    side,
+    instrument: inst,
+    lots,
+    lotSize,
+    quantity: lots * lotSize,
+    cashPerTrade: plan.cashPerTrade,
+    capitalUsed: round2(perLot * lots),
+    marginEstimated: money.estimated,
+    overBudget: perLot > plan.cashPerTrade,
+    entryAt: at,
+    entryRef: ref,
+    entryPrice,
+    targetPrice: pct(plan.targetPct, side === 'BUY'),
+    stopPrice: pct(plan.stopPct, side !== 'BUY'),
+    terms: {
+      targetPct: plan.targetPct,
+      stopPct: plan.stopPct,
+      squareOff: plan.squareOff,
+      squareOffNse: plan.squareOffNse,
+      squareOffMcx: plan.squareOffMcx,
+      exitOnOpposite: plan.exitOnOpposite,
+      charges: plan.charges,
+      slippagePct: plan.slippagePct,
+    },
+    status: 'OPEN',
+    lastPrice: ref,
+    lastPriceAt: at,
+    exitAt: null,
+    exitPrice: null,
+    exitReason: null,
+    grossPnl: null,
+    charges: null,
+    netPnl: null,
+  };
+}
+
 /** The top-level group whose condition was true (null for strategies without groups). */
-function firedGroup(s: V2Strategy, e: UnitEvaluation): { id: string; label: string } | null {
-  const groups = paperGroups(s.definition);
+export function firedGroupOf(s: StrategyDefinition, trace: UnitEvaluation['trace']): { id: string; label: string } | null {
+  const groups = paperGroups(s);
   if (!groups.length) return null;
-  const hit = groups.find((g) => e.trace.children?.find((c) => c.id === g.id)?.result === 'TRUE');
+  const hit = groups.find((g) => trace.children?.find((c) => c.id === g.id)?.result === 'TRUE');
   return hit ? { id: hit.id, label: hit.label } : { id: groups[0]!.id, label: groups[0]!.label };
+}
+
+function firedGroup(s: V2Strategy, e: UnitEvaluation): { id: string; label: string } | null {
+  return firedGroupOf(s.definition, e.trace);
 }
 
 export class PaperTrader {
@@ -172,64 +239,25 @@ export class PaperTrader {
       return lines.join('\n');
     }
 
-    const side = rule.side;
-    const slip = plan.slippagePct / 100;
-    const entryPrice = toTick(side === 'BUY' ? ref * (1 + slip) : ref * (1 - slip), inst.tickSize, side === 'BUY' ? 'up' : 'down');
-    const lotSize = Math.max(1, inst.lotSize || 1);
-    const money = moneyPerUnit(inst, a.product.kind, side, entryPrice);
-    const perLot = money.perUnit * lotSize;
-    const lots = Math.max(1, Math.floor(plan.cashPerTrade / perLot));
-    const pct = (n: number | null, up: boolean) => (n === null ? null : toTick(entryPrice * (1 + (up ? n : -n) / 100), inst.tickSize));
-    const trade = await store.paper.insertTrade({
-      strategyId: a.strategy.id,
-      connectionId: a.connection.id,
-      productId: a.product.id,
-      slot,
-      unitKey: a.unit.key,
-      alertId: a.alertId,
-      group: fired?.id ?? null,
-      groupLabel: fired?.label,
-      leg: rule.leg,
-      side,
+    const draft = buildTrade({
+      plan,
       instrument: inst,
-      lots,
-      lotSize,
-      quantity: lots * lotSize,
-      cashPerTrade: plan.cashPerTrade,
-      capitalUsed: round2(perLot * lots),
-      marginEstimated: money.estimated,
-      overBudget: perLot > plan.cashPerTrade,
-      entryAt: new Date(now).toISOString(),
-      entryRef: ref,
-      entryPrice,
-      targetPrice: pct(plan.targetPct, side === 'BUY'),
-      stopPrice: pct(plan.stopPct, side !== 'BUY'),
-      terms: {
-        targetPct: plan.targetPct,
-        stopPct: plan.stopPct,
-        squareOff: plan.squareOff,
-        squareOffNse: plan.squareOffNse,
-        squareOffMcx: plan.squareOffMcx,
-        exitOnOpposite: plan.exitOnOpposite,
-        charges: plan.charges,
-        slippagePct: plan.slippagePct,
-      },
-      status: 'OPEN',
-      lastPrice: ref,
-      lastPriceAt: new Date(now).toISOString(),
-      exitAt: null,
-      exitPrice: null,
-      exitReason: null,
-      grossPnl: null,
-      charges: null,
-      netPnl: null,
+      productKind: a.product.kind,
+      side: rule.side,
+      ref,
+      at: now,
+      ids: { strategyId: a.strategy.id, connectionId: a.connection.id, productId: a.product.id, slot, unitKey: a.unit.key, alertId: a.alertId },
+      group: fired,
+      leg: rule.leg,
     });
+    const trade = await store.paper.insertTrade(draft);
     if (!trade) {
       lines.push('📄 Paper: a trade is already open for this strike — no new trade');
       return lines.join('\n');
     }
+    const perLot = trade.capitalUsed / trade.lots;
     const exits = [trade.targetPrice !== null ? `target ${rupees(trade.targetPrice)}` : null, trade.stopPrice !== null ? `stop ${rupees(trade.stopPrice)}` : null].filter(Boolean);
-    const budget = trade.overBudget ? ` · 1 lot needs ${rupees(perLot)}${money.estimated ? ' margin (est.)' : ''}, over the ${rupees(plan.cashPerTrade)} per trade` : '';
+    const budget = trade.overBudget ? ` · 1 lot needs ${rupees(perLot)}${trade.marginEstimated ? ' margin (est.)' : ''}, over the ${rupees(plan.cashPerTrade)} per trade` : '';
     lines.push(`📄 Paper: ${describe(trade)} @ ${rupees(trade.entryPrice)}${exits.length ? ` · ${exits.join(' · ')}` : ''}${budget}`);
     return lines.join('\n');
   }

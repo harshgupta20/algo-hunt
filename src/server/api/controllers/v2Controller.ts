@@ -11,6 +11,7 @@ import {
   PRODUCT_KINDS,
   SIGNAL_OUTCOMES,
   TIMEFRAME,
+  backtestRequestSchema,
   calendarSchema,
   connectionConfigSchema,
   paperOverrideSchema,
@@ -151,6 +152,7 @@ export function v2Controller(ctx: AppContext) {
     scan: (req) => svc().scan({ force: parse(z.object({ force: z.boolean().optional() }), req.body ?? {}).force }),
     scanRuns: (req) => svc().scanRuns(num(req.query.get('limit'))),
 
+    backtest: (req) => svc().backtest(parse(backtestRequestSchema, req.body)),
     paperPlan: (req) => svc().paperPlan(req.params.id!),
     savePaperPlan: (req) => svc().savePaperPlan(req.params.id!, parse(paperPlanSchema, req.body)),
     paperSummary: (req) => svc().paperSummary({ ...records(req.query), sides: csv(req.query.get('sides'), SIDES) }),
