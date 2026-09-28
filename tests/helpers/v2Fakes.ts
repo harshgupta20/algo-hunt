@@ -12,6 +12,9 @@ import type {
   LegDef,
   LegId,
   LiveStatus,
+  PaperOverride,
+  PaperPlan,
+  PaperTrade,
   Operand,
   ProductKind,
   ScanRun,
@@ -32,7 +35,7 @@ import type { ChannelFactory, ChannelName, Channel, Message } from '../../src/se
 import type { RawCandle } from '../../src/server/v2/engine/candles';
 import type { CandleQuery, InstrumentDump, Quote, V2DataProvider } from '../../src/server/v2/data/DataProvider';
 import { buildProducts } from '../../src/server/v2/data/ProductService';
-import type { AlertFilters, ProductFilters, V2Store } from '../../src/server/v2/persistence/V2Store';
+import type { AlertFilters, ProductFilters, RecordStoreFilters, SignalFilters, V2Store } from '../../src/server/v2/persistence/V2Store';
 import { IST_OFFSET_MS } from '../../src/server/utils/marketTime';
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
@@ -53,6 +56,9 @@ export class MemoryV2Store implements V2Store {
     settings: { ...DEFAULT_V2_SETTINGS } as V2Settings,
     locks: new Map<string, number>(),
     live: null as { status: LiveStatus; offlineNotifiedAt: string | null } | null,
+    paperPlans: new Map<string, PaperPlan>(),
+    paperTrades: [] as PaperTrade[],
+    paperOverrides: new Map<string, PaperOverride>(),
   };
 
   constructor(private readonly clock: () => number = Date.now) {}
@@ -187,11 +193,11 @@ export class MemoryV2Store implements V2Store {
       this.data.signals.push(row);
       return clone(row);
     },
-    list: async (f: { connectionId?: string; strategyId?: string; limit?: number }) =>
+    list: async (f: SignalFilters) =>
       clone(
         [...this.data.signals]
           .reverse()
-          .filter((s) => (!f.connectionId || s.connectionId === f.connectionId) && (!f.strategyId || s.strategyId === f.strategyId))
+          .filter((s) => this.matches(f, { ...s, productId: s.evaluation.productId }) && (!f.outcomes?.length || f.outcomes.includes(s.outcome)))
           .slice(0, f.limit ?? 100),
       ),
   };
@@ -221,7 +227,13 @@ export class MemoryV2Store implements V2Store {
       clone(
         [...this.data.alerts]
           .reverse()
-          .filter((a) => (!f.connectionId || a.connectionId === f.connectionId) && (!f.strategyId || a.strategyId === f.strategyId) && (!f.active || !a.acknowledgedAt))
+          .filter(
+            (a) =>
+              this.matches(f, a) &&
+              (!f.active || !a.acknowledgedAt) &&
+              (!f.statuses?.length || f.statuses.includes(a.status)) &&
+              (!f.sources?.length || f.sources.includes(a.evaluation.source ?? 'HISTORICAL')),
+          )
           .slice(0, f.limit ?? 200),
       ),
   };
@@ -252,6 +264,77 @@ export class MemoryV2Store implements V2Store {
     },
     release: async (name: string) => {
       this.data.locks.delete(name);
+    },
+  };
+
+  /** The filters alerts and signals share (as PgV2Store's recordWhere). */
+  private matches(
+    f: RecordStoreFilters,
+    r: { connectionId: string; strategyId: string; productId: string; triggerTimeframe: string; createdAt: string; evaluation: { trace: { children?: Array<{ id: string; result: string }> } } },
+  ): boolean {
+    const p = this.data.products.find((x) => x.id === r.productId);
+    const symbol = r.productId.split(':')[1] ?? '';
+    return (
+      (!f.connectionId || r.connectionId === f.connectionId) &&
+      (!f.strategyId || r.strategyId === f.strategyId) &&
+      (!f.kinds?.length || (!!p && f.kinds.includes(p.kind))) &&
+      (!f.markets?.length || (!!p && f.markets.includes(p.market))) &&
+      (!f.search?.trim() || symbol.toLowerCase().includes(f.search.trim().toLowerCase())) &&
+      (!f.timeframes?.length || f.timeframes.includes(r.triggerTimeframe as never)) &&
+      (!f.since || r.createdAt >= f.since) &&
+      (!f.until || r.createdAt < f.until) &&
+      (!f.groups?.length || (r.evaluation.trace.children ?? []).some((g) => g.result === 'TRUE' && f.groups!.includes(g.id)))
+    );
+  }
+
+  paper = {
+    getPlan: async (id: string) => clone(this.data.paperPlans.get(id) ?? null),
+    savePlan: async (id: string, plan: PaperPlan) => {
+      this.data.paperPlans.set(id, clone(plan));
+      return clone(plan);
+    },
+    listPlans: async () => [...this.data.paperPlans].map(([strategyId, plan]) => ({ strategyId, plan: clone(plan) })),
+    insertTrade: async (t: Omit<PaperTrade, 'id'>) => {
+      if (this.data.paperTrades.some((x) => x.connectionId === t.connectionId && x.slot === t.slot && x.status === 'OPEN')) return null;
+      const trade = { ...clone(t), id: randomUUID() };
+      this.data.paperTrades.push(trade);
+      return clone(trade);
+    },
+    openFor: async (cid: string, slot: string) => clone(this.data.paperTrades.find((t) => t.connectionId === cid && t.slot === slot && t.status === 'OPEN') ?? null),
+    listOpen: async () => clone(this.data.paperTrades.filter((t) => t.status === 'OPEN')),
+    closeTrade: async (id: string, patch: Partial<PaperTrade>) => {
+      const t = this.data.paperTrades.find((x) => x.id === id && x.status === 'OPEN');
+      if (!t) return null;
+      Object.assign(t, clone(patch), { status: 'CLOSED' });
+      return clone(t);
+    },
+    updateMarks: async (marks: Array<{ id: string; lastPrice: number; at: string }>) => {
+      for (const m of marks) {
+        const t = this.data.paperTrades.find((x) => x.id === m.id && x.status === 'OPEN');
+        if (t) Object.assign(t, { lastPrice: m.lastPrice, lastPriceAt: m.at });
+      }
+    },
+    listTrades: async (f: { status?: 'OPEN' | 'CLOSED'; strategyId?: string; connectionId?: string; since?: string; limit?: number }) =>
+      clone(
+        this.data.paperTrades
+          .filter((t) => (!f.status || t.status === f.status) && (!f.strategyId || t.strategyId === f.strategyId) && (!f.connectionId || t.connectionId === f.connectionId) && (!f.since || t.entryAt >= f.since))
+          .sort((a, b) => b.entryAt.localeCompare(a.entryAt))
+          .slice(0, f.limit ?? 1000),
+      ),
+    getOverride: async (id: string) => clone(this.data.paperOverrides.get(id) ?? null),
+    saveOverride: async (id: string, o: PaperOverride) => {
+      if (!Object.keys(o).length) {
+        this.data.paperOverrides.delete(id);
+        return null;
+      }
+      this.data.paperOverrides.set(id, clone(o));
+      return clone(o);
+    },
+    listOverrides: async () => [...this.data.paperOverrides].map(([connectionId, override]) => ({ connectionId, override: clone(override) })),
+    reset: async (id: string) => {
+      const before = this.data.paperTrades.length;
+      this.data.paperTrades = this.data.paperTrades.filter((t) => t.strategyId !== id);
+      return before - this.data.paperTrades.length;
     },
   };
 

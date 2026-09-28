@@ -3,7 +3,8 @@
 A personal trading **alert** platform for Indian markets (it never places orders). Build a strategy once — 1–4 legs
 (Spot, Future, Call, Put) and conditions between them — then connect it to any **NSE index, NSE stock or MCX
 commodity** and get alerts on Telegram, email and the desktop when it fires. Compare shows which products a strategy
-suits. Everything runs on real Zerodha Kite data.
+suits, and **paper trading** (on for every connection, ₹10,000 per trade by default, adjustable per strategy or
+connection) turns every alert into a simulated trade so the Paper tab shows what each connection would have made. Everything runs on real Zerodha Kite data.
 
 Built with **Next.js 16** (App Router), **Neon Postgres** and **Zerodha Kite Connect**.
 

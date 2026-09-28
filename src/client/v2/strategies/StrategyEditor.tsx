@@ -5,14 +5,15 @@
  *   1 Legs        1–4 placeholders (SPOT, FUT, CE / PE relative to ATM)
  *   2 When        evaluation mode + trigger timeframe
  *   3 Conditions  any leg vs any leg (or a number), AND / OR / NOT
+ *   4 Paper       optional simulated trades on its alerts (saved with the strategy)
  * with a live preview, validation and "try on a product".
  */
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, PlayCircle, Save, X, XCircle } from 'lucide-react';
 import clsx from 'clsx';
-import type { ExprNode, LegId, LegKind, StrategyDefinition, V2Strategy } from '@/shared/v2';
-import { TIMEFRAMES, strategySummary } from '@/shared/v2';
+import type { ExprNode, LegId, LegKind, PaperPlan, StrategyDefinition, V2Strategy } from '@/shared/v2';
+import { TIMEFRAMES, defaultPaperPlan, resolveRules, strategySummary } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { V2ApiError, v2Api, type ExplainResult } from '../api';
 import { Cell, Section, Segmented } from '../components';
@@ -22,6 +23,7 @@ import { ProductPicker } from '../ProductPicker';
 import { dominantSeries, legSeries, nextLegId, usedLegs } from './defaults';
 import { ExpressionEditor } from './ExpressionEditor';
 import { LegsEditor } from './LegsEditor';
+import { PaperPlanEditor } from './PaperPlanEditor';
 import { InlineSpinner } from '../../components/loaders';
 
 function useDebounced<T>(value: T, ms: number): T {
@@ -39,6 +41,12 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: V2St
   const [serverError, setServerError] = useState<V2ApiError | null>(null);
   const [tryProduct, setTryProduct] = useState<string[]>([]);
   const [explain, setExplain] = useState<ExplainResult | null>(null);
+  const [paper, setPaper] = useState<PaperPlan>(() => defaultPaperPlan(initial));
+  const [paperDirty, setPaperDirty] = useState(false);
+  const savedPaper = useQuery({ queryKey: ['v2-paper-plan', strategy?.id], queryFn: () => v2Api.paperPlan(strategy!.id), enabled: !!strategy });
+  useEffect(() => {
+    if (savedPaper.data && !paperDirty) setPaper(savedPaper.data);
+  }, [savedPaper.data, paperDirty]);
   const debounced = useDebounced(def, 400);
   const validation = useQuery({ queryKey: ['v2-validate', debounced], queryFn: () => v2Api.validateStrategy(debounced), retry: false });
   const set = (patch: Partial<StrategyDefinition>) => {
@@ -57,9 +65,16 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: V2St
   const defaultSeries = dominantSeries(def.expression, legSeries(def.legs[0]?.id ?? 'A', def.evaluation.triggerTimeframe));
 
   const save = useMutation({
-    mutationFn: () => (strategy ? v2Api.updateStrategy(strategy.id, def) : v2Api.createStrategy(def)),
+    mutationFn: async () => {
+      // Only the paper settings changed → no new strategy version.
+      const unchanged = strategy && JSON.stringify(def) === JSON.stringify(strategy.definition);
+      const s = unchanged ? strategy : strategy ? await v2Api.updateStrategy(strategy.id, def) : await v2Api.createStrategy(def);
+      if (paperDirty) await v2Api.savePaperPlan(s.id, { ...paper, rules: resolveRules(def, paper.rules) });
+      return s;
+    },
     onSuccess: (s) => {
       qc.invalidateQueries({ queryKey: ['v2-strategies'] });
+      if (paperDirty) for (const k of ['v2-paper-plan', 'v2-paper', 'v2-paper-settings']) qc.invalidateQueries({ queryKey: [k] });
       onClose(s);
     },
     onError: (e) => setServerError(e instanceof V2ApiError ? e : new V2ApiError((e as Error).message, 0)),
@@ -135,6 +150,22 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: V2St
 
           <Section step="3 · Conditions" title="When should it alert?" help={H.editor.conditions}>
             <ExpressionEditor expression={def.expression} onChange={(expression: ExprNode) => set({ expression })} defaultSeries={defaultSeries} legs={def.legs} onAddLeg={addLeg} />
+          </Section>
+
+          <Section step="4 · Paper trading" title="Simulated trades on every alert" help={H.paper.section}>
+            {strategy && savedPaper.isLoading ? (
+              <InlineSpinner className="w-4 h-4 text-slate-500" />
+            ) : (
+              <PaperPlanEditor
+                def={def}
+                plan={paper}
+                onChange={(p) => {
+                  setServerError(null);
+                  setPaperDirty(true);
+                  setPaper(p);
+                }}
+              />
+            )}
           </Section>
         </div>
 

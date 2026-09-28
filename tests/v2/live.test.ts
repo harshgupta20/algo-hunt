@@ -270,7 +270,7 @@ const nFut = fut('NSE:NIFTY', '2026-10-27');
 const MINUTES = ['09:15', '09:16', '09:17', '09:18', '09:19'];
 
 /** Future's 5-min close vs a level (the 09:15–09:20 candle is the first of the day). */
-async function liveEnv(o: { close: number; level: number; officialClose?: number; failToday?: boolean; gap?: boolean }) {
+async function liveEnv(o: { close: number; level: number; officialClose?: number; failToday?: boolean; gap?: boolean; paper?: boolean }) {
   let t = at('09:05:00');
   const store = new MemoryV2Store(() => t);
   const provider = new FixtureV2Provider([nSpot, nFut]);
@@ -286,6 +286,7 @@ async function liveEnv(o: { close: number; level: number; officialClose?: number
   const s = await svc.createStrategy({ ...strategy([{ id: 'A', kind: 'FUT' }], cond(field(legSeries('A', '5m')), 'GT', num(o.level)), '5m'), name: 'Future above level' });
   const [c] = await svc.createConnections(s.id, ['NSE:NIFTY'], config());
   await svc.enableConnection(c!.id);
+  if (o.paper) await svc.savePaperPlan(s.id, { ...(await svc.paperPlan(s.id)), enabled: true });
 
   const stream = new FakeStream(() => t);
   const worker = new LiveWorker({
@@ -319,7 +320,7 @@ async function liveEnv(o: { close: number; level: number; officialClose?: number
   });
   await step('09:20:02.500');
   const state = await store.units.get(c!.id, 'FUT|2026-10-27');
-  return { store, provider, channels, worker, svc, stream, state, warmupCalls, conn: c!, t: () => t };
+  return { store, provider, channels, worker, svc, stream, state, warmupCalls, conn: c!, t: () => t, step };
 }
 
 describe('live worker end to end', () => {
@@ -372,6 +373,19 @@ describe('live worker end to end', () => {
     expect(e.store.data.alerts[0]!.evaluation.source).toBe('LIVE_UNVERIFIED');
     expect(e.channels.sent[0]!.message.text).toMatch(/Not verified/);
     expect(e.t()).toBeGreaterThanOrEqual(at('09:20:00') + CONFIRM_DEADLINE_MS);
+  });
+
+  it('a live alert opens a paper trade at the streamed price; a tick through the stop closes it at once', async () => {
+    const e = await liveEnv({ close: 25_160, level: 25_150, paper: true });
+    const [open] = e.store.data.paperTrades;
+    // ₹10,000 against ≈12 % margin on ₹25,286 a unit → 3 units (lot size 1 in this fixture).
+    expect(open).toMatchObject({ status: 'OPEN', side: 'BUY', leg: 'A', entryRef: 25_160, entryPrice: 25_285.8, quantity: 3, marginEstimated: true, stopPrice: 22_757.2 });
+    expect(e.channels.sent[0]!.message.text).toMatch(/✓ Verified[\s\S]*📄 Paper: BUY 3 NIFTY20261027FUT @ ₹25,285\.8 · target ₹30,342\.95 · stop ₹22,757\.2/);
+    await e.step('09:21:00'); // the worker starts watching the new trade
+    const tt = e.t() + 500;
+    e.worker.events.ticks([{ token: nFut.token, price: 22_700, volume: 900, tradeTime: tt, exchangeTime: tt, dayOpen: 25_100, index: false }], tt + 100);
+    await e.worker.idle();
+    expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'CLOSED', exitReason: 'STOP', exitPrice: 22_586.5 }); // 22,700 − 0.5 %
   });
 
   it('the cron scanner steps aside while the worker streams, and warns once if it dies', async () => {

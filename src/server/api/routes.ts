@@ -51,6 +51,15 @@ export function createRouter(ctx: AppContext): Router {
   r.get('/v2/signals', v2.signals);
   r.post('/v2/scan', v2.scan);
   r.get('/v2/scan-runs', v2.scanRuns);
+  r.get('/v2/paper/plans/:id', v2.paperPlan);
+  r.put('/v2/paper/plans/:id', v2.savePaperPlan);
+  r.get('/v2/paper/summary', v2.paperSummary);
+  r.get('/v2/paper/settings', v2.paperSettings);
+  r.put('/v2/paper/connections/:id', v2.saveConnectionPaper);
+  r.delete('/v2/paper/connections/:id', v2.resetConnectionPaper);
+  r.get('/v2/paper/trades', v2.paperTrades);
+  r.post('/v2/paper/trades/:id/close', v2.closePaperTrade);
+  r.delete('/v2/paper/strategies/:id/trades', v2.resetPaper);
   r.get('/v2/settings', v2.settings);
   r.put('/v2/settings', v2.saveSettings);
   r.get('/v2/calendar', v2.calendar);

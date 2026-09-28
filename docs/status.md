@@ -1,6 +1,6 @@
 # Project status — known issues, limitations and pending work
 
-Snapshot as of **2026-09-27**. Use this page as the working list of what still needs verifying or doing.
+Snapshot as of **2026-09-28**. Use this page as the working list of what still needs verifying or doing.
 
 > Related: [v2-architecture.md](v2-architecture.md) · [code-notes.md](code-notes.md) · [troubleshooting.md](troubleshooting.md)
 
@@ -12,6 +12,7 @@ Snapshot as of **2026-09-27**. Use this page as the working list of what still n
 | --- | --- |
 | **V2** at `/v2` (the whole app): product-agnostic strategies (1–4 legs: Spot / Future / Call / Put, conditions between any legs, named AND/OR groups, Bollinger / RSI / ADX / MACD / Supertrend / patterns…) connected to NSE indices, NSE stocks or MCX commodities; compare a strategy across products; explain now; Telegram + email + desktop notifications ([v2-architecture.md](v2-architecture.md), [trader guide](v2-user-guide.md)) | Built and tested (fixtures + local UI checks) — **not yet verified against live Kite (product sync, candles) or real Telegram / Resend sends** |
 | **Live worker** (`npm run live`): Kite WebSocket streaming, candles built from ticks, evaluation seconds after each close, results re-checked on Kite's candles before alerting, cron scanner as backup | Built and tested (fixtures + local boot) — **not yet run against the real Kite stream** (needs market hours) |
+| **Paper trading** (on for every connection by default): alerts open simulated trades (₹10,000 each), closed by target / stop-loss / square-off / the other group / expiry, net of charges; values per strategy and per connection; Paper tab with headline figures, P&L charts, how trades closed, P&L by entry time, a sortable connection ranking, open positions and the trade log | Built and tested (fixtures + local UI checks) — **not yet run on live alerts** |
 | Settings: Kite login, theme, desktop notifications | Done |
 | V1 pages and MCX V2 | **Removed** 2026-09-27 (tables kept — [database.md § 3](database.md#3-retired-tables-left-untouched)) |
 
@@ -39,6 +40,11 @@ Snapshot as of **2026-09-27**. Use this page as the working list of what still n
 - **Kite streams at most 9,000 contracts per login**; connections beyond that are checked by the scanner.
 - **Holidays and special sessions are data**: enter them in V2 → Settings → Market calendar.
 - **Option legs have short histories**, so long Daily/Weekly indicators on CE / PE may never warm up.
+- **Paper trading is an approximation:** fills are the last traded price ± slippage (no order book); without the live
+  worker, stops and targets are checked once a minute on the latest price; futures / sold-option margin is estimated
+  (≈12 % indices, 20 % stocks, 10 % MCX), not Kite's exact SPAN + exposure; charges use Zerodha's published rates
+  (update `src/server/v2/paper/charges.ts` when they change); a late square-off (worker and scanner both off) uses the
+  last price seen.
 - **Single user**: one default user; one Telegram chat (env or V2 settings override).
 - **No automated tests** for Postgres SQL, the Kite integration or the UI.
 
@@ -48,6 +54,9 @@ Snapshot as of **2026-09-27**. Use this page as the working list of what still n
 
 | Date | Decision |
 | --- | --- |
+| 2026-09-28 | One filter bar for Alerts (active / history / signals) and Paper: strategy, period (today … custom), product, type, market, timeframe, fired group, candles, delivery, outcome, side — filtered on the server. Dev hot reloads now rebuild the API's service container (a stale container served old paper results and crashed the Paper tab) |
+| 2026-09-28 | Paper trading **on by default for every connection** (existing and new); each connection can change its own values (📄 chip) over its strategy's; the Paper tab reworked for decisions (period filter, profit factor, P&L by day / entry time, how trades closed, sortable connection ranking, stop → target bars) |
+| 2026-09-28 | Paper trading: optional per strategy (off until switched on), prefilled with ₹10,000 per trade for every strategy, +20 % / −10 %, square-off 15:20 NSE / 23:20 MCX, exit on the other group, charges + 0.5 % slippage; one position per connection and strike position; results on a dedicated Paper tab |
 | 2026-09-27 | V1 pages (Dashboard, Alerts, Strategies, Configuration, MCX) and MCX V2 removed — code, API routes, cron jobs and tests; **their database tables kept untouched**. `/` and old page URLs redirect to `/v2`; the top bar and desktop notifications now follow V2; Settings keeps the Kite login, theme and notifications |
 | 2026-09-23 | Vercel-only deployment, cron-driven evaluation; all mock data removed ("real data only") |
 | 2026-09-25 | MCX as a **dedicated tab and module**, sharing the indicator/strategy engine and alert store; NSE files kept intact where possible |

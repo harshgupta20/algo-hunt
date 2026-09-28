@@ -5,6 +5,13 @@
 import type {
   CalendarEntry,
   ConnectionConfig,
+  AlertQuery,
+  PaperOverride,
+  PaperPlan,
+  PaperQuery,
+  PaperSummary,
+  SignalQuery,
+  PaperTrade,
   StrategyDefinition,
   V2Alert,
   V2Connection,
@@ -13,16 +20,18 @@ import type {
   V2Strategy,
   ValidationIssue,
 } from '@/shared/v2';
-import { DEFAULT_TELEGRAM_BOT, hasErrors, incompatibility, strategySummary, validateConnection, validateStrategy } from '@/shared/v2';
+import { DEFAULT_TELEGRAM_BOT, defaultPaperPlan, hasErrors, resolveRules, incompatibility, strategySummary, validateConnection, validateStrategy } from '@/shared/v2';
 import { istDate } from '../utils/marketTime';
 import { envChannelFactory, recentTelegramChats, telegramBotInfo, type ChannelFactory, type ChannelName } from './alerts/notifications';
 import { getConfig } from '../config/index';
-import { calendars } from './calendar/MarketCalendar';
+import { calendars, dateStartMs } from './calendar/MarketCalendar';
 import type { Quote, V2DataProvider } from './data/DataProvider';
 import type { ProductService } from './data/ProductService';
 import { V2Tools, type CompareRequest } from './debug/tools';
 import type { ProductFilters, V2Store } from './persistence/V2Store';
 import { liveHealth } from './live/health';
+import { PaperTrader, unrealizedPnl } from './paper/PaperTrader';
+import { paperSummary } from './paper/summary';
 import { V2Scanner, type ScanOptions } from './scanner/V2Scanner';
 import { atmReference, resolveUnits, unitInstruments } from './universe/resolve';
 
@@ -53,15 +62,35 @@ export const DEFAULT_CONFIG: ConnectionConfig = {
 
 const msg = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
+/** IST calendar days (inclusive) → instants: `since` = start of `from`, `until` = start of the day after `to`. */
+function istRange(from?: string, to?: string): { since?: string; until?: string } {
+  return {
+    since: from ? new Date(dateStartMs(from)).toISOString() : undefined,
+    until: to ? new Date(dateStartMs(to) + 86_400_000).toISOString() : undefined,
+  };
+}
+
+/** Paper-trading tables not created yet: say how to fix it instead of a raw database error. */
+async function paperTables<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if ((err as { code?: string }).code === '42P01') throw new V2ServiceError(503, 'Paper trading isn’t set up in the database yet — restart `npm run dev` (or run `npm run db:migrate`) to apply the new migrations.');
+    throw err;
+  }
+}
+
 export class V2Service {
   readonly scanner: V2Scanner;
   readonly tools: V2Tools;
   private readonly channels: ChannelFactory;
+  private readonly paper: PaperTrader;
 
   constructor(private readonly deps: V2ServiceDeps) {
     this.channels = deps.channels ?? envChannelFactory;
     this.scanner = new V2Scanner({ ...deps, channels: this.channels });
     this.tools = new V2Tools(deps);
+    this.paper = new PaperTrader({ store: deps.store, now: () => this.now(), prices: (list) => deps.provider.getLtp(list) });
   }
 
   private now(): number {
@@ -362,8 +391,9 @@ export class V2Service {
 
   // ---- alerts / signals / scanner ----------------------------------------------------------
 
-  alerts(q: { connectionId?: string; strategyId?: string; active?: boolean; limit?: number }) {
-    return this.deps.store.alerts.list(q);
+  alerts(q: AlertQuery = {}) {
+    const { from, to, ...rest } = q;
+    return this.deps.store.alerts.list({ ...rest, ...istRange(from, to), limit: Math.min(q.limit ?? 200, 1000) });
   }
 
   async acknowledge(id: string): Promise<V2Alert> {
@@ -375,8 +405,9 @@ export class V2Service {
     return out!;
   }
 
-  signals(q: { connectionId?: string; strategyId?: string; limit?: number }) {
-    return this.deps.store.signals.list(q);
+  signals(q: SignalQuery = {}) {
+    const { from, to, ...rest } = q;
+    return this.deps.store.signals.list({ ...rest, ...istRange(from, to), limit: Math.min(q.limit ?? 200, 1000) });
   }
 
   scan(opts: ScanOptions = {}) {
@@ -385,6 +416,118 @@ export class V2Service {
 
   scanRuns(limit = 100) {
     return this.deps.store.scanRuns.list(Math.min(limit, 500));
+  }
+
+  // ---- paper trading -----------------------------------------------------------------------
+
+  /** The strategy's paper plan (the preferred defaults, switched on, when it has none yet), rules matched to its current groups. */
+  async paperPlan(strategyId: string): Promise<PaperPlan> {
+    return paperTables(async () => {
+      const s = await this.getStrategy(strategyId);
+      const plan = await this.deps.store.paper.getPlan(strategyId);
+      return plan ? { ...plan, rules: resolveRules(s.definition, plan.rules) } : defaultPaperPlan(s.definition);
+    });
+  }
+
+  async savePaperPlan(strategyId: string, plan: PaperPlan): Promise<PaperPlan> {
+    return paperTables(async () => {
+      const s = await this.getStrategy(strategyId);
+      return this.deps.store.paper.savePlan(strategyId, { ...plan, rules: resolveRules(s.definition, plan.rules) });
+    });
+  }
+
+  /** Results for trades entered since `from` (IST date; all when absent), optionally one strategy's. */
+  /** Results for the trades matching the filters (all when none); connections are narrowed the same way. */
+  async paperSummary(q: PaperQuery = {}): Promise<PaperSummary> {
+    return paperTables(async () => {
+      const { store } = this.deps;
+      const [raw, strategies, connections, plans, overrides] = await Promise.all([
+        store.paper.listTrades({ strategyId: q.strategyId, connectionId: q.connectionId, since: istRange(q.from).since, limit: 10_000 }),
+        store.strategies.list(),
+        store.connections.list(),
+        store.paper.listPlans(),
+        store.paper.listOverrides(),
+      ]);
+      const scope = await this.paperScope(q, strategies, [...raw.map((t) => t.productId), ...connections.map((c) => c.productId)]);
+      return paperSummary({
+        trades: raw.filter(scope.trade),
+        strategies,
+        connections: connections.filter((c) => (!q.connectionId || c.id === q.connectionId) && scope.product(c.productId, c.strategyId)),
+        plans,
+        overrides,
+        now: this.now(),
+        from: q.from ?? null,
+        strategyId: q.strategyId,
+      });
+    });
+  }
+
+  /** What a paper filter keeps: products (type, market, symbol, the strategy's timeframe) and trades (also period end, side, group). */
+  private async paperScope(q: PaperQuery, strategies: V2Strategy[], productIds: string[]) {
+    const needProducts = !!(q.kinds?.length || q.markets?.length);
+    const products = needProducts ? new Map((await this.deps.store.products.list({ ids: [...new Set(productIds)] })).map((p) => [p.id, p])) : new Map<string, V2Product>();
+    const tf = new Map(strategies.map((s) => [s.id, s.definition.evaluation.triggerTimeframe]));
+    const until = istRange(undefined, q.to).until;
+    const search = q.search?.trim().toLowerCase();
+    const product = (productId: string, strategyId: string) => {
+      const p = products.get(productId);
+      return (
+        (!q.kinds?.length || (!!p && q.kinds.includes(p.kind))) &&
+        (!q.markets?.length || (!!p && q.markets.includes(p.market))) &&
+        (!search || (productId.split(':')[1] ?? '').toLowerCase().includes(search)) &&
+        (!q.timeframes?.length || q.timeframes.includes(tf.get(strategyId)!))
+      );
+    };
+    const trade = (t: PaperTrade) =>
+      product(t.productId, t.strategyId) && (!until || t.entryAt < until) && (!q.sides?.length || q.sides.includes(t.side)) && (!q.groups?.length || (t.group !== null && q.groups.includes(t.group)));
+    return { product, trade };
+  }
+
+  /** Every strategy's paper plan (defaults where none is saved) and every connection's own values — for the settings chips. */
+  async paperSettings(): Promise<{ plans: Record<string, PaperPlan>; overrides: Record<string, PaperOverride> }> {
+    return paperTables(async () => {
+      const { store } = this.deps;
+      const [strategies, plans, overrides] = await Promise.all([store.strategies.list(), store.paper.listPlans(), store.paper.listOverrides()]);
+      const saved = new Map(plans.map((p) => [p.strategyId, p.plan]));
+      return {
+        plans: Object.fromEntries(strategies.map((s) => [s.id, saved.get(s.id) ? { ...saved.get(s.id)!, rules: resolveRules(s.definition, saved.get(s.id)!.rules) } : defaultPaperPlan(s.definition)])),
+        overrides: Object.fromEntries(overrides.map((o) => [o.connectionId, o.override])),
+      };
+    });
+  }
+
+  /** A connection's own paper values (empty = follow the strategy). */
+  async saveConnectionPaper(connectionId: string, override: PaperOverride): Promise<{ override: PaperOverride | null }> {
+    return paperTables(async () => {
+      await this.getConnection(connectionId);
+      const clean = Object.fromEntries(Object.entries(override).filter(([, v]) => v !== undefined)) as PaperOverride;
+      return { override: await this.deps.store.paper.saveOverride(connectionId, clean) };
+    });
+  }
+
+  async paperTrades(q: PaperQuery = {}): Promise<PaperTrade[]> {
+    return paperTables(async () => {
+      const limit = Math.min(q.limit ?? 500, 5_000);
+      const filtered = !!(q.kinds?.length || q.markets?.length || q.search?.trim() || q.timeframes?.length || q.to || q.sides?.length || q.groups?.length);
+      const list = await this.deps.store.paper.listTrades({ status: q.status, strategyId: q.strategyId, connectionId: q.connectionId, since: istRange(q.from).since, limit: filtered ? 10_000 : limit });
+      const scope = filtered ? await this.paperScope(q, await this.deps.store.strategies.list(), list.map((t) => t.productId)) : null;
+      return (scope ? list.filter(scope.trade) : list).slice(0, limit).map((t) => (t.status === 'OPEN' ? { ...t, openPnl: unrealizedPnl(t) } : t));
+    });
+  }
+
+  async closePaperTrade(id: string): Promise<PaperTrade> {
+    return paperTables(async () => {
+      const t = await this.paper.closeManual(id);
+      if (!t) throw new V2ServiceError(404, 'No open paper trade with that id (it may have closed already)');
+      return t;
+    });
+  }
+
+  async resetPaper(strategyId: string): Promise<{ deleted: number }> {
+    return paperTables(async () => {
+      await this.getStrategy(strategyId);
+      return { deleted: await this.deps.store.paper.reset(strategyId) };
+    });
   }
 
   // ---- settings / calendar / channels ------------------------------------------------------

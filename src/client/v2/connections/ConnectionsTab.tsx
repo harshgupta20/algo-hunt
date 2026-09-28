@@ -2,14 +2,14 @@
 
 /**
  * Connections: strategy + product(s) → alerts. Create several at once, then
- * switch each on / off, explain it, change its settings or remove it.
+ * switch each on / off, explain it, change its settings (and its own paper-trading values) or remove it.
  */
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Link2, Pencil, PlayCircle, Plus, Power, PowerOff, RefreshCw, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
-import type { ConnectionConfig, StrategyDefinition, V2Strategy } from '@/shared/v2';
-import { TIMEFRAME, candleRequestsPerProduct, expiryText, legName, policyText } from '@/shared/v2';
+import type { ConnectionConfig, PaperOverride, PaperPlan, StrategyDefinition, V2Strategy } from '@/shared/v2';
+import { TIMEFRAME, candleRequestsPerProduct, defaultPaperPlan, effectivePlan, expiryText, legName, paperGroups, policyText } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { Badge, Card, EmptyState, IconButton, Spinner } from '../../components/ui';
 import { V2ApiError, v2Api, type ConnectionRow, type ExplainResult } from '../api';
@@ -19,6 +19,7 @@ import { fmtNum, istStampIso } from '../format';
 import { H } from '../help';
 import { ProductPicker } from '../ProductPicker';
 import { ConfigEditor } from './ConfigEditor';
+import { PaperChip, PaperConnectionEditor, paperBrief } from '../paper/PaperFields';
 import { InlineSpinner, SkeletonCards, SkeletonRows } from '../../components/loaders';
 
 export const DEFAULT_CONFIG: ConnectionConfig = {
@@ -200,9 +201,14 @@ function NewConnection({
   );
 }
 
-function ConnectionRowView({ c, definition }: { c: ConnectionRow; definition?: StrategyDefinition }) {
+interface PaperSettings {
+  plans: Record<string, PaperPlan>;
+  overrides: Record<string, PaperOverride>;
+}
+
+function ConnectionRowView({ c, definition, paper }: { c: ConnectionRow; definition?: StrategyDefinition; paper?: PaperSettings }) {
   const qc = useQueryClient();
-  const [panel, setPanel] = useState<'units' | 'explain' | 'edit' | null>(null);
+  const [panel, setPanel] = useState<'units' | 'explain' | 'edit' | 'paper' | null>(null);
   const [explain, setExplain] = useState<ExplainResult | null>(null);
   const [config, setConfig] = useState(c.config);
   const [error, setError] = useState<V2ApiError | null>(null);
@@ -220,6 +226,9 @@ function ConnectionRowView({ c, definition }: { c: ConnectionRow; definition?: S
   const p = c.product;
   const btn = 'p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-ink-800';
   const hasOptions = definition?.legs.some((l) => l.kind === 'CE' || l.kind === 'PE');
+  const strategyPlan = paper?.plans[c.strategyId] ?? (definition ? defaultPaperPlan(definition) : undefined);
+  const override = paper?.overrides[c.id];
+  const eff = strategyPlan ? effectivePlan(strategyPlan, override) : undefined;
 
   return (
     <div className="px-4 py-3">
@@ -234,6 +243,7 @@ function ConnectionRowView({ c, definition }: { c: ConnectionRow; definition?: S
           {hasOptions && c.config.strikeShifts.length > 1 ? ` · ${c.config.strikeShifts.length} strike positions` : ''} · {policyText(c.config.alert)}
           {c.enabled && c.enabledAt && <> · on since {istStampIso(c.enabledAt)}</>}
         </span>
+        {eff && <PaperChip enabled={eff.enabled} brief={paperBrief(eff)} custom={!!override && Object.keys(override).length > 0} onClick={() => setPanel(panel === 'paper' ? null : 'paper')} active={panel === 'paper'} />}
         <Tooltip content={c.enabled ? H.connection.disable : H.connection.enable}>
           <button type="button" className={clsx('btn py-1 text-xs', c.enabled ? 'btn-ghost' : 'btn-primary')} disabled={toggle.isPending} onClick={() => toggle.mutate()}>
             {toggle.isPending ? <InlineSpinner className="w-3.5 h-3.5" /> : c.enabled ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
@@ -281,6 +291,19 @@ function ConnectionRowView({ c, definition }: { c: ConnectionRow; definition?: S
               Cancel
             </button>
           </div>
+        </div>
+      )}
+      {panel === 'paper' && strategyPlan && definition && (
+        <div className="mt-3">
+          <PaperConnectionEditor
+            key={JSON.stringify(override ?? {})}
+            connectionId={c.id}
+            label={`${p?.symbol ?? c.productId} · ${c.strategyName}`}
+            strategyPlan={strategyPlan}
+            override={override}
+            hasGroups={paperGroups(definition).length > 0}
+            onClose={() => setPanel(null)}
+          />
         </div>
       )}
       {panel === 'units' && (
@@ -332,7 +355,7 @@ const COLLAPSED_KEY = 'algo-hunt.connections.collapsed';
 const symbolOf = (c: ConnectionRow) => c.product?.symbol ?? c.productId.split(':')[1] ?? c.productId;
 
 /** One strategy's connections: minimize / expand, and switch them all on or off at once. */
-function StrategyGroup({ s, rows, collapsed, onToggle }: { s: V2Strategy; rows: ConnectionRow[]; collapsed: boolean; onToggle: () => void }) {
+function StrategyGroup({ s, rows, collapsed, onToggle, paper }: { s: V2Strategy; rows: ConnectionRow[]; collapsed: boolean; onToggle: () => void; paper?: PaperSettings }) {
   const qc = useQueryClient();
   const [confirmOff, setConfirmOff] = useState(false);
   const [result, setResult] = useState<{ text: string; warn: boolean; details?: string } | null>(null);
@@ -446,7 +469,7 @@ function StrategyGroup({ s, rows, collapsed, onToggle }: { s: V2Strategy; rows: 
       {!collapsed && (
         <div className="divide-y divide-ink-700/50">
           {rows.map((c) => (
-            <ConnectionRowView key={c.id} c={c} definition={s.definition} />
+            <ConnectionRowView key={c.id} c={c} definition={s.definition} paper={paper} />
           ))}
         </div>
       )}
@@ -457,6 +480,7 @@ function StrategyGroup({ s, rows, collapsed, onToggle }: { s: V2Strategy; rows: 
 export function ConnectionsTab({ initialStrategyId }: { initialStrategyId?: string }) {
   const strategies = useQuery({ queryKey: ['v2-strategies'], queryFn: v2Api.strategies });
   const connections = useQuery({ queryKey: ['v2-connections'], queryFn: () => v2Api.connections(), refetchInterval: 60_000 });
+  const paper = useQuery({ queryKey: ['v2-paper-settings'], queryFn: v2Api.paperSettings, staleTime: 30_000 });
   const [strategyId, setStrategyId] = useState(initialStrategyId ?? '');
   const [showNew, setShowNew] = useState(Boolean(initialStrategyId));
   useEffect(() => {
@@ -523,7 +547,7 @@ export function ConnectionsTab({ initialStrategyId }: { initialStrategyId?: stri
         />}
       {byStrategy.length === 0 && !!strategies.data?.length && <EmptyState title="No connections yet" hint="Connect a strategy to one or more products to start getting alerts." />}
       {byStrategy.map(({ s, rows }) => (
-        <StrategyGroup key={s.id} s={s} rows={rows} collapsed={collapsed.has(s.id)} onToggle={() => toggle(s.id)} />
+        <StrategyGroup key={s.id} s={s} rows={rows} collapsed={collapsed.has(s.id)} onToggle={() => toggle(s.id)} paper={paper.data} />
       ))}
     </div>
   );

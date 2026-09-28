@@ -115,6 +115,68 @@ The first time, run `npm run live -- --check`. It connects to Kite, prints a few
 - **Alerts tab:** active alerts (✓ to acknowledge), the full history, and every signal including suppressed ones with the reason. Expand an alert to see why it fired.
 - **Telegram / email messages** list the product, strike, each leg's contract and price, and every condition with its values.
 
+## Filters (Alerts and Paper tabs)
+
+One filter bar on both tabs, remembered in your browser (separately for each tab):
+
+- **Strategy**, **period** (Today · Yesterday · 7 days · 30 days · All · Custom dates, IST) and **product** search
+  (symbol contains, e.g. NIFTY).
+- **Filters** row — click chips to narrow (several in a row combine, none = all): **Type** (Index / Stock /
+  Commodity), **Market** (NSE / BSE, MCX), **Timeframe** (the strategies' trigger candles), **Group** (the top-level
+  group that fired, e.g. Bullish / Bearish). Alerts also offer **Candles** (Verified / Kite candles / Live candle /
+  Not verified) and **Delivery** (Sent / Partial / Failed / Acknowledged); Signals offer **Outcome**; Paper offers
+  **Side** (Buy / Sell).
+- **Clear** resets everything; the count at the right shows how many records match. Alerts list the newest 500 that
+  match — narrow the period to see older ones. On the Paper tab the period applies to the results and the trade log;
+  open positions are always shown (other filters still apply).
+
+## 5. Paper trading (on for every connection)
+
+See what your alerts would have made — nothing is ever sent to your broker. Every alert of every switched-on
+connection opens a paper trade automatically, with these defaults: **₹10,000 per trade**, target **+20 %**, stop-loss
+**−10 %**, intraday square-off **15:20** (NSE / BSE) and **23:20** (MCX), exit when the other group fires, charges and
+**0.5 %** slippage on.
+
+**Changing the values**
+
+- **For a whole strategy:** open it (Strategies → ✎) → **4 · Paper trading**. These are the defaults all its
+  connections use, plus **what to trade**: one row per top-level group (a strategy whose top level is OR — e.g.
+  Bullish / Bearish), or one for the whole strategy — the leg (by default the group's option leg, else its future)
+  and **Buy** or **Sell**. "Don't trade" turns a group into an exit signal only. Untick the box to stop paper trading
+  the strategy. Changing only the paper settings doesn't create a new strategy version.
+- **For one connection:** click its **📄 chip** (Connections tab, or the ranking on the Paper tab) — e.g.
+  `📄 ₹10,000 · +20/−10%`. Change cash, target, stop-loss, square-off, slippage or charges, or switch paper trading
+  off for that connection only. Values that differ from the strategy's are highlighted **own** (click ↺ to go back);
+  **Use strategy's settings** forgets them all. The chip is marked **OWN** when a connection has its own values.
+
+**How trades work**
+
+- **Size:** as many whole lots as the cash per trade covers — at least one lot, flagged **over budget** when one lot
+  costs more. Bought options and stocks count the premium / price; futures and sold options count an estimated
+  margin (≈12 % of the contract value for indices, 20 % stocks, 10 % MCX).
+- **One position per connection and strike position.** The same group firing again keeps it; the other group firing
+  closes it (if "Exit when another group fires" is on) and opens its own.
+- **Closes** at the target (at the target price), the stop-loss (at the price that crossed it, with slippage — if
+  both are reached at once the stop counts), the daily square-off, or the contract's expiry (square-off off). No new
+  trades after the square-off time or while the market is closed. An index Spot leg can't be traded.
+- The alert message gets a line such as `📄 Paper: BUY 1 lot (75) NIFTY…25000CE @ ₹100.50 · target ₹120.60 · stop ₹90.45`.
+- With the live worker running, targets and stop-losses are checked on every tick; without it, the per-minute scanner
+  checks them on the latest price once a minute.
+
+**The Paper tab** — narrow it with the filter bar (strategy, period, type, market, product, timeframe, group, side):
+
+- **Headline:** net P&L (and today's), return on the **money needed** (the most money in use at once), win rate,
+  **profit factor** (money won ÷ money lost — above 1 pays, 1.5+ is solid), average trade, max drawdown.
+- **Profit & loss:** the cumulative curve, or **By day** bars. **How trades closed** (target / stop-loss / square-off /
+  other group / expiry, with the P&L of each) and **P&L by entry time** (which hours of the day work).
+- **Connections ranked** (or **Strategies**): every switched-on connection with its trend, trades, win rate, profit
+  factor, average trade, net P&L, return and drawdown — click a column title to sort. "few" marks fewer than 10
+  trades (too few to judge). The 📄 chip edits that connection's values right there.
+- **Open positions** at the latest price, with a **stop → target** bar showing where each one stands; **Close**
+  closes one now.
+- **Trade log:** all / winners / losers, **CSV** download. In the Strategies view, ✎ opens a strategy's paper
+  settings and 🗑 deletes its paper trades to start over.
+
 ## Good to know
 
 - **Scanning:** with the live worker running, connections are checked seconds after each candle closes. Without it, they're checked every minute during market hours (NSE/BSE 09:15–15:30; MCX 09:00–23:30 or 23:55), and also while V2 is open in a browser.

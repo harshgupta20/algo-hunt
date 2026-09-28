@@ -16,10 +16,11 @@
  *   plan      contracts to stream: legs at the current ATM + nearby strikes (every 60 s)
  *   candles   close finished minutes
  *   evaluate  connections whose trigger candle just closed (live-candle mode: every minute)
+ *   paper     open paper trades: stop / target on every tick; square-off, expiry and prices (every 10 s)
  *   status    heartbeat row for the app and the backup scanner (every 5 s)
  */
 import { randomUUID } from 'node:crypto';
-import type { LiveCandleStat, LiveState, LiveStatus, Market, UnitEvaluation, UnitState, V2Instrument, V2Settings } from '@/shared/v2';
+import type { LiveCandleStat, LiveState, LiveStatus, Market, PaperTrade, UnitEvaluation, UnitState, V2Instrument, V2Settings } from '@/shared/v2';
 import { TIMEFRAME, marketOfExchange } from '@/shared/v2';
 import { IST_OFFSET_MS, istDate } from '../../utils/marketTime';
 import { childLogger } from '../../utils/logger';
@@ -33,7 +34,8 @@ import { buildSeries } from '../engine/candles';
 import { evaluateUnit, type SeriesLookup, type SeriesResult, type UnitEvalInput } from '../engine/evaluator';
 import { seriesKey, seriesOf } from '../engine/series';
 import type { V2Store } from '../persistence/V2Store';
-import { commitUnit, previousResult, type Clock, type CommitStats, type UnitTarget } from '../scanner/commit';
+import { PaperTrader, paperHit } from '../paper/PaperTrader';
+import { commitUnit, previousResult, type Clock, type CommitDeps, type CommitStats, type UnitTarget } from '../scanner/commit';
 import { clockFor } from '../scanner/V2Scanner';
 import { resolveUnits } from '../universe/resolve';
 import { FetchQueue } from './FetchQueue';
@@ -41,6 +43,7 @@ import { LIVE_STALE_MS } from './health';
 import { LiveCandles, MINUTE_GRACE_MS } from './LiveCandles';
 import type { StreamCredentials, StreamEvents, TickStream } from './KiteStream';
 import { BUFFER_STRIKES, LIVE_CAPACITY, planSubscriptions, type PlanConnection, type SubscriptionPlan } from './plan';
+import type { Tick } from './ticks';
 import { checkReason, type CheckReason } from './verify';
 
 const log = childLogger('v2-live');
@@ -60,6 +63,7 @@ const SESSION_EVERY_MS = 30_000;
 const CONTEXT_EVERY_MS = 15_000;
 const PLAN_EVERY_MS = 60_000;
 const STATUS_EVERY_MS = 5_000;
+const PAPER_EVERY_MS = 10_000;
 const DOWN_WARN_MS = 60_000;
 /** Morning instrument sync (Kite republishes contracts daily; new weeklies appear overnight). */
 const MORNING_SYNC_MIN = 8 * 60 + 15;
@@ -147,6 +151,11 @@ export class LiveWorker {
   private readonly processed = new Map<string, number>();
   private readonly inflight = new Map<string, Promise<void>>();
   private readonly tasks = new Set<Promise<void>>();
+  private readonly paper: PaperTrader;
+  /** Open paper trades by contract token (checked on every tick). */
+  private paperOpen = new Map<number, PaperTrade[]>();
+  private readonly paperClosing = new Set<string>();
+  private paperAt = -Infinity;
 
   private state: LiveState = 'STARTING';
   private detail = 'Starting';
@@ -170,6 +179,7 @@ export class LiveWorker {
     this.now = deps.clock ?? Date.now;
     this.sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.candles = new LiveCandles(calendars([]));
+    this.paper = new PaperTrader({ store: deps.store, now: this.now, prices: (list) => this.pricesFor(list) });
   }
 
   // ---- lifecycle ---------------------------------------------------------------------------
@@ -221,6 +231,7 @@ export class LiveWorker {
   readonly events: StreamEvents = {
     ticks: (ticks, receivedAt) => {
       for (const t of ticks) this.candles.ingest(t, receivedAt);
+      if (this.paperOpen.size) this.paperTicks(ticks);
       this.tickCount += ticks.length;
       this.lastTickAt = receivedAt;
       for (const t of ticks) {
@@ -253,6 +264,7 @@ export class LiveWorker {
       return;
     }
     await this.morningSync(now);
+    if (now - this.paperAt >= PAPER_EVERY_MS) await this.paperStep(now);
     if (now - this.planAt >= PLAN_EVERY_MS) await this.replan(now);
     this.candles.finalize(now);
     await this.evaluateDue(now);
@@ -367,9 +379,12 @@ export class LiveWorker {
         this.error(`Prices for ATM failed: ${msg(err)}`);
       }
     }
-    for (const p of plan.instruments.values()) this.candles.track(p.instrument.token, marketOfExchange(p.instrument.exchange), isIndexToken(p.instrument.token));
-    for (const t of this.candles.tokens()) if (!plan.instruments.has(t)) this.candles.untrack(t);
-    this.deps.stream.setTokens([...plan.instruments.keys()]);
+    // Open paper trades keep streaming even after the ATM moves away from their strike.
+    const paper = [...this.paperOpen.values()].map((l) => l[0]!.instrument).filter((i) => !plan.instruments.has(i.token));
+    for (const i of [...[...plan.instruments.values()].map((p) => p.instrument), ...paper]) this.candles.track(i.token, marketOfExchange(i.exchange), isIndexToken(i.token));
+    const keep = new Set([...plan.instruments.keys(), ...paper.map((i) => i.token)]);
+    for (const t of this.candles.tokens()) if (!keep.has(t)) this.candles.untrack(t);
+    this.deps.stream.setTokens([...keep]);
     this.plan = plan;
     this.covered = new Set(plan.covered);
     // History: contracts in use first, nearby strikes after.
@@ -645,8 +660,79 @@ export class LiveWorker {
     this.today.alerts += stats.alerts;
   }
 
-  private commitDeps() {
-    return { store: this.deps.store, channels: this.deps.channels, now: this.now };
+  private commitDeps(): CommitDeps {
+    return {
+      store: this.deps.store,
+      channels: this.deps.channels,
+      now: this.now,
+      onAlert: async (a) => {
+        const line = await this.paper.onAlert({ ...a, cal: this.ctx!.cals[a.product.market] });
+        if (line) this.paperAt = -Infinity; // watch the new trade from the next step
+        return line;
+      },
+    };
+  }
+
+  // ---- paper trading -----------------------------------------------------------------------
+
+  /** Streamed prices first; contracts without one from Kite's LTP. */
+  private async pricesFor(list: V2Instrument[]): Promise<Map<number, number>> {
+    const out = new Map<number, number>();
+    const missing: V2Instrument[] = [];
+    for (const i of list) {
+      const p = this.candles.lastPrice(i.token);
+      if (p !== undefined) out.set(i.token, p);
+      else missing.push(i);
+    }
+    if (missing.length) {
+      try {
+        for (const [t, p] of await this.deps.provider.getLtp(missing)) out.set(t, p);
+      } catch (err) {
+        this.error(`Paper trading prices failed: ${msg(err)}`);
+      }
+    }
+    return out;
+  }
+
+  /** Square-off / expiry deadlines and fresh prices; refreshes the contracts watched tick by tick. */
+  private async paperStep(now: number): Promise<void> {
+    this.paperAt = now;
+    try {
+      const { open, closed } = await this.paper.monitor(this.ctx!.cals);
+      const next = new Map<number, PaperTrade[]>();
+      for (const t of open) next.set(t.instrument.token, [...(next.get(t.instrument.token) ?? []), t]);
+      const streamed = new Set(this.candles.tokens());
+      this.paperOpen = next;
+      if ([...next.keys()].some((t) => !streamed.has(t))) this.planAt = -Infinity;
+      if (closed.length) log.info({ closed: closed.map((t) => `${t.instrument.symbol} ${t.exitReason}`) }, 'paper trades closed');
+    } catch (err) {
+      this.error(`Checking paper trades failed: ${msg(err)}`);
+    }
+  }
+
+  /** Stop-loss / target on each tick of a contract with an open paper trade. */
+  private paperTicks(ticks: Tick[]): void {
+    for (const tick of ticks) {
+      const list = this.paperOpen.get(tick.token);
+      if (!list) continue;
+      for (const trade of list) {
+        if (this.paperClosing.has(trade.id)) continue;
+        const hit = paperHit(trade, tick.price);
+        if (!hit) continue;
+        this.paperClosing.add(trade.id);
+        this.track(
+          this.paper
+            .close(trade, tick.price, hit)
+            .then(() => {
+              const rest = (this.paperOpen.get(tick.token) ?? []).filter((t) => t.id !== trade.id);
+              if (rest.length) this.paperOpen.set(tick.token, rest);
+              else this.paperOpen.delete(tick.token);
+            })
+            .catch((err) => this.error(`Closing paper trade ${trade.instrument.symbol} failed: ${msg(err)}`))
+            .finally(() => this.paperClosing.delete(trade.id)),
+        );
+      }
+    }
   }
 
   private async sleepUntil(t: number): Promise<void> {

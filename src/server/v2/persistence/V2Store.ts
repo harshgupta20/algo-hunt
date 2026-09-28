@@ -4,10 +4,18 @@
  * an in-memory fake with the same dedupe semantics.
  */
 import type {
+  AlertStatus,
   CalendarEntry,
   ConnectionConfig,
+  EvaluationSource,
+  Market,
+  SignalOutcome,
+  Timeframe,
   LegKind,
   LiveStatus,
+  PaperOverride,
+  PaperPlan,
+  PaperTrade,
   ProductKind,
   Delivery,
   ScanRun,
@@ -23,11 +31,28 @@ import type {
   V2StrategyVersion,
 } from '@/shared/v2';
 
-export interface AlertFilters {
+/** Filters shared by alerts and signals (times as ISO instants; `groups` = ids of the top-level groups that fired). */
+export interface RecordStoreFilters {
   connectionId?: string;
   strategyId?: string;
-  active?: boolean;
+  kinds?: ProductKind[];
+  markets?: Market[];
+  search?: string;
+  timeframes?: Timeframe[];
+  since?: string;
+  until?: string;
+  groups?: string[];
   limit?: number;
+}
+
+export interface AlertFilters extends RecordStoreFilters {
+  active?: boolean;
+  statuses?: AlertStatus[];
+  sources?: EvaluationSource[];
+}
+
+export interface SignalFilters extends RecordStoreFilters {
+  outcomes?: SignalOutcome[];
 }
 
 export interface ProductFilters {
@@ -93,7 +118,7 @@ export interface V2Store {
   signals: {
     /** Returns null when a signal with the same identity already exists (dedupe). */
     insert(signal: Omit<V2Signal, 'id' | 'createdAt'>): Promise<V2Signal | null>;
-    list(f: { connectionId?: string; strategyId?: string; limit?: number }): Promise<V2Signal[]>;
+    list(f: SignalFilters): Promise<V2Signal[]>;
   };
   alerts: {
     insert(alert: Omit<V2Alert, 'id' | 'createdAt' | 'deliveries' | 'acknowledgedAt'>): Promise<V2Alert>;
@@ -115,6 +140,28 @@ export interface V2Store {
   locks: {
     acquire(name: string, leaseSeconds: number, minIntervalSeconds: number): Promise<boolean>;
     release(name: string): Promise<void>;
+  };
+  /** Paper trading: a plan per strategy + the simulated trades its alerts open. */
+  paper: {
+    getPlan(strategyId: string): Promise<PaperPlan | null>;
+    savePlan(strategyId: string, plan: PaperPlan): Promise<PaperPlan>;
+    listPlans(): Promise<Array<{ strategyId: string; plan: PaperPlan }>>;
+    /** Null when the slot already has an open trade. */
+    insertTrade(t: Omit<PaperTrade, 'id'>): Promise<PaperTrade | null>;
+    openFor(connectionId: string, slot: string): Promise<PaperTrade | null>;
+    listOpen(): Promise<PaperTrade[]>;
+    /** Close a trade that is still open; null when it was already closed (another process got there first). */
+    closeTrade(id: string, patch: Pick<PaperTrade, 'exitAt' | 'exitPrice' | 'exitReason' | 'grossPnl' | 'charges' | 'netPnl' | 'lastPrice' | 'lastPriceAt'>): Promise<PaperTrade | null>;
+    updateMarks(marks: Array<{ id: string; lastPrice: number; at: string }>): Promise<void>;
+    /** Newest first; `since` = entered at or after (ISO). */
+    listTrades(f: { status?: 'OPEN' | 'CLOSED'; strategyId?: string; connectionId?: string; since?: string; limit?: number }): Promise<PaperTrade[]>;
+    /** A connection's own values over its strategy's plan (null = none). */
+    getOverride(connectionId: string): Promise<PaperOverride | null>;
+    /** Save a connection's own values; an empty override removes them. */
+    saveOverride(connectionId: string, override: PaperOverride): Promise<PaperOverride | null>;
+    listOverrides(): Promise<Array<{ connectionId: string; override: PaperOverride }>>;
+    /** Delete a strategy's paper trades (start over). */
+    reset(strategyId: string): Promise<number>;
   };
   /** Live worker heartbeat / status (single row). */
   live: {

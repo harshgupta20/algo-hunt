@@ -4,3 +4,5 @@ export * from './catalog';
 export * from './schema';
 export * from './validate';
 export * from './text';
+export * from './paper';
+export * from './filters';

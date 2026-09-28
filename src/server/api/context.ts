@@ -1,7 +1,9 @@
 /**
  * Dependency container for route handlers — the ONLY place the services are
- * wired together. Built lazily once per serverless instance (and cached on
- * globalThis so dev hot-reloads don't leak pools), keeping the API layer thin.
+ * wired together. Built lazily once per serverless instance and cached on
+ * globalThis, keeping the API layer thin. A dev hot reload re-evaluates this
+ * module (it imports every service), so the container is rebuilt with the new
+ * code; the Postgres pool has its own globalThis cache and is reused.
  */
 import { PgAppStore, type AppStore } from '../db/appStore';
 import { KiteAuthService } from '../services/kite/kiteAuth';
@@ -24,9 +26,14 @@ function build(): AppContext {
   return { store, kiteAuth, v2 };
 }
 
-const globalForCtx = globalThis as unknown as { __ashContext?: AppContext };
+/** New on every evaluation of this module — i.e. after a dev hot reload of any service it wires. */
+const BUILD = Symbol('app-context');
+const globalForCtx = globalThis as unknown as { __ashContext?: AppContext; __ashContextBuild?: symbol };
 
 export function getContext(): AppContext {
-  globalForCtx.__ashContext ??= build();
+  if (!globalForCtx.__ashContext || globalForCtx.__ashContextBuild !== BUILD) {
+    globalForCtx.__ashContext = build();
+    globalForCtx.__ashContextBuild = BUILD;
+  }
   return globalForCtx.__ashContext;
 }

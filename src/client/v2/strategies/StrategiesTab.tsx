@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BarChart3, Copy, Link2, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
 import type { StrategyDefinition, V2Strategy } from '@/shared/v2';
@@ -13,9 +13,14 @@ import { istStampIso } from '../format';
 import { H } from '../help';
 import { blankStrategy, exampleStrategies } from './defaults';
 import { StrategyEditor } from './StrategyEditor';
+import { pnlClass, signedInr } from '../paper/money';
 import { SkeletonCards } from '../../components/loaders';
 
-function StrategyCard({ s, onEdit, onGo }: { s: StrategyRow; onEdit: () => void; onGo: (tab: 'connections' | 'compare', id: string) => void }) {
+type GoTab = 'connections' | 'compare' | 'paper';
+
+type PaperBrief = { enabled: boolean; netPnl: number; trades: number; open: number } | undefined;
+
+function StrategyCard({ s, paper, onEdit, onGo }: { s: StrategyRow; paper: PaperBrief; onEdit: () => void; onGo: (tab: GoTab, id: string) => void }) {
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: ['v2-strategies'] });
   const duplicate = useMutation({ mutationFn: () => v2Api.duplicateStrategy(s.id), onSuccess: refresh });
@@ -36,6 +41,19 @@ function StrategyCard({ s, onEdit, onGo }: { s: StrategyRow; onEdit: () => void;
                 {s.enabledConnections}/{s.connections} connected on
               </Badge>
             </Tooltip>
+            {paper && !paper.enabled && (
+              <Tooltip content={H.paper.planOff}>
+                <Badge tone="warn">paper off</Badge>
+              </Tooltip>
+            )}
+            {paper && paper.enabled && (
+              <Tooltip content={{ ...H.paper.net, note: `${paper.trades} closed · ${paper.open} open paper trade(s) of this strategy, all time. Click for the Paper tab.` }}>
+                <button type="button" onClick={() => onGo('paper', s.id)} className="inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-850 px-2 py-0.5 text-xs tabular-nums hover:border-accent/40">
+                  <span aria-hidden>📄</span>
+                  {paper.trades ? <span className={pnlClass(paper.netPnl)}>{signedInr(paper.netPnl)}</span> : <span className="text-slate-400">no trades yet</span>}
+                </button>
+              </Tooltip>
+            )}
           </div>
           {d.description && <p className="text-xs text-slate-400 mt-0.5">{d.description}</p>}
           <div className="flex flex-wrap items-center gap-3 mt-1.5">
@@ -80,9 +98,20 @@ function StrategyCard({ s, onEdit, onGo }: { s: StrategyRow; onEdit: () => void;
   );
 }
 
-export function StrategiesTab({ onGo }: { onGo: (tab: 'connections' | 'compare', strategyId: string) => void }) {
+export function StrategiesTab({ onGo, editId }: { onGo: (tab: GoTab, strategyId: string) => void; editId?: string }) {
   const [editing, setEditing] = useState<{ strategy?: V2Strategy; initial: StrategyDefinition } | null>(null);
   const strategies = useQuery({ queryKey: ['v2-strategies'], queryFn: v2Api.strategies });
+  const paper = useQuery({ queryKey: ['v2-paper', 'summary', undefined], queryFn: () => v2Api.paperSummary() });
+  const briefs = new Map(paper.data?.strategies.map((x) => [x.strategyId, { enabled: x.enabled, netPnl: x.stats.netPnl, trades: x.stats.trades, open: x.stats.open }]));
+  // Opened with ?strategy=<id> (e.g. from the Paper tab): straight into its editor, once.
+  const opened = useRef(false);
+  useEffect(() => {
+    const s = editId && strategies.data?.find((x) => x.id === editId);
+    if (s && !opened.current) {
+      opened.current = true;
+      setEditing({ strategy: s, initial: s.definition });
+    }
+  }, [editId, strategies.data]);
 
   if (editing) return <StrategyEditor strategy={editing.strategy} initial={editing.initial} onClose={() => setEditing(null)} />;
 
@@ -105,7 +134,7 @@ export function StrategiesTab({ onGo }: { onGo: (tab: 'connections' | 'compare',
       {strategies.isLoading && <SkeletonCards count={3} />}
       {strategies.error && <p className="text-sm text-bear">{(strategies.error as Error).message}</p>}
       {strategies.data?.length === 0 && <EmptyState title="No strategies yet" hint="Create one — or start from an example above. Products are connected afterwards." />}
-      {strategies.data?.map((s) => <StrategyCard key={s.id} s={s} onEdit={() => setEditing({ strategy: s, initial: s.definition })} onGo={onGo} />)}
+      {strategies.data?.map((s) => <StrategyCard key={s.id} s={s} paper={briefs.get(s.id)} onEdit={() => setEditing({ strategy: s, initial: s.definition })} onGo={onGo} />)}
     </div>
   );
 }

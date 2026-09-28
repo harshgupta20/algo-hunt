@@ -12,6 +12,9 @@ import type {
   ScanRun,
   StrategyDefinition,
   LiveStatus,
+  PaperOverride,
+  PaperPlan,
+  PaperTrade,
   UnitState,
   V2Alert,
   V2Connection,
@@ -23,7 +26,7 @@ import type {
 } from '@/shared/v2';
 import { settingsFromStored } from '@/shared/v2';
 import { getPool } from '../../db/pool';
-import type { AlertFilters, ProductFilters, V2Store } from './V2Store';
+import type { AlertFilters, ProductFilters, RecordStoreFilters, SignalFilters, V2Store } from './V2Store';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -104,6 +107,37 @@ function mapSignal(r: any): V2Signal {
     evaluation: r.evaluation,
     createdAt: iso(r.created_at)!,
   };
+}
+
+/** WHERE clauses for the filters alerts and signals share (`product` = the SQL expression of the product id). */
+function recordWhere(f: RecordStoreFilters, product: string, where: string[], vals: unknown[]): void {
+  const add = (v: unknown, clause: (n: string) => string) => {
+    vals.push(v);
+    where.push(clause(`$${vals.length}`));
+  };
+  if (f.connectionId) add(f.connectionId, (n) => `connection_id = ${n}`);
+  if (f.strategyId) add(f.strategyId, (n) => `strategy_id = ${n}`);
+  if (f.kinds?.length) add(f.kinds, (n) => `${product} IN (SELECT id FROM v2_products WHERE kind = ANY(${n}::text[]))`);
+  if (f.markets?.length) add(f.markets, (n) => `${product} IN (SELECT id FROM v2_products WHERE market = ANY(${n}::text[]))`);
+  if (f.search?.trim()) add(`%${f.search.trim().replace(/[%_\\]/g, '')}%`, (n) => `split_part(${product}, ':', 2) ILIKE ${n}`);
+  if (f.timeframes?.length) add(f.timeframes, (n) => `trigger_timeframe = ANY(${n}::text[])`);
+  if (f.since) add(f.since, (n) => `created_at >= ${n}`);
+  if (f.until) add(f.until, (n) => `created_at < ${n}`);
+  if (f.groups?.length) {
+    add(f.groups, (n) => `EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(evaluation->'trace'->'children', '[]'::jsonb)) g WHERE g->>'result' = 'TRUE' AND g->>'id' = ANY(${n}::text[]))`);
+  }
+}
+
+/** A table that a pending migration creates: answer `fallback` instead of failing. */
+const noTable =
+  <T>(fallback: T) =>
+  (err: unknown): T => {
+    if ((err as { code?: string }).code === '42P01') return fallback;
+    throw err;
+  };
+
+function mapPaperTrade(r: any): PaperTrade {
+  return { ...(r.trade as PaperTrade), id: r.id };
 }
 
 function mapAlert(r: any, deliveries: Delivery[]): V2Alert {
@@ -408,18 +442,15 @@ export class PgV2Store implements V2Store {
       ).rows[0];
       return r ? mapSignal(r) : null;
     },
-    list: async (f: { connectionId?: string; strategyId?: string; limit?: number }) => {
+    list: async (f: SignalFilters) => {
       const where: string[] = [];
       const vals: unknown[] = [];
-      if (f.connectionId) {
-        vals.push(f.connectionId);
-        where.push(`connection_id = $${vals.length}`);
+      recordWhere(f, "evaluation->>'productId'", where, vals);
+      if (f.outcomes?.length) {
+        vals.push(f.outcomes);
+        where.push(`outcome = ANY($${vals.length}::text[])`);
       }
-      if (f.strategyId) {
-        vals.push(f.strategyId);
-        where.push(`strategy_id = $${vals.length}`);
-      }
-      vals.push(Math.min(f.limit ?? 100, 500));
+      vals.push(Math.min(f.limit ?? 100, 1000));
       return (await this.pool.query(`SELECT * FROM v2_signals ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT $${vals.length}`, vals)).rows.map(mapSignal);
     },
   };
@@ -465,15 +496,16 @@ export class PgV2Store implements V2Store {
     list: async (f: AlertFilters) => {
       const where: string[] = [];
       const vals: unknown[] = [];
-      if (f.connectionId) {
-        vals.push(f.connectionId);
-        where.push(`connection_id = $${vals.length}`);
-      }
-      if (f.strategyId) {
-        vals.push(f.strategyId);
-        where.push(`strategy_id = $${vals.length}`);
-      }
+      recordWhere(f, 'product_id', where, vals);
       if (f.active) where.push('acknowledged_at IS NULL');
+      if (f.statuses?.length) {
+        vals.push(f.statuses);
+        where.push(`status = ANY($${vals.length}::text[])`);
+      }
+      if (f.sources?.length) {
+        vals.push(f.sources);
+        where.push(`COALESCE(evaluation->>'source', 'HISTORICAL') = ANY($${vals.length}::text[])`);
+      }
       vals.push(Math.min(f.limit ?? 200, 1000));
       const rows = (await this.pool.query(`SELECT * FROM v2_alerts ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT $${vals.length}`, vals)).rows;
       const deliveries = await this.deliveriesFor(rows.map((r: any) => r.id));
@@ -524,6 +556,97 @@ export class PgV2Store implements V2Store {
     release: async (name: string) => {
       await this.pool.query('UPDATE app_locks SET locked_until = now(), last_run_at = now() WHERE name = $1', [name]);
     },
+  };
+
+  paper = {
+    getPlan: async (strategyId: string) => {
+      const r = (await this.pool.query('SELECT plan FROM v2_paper_plans WHERE strategy_id = $1', [strategyId])).rows[0];
+      return r ? (r.plan as PaperPlan) : null;
+    },
+    savePlan: async (strategyId: string, plan: PaperPlan) => {
+      await this.pool.query(
+        `INSERT INTO v2_paper_plans (strategy_id, plan, updated_at) VALUES ($1, $2, now()) ON CONFLICT (strategy_id) DO UPDATE SET plan = EXCLUDED.plan, updated_at = now()`,
+        [strategyId, JSON.stringify(plan)],
+      );
+      return plan;
+    },
+    listPlans: async () => (await this.pool.query('SELECT strategy_id, plan FROM v2_paper_plans')).rows.map((r: any) => ({ strategyId: r.strategy_id as string, plan: r.plan as PaperPlan })),
+    insertTrade: async (t: Omit<PaperTrade, 'id'>) => {
+      const id = randomUUID();
+      const trade: PaperTrade = { ...t, id };
+      const r = await this.pool.query(
+        `INSERT INTO v2_paper_trades (id, strategy_id, connection_id, product_id, slot, alert_id, status, entry_at, trade) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT (connection_id, slot) WHERE status = 'OPEN' DO NOTHING`,
+        [id, t.strategyId, t.connectionId, t.productId, t.slot, t.alertId, t.status, t.entryAt, JSON.stringify(trade)],
+      );
+      return r.rowCount ? trade : null;
+    },
+    openFor: async (connectionId: string, slot: string) => {
+      const r = (await this.pool.query(`SELECT id, trade FROM v2_paper_trades WHERE connection_id = $1 AND slot = $2 AND status = 'OPEN' LIMIT 1`, [connectionId, slot])).rows[0];
+      return r ? mapPaperTrade(r) : null;
+    },
+    listOpen: async () => (await this.pool.query(`SELECT id, trade FROM v2_paper_trades WHERE status = 'OPEN' ORDER BY entry_at`)).rows.map(mapPaperTrade),
+    closeTrade: async (id: string, patch: Pick<PaperTrade, 'exitAt' | 'exitPrice' | 'exitReason' | 'grossPnl' | 'charges' | 'netPnl' | 'lastPrice' | 'lastPriceAt'>) => {
+      const r = (
+        await this.pool.query(
+          `UPDATE v2_paper_trades SET status = 'CLOSED', exit_at = $2, net_pnl = $3, trade = trade || $4::jsonb, updated_at = now()
+           WHERE id = $1 AND status = 'OPEN' RETURNING id, trade`,
+          [id, patch.exitAt, patch.netPnl, JSON.stringify({ ...patch, status: 'CLOSED' })],
+        )
+      ).rows[0];
+      return r ? mapPaperTrade(r) : null;
+    },
+    updateMarks: async (marks: Array<{ id: string; lastPrice: number; at: string }>) => {
+      if (!marks.length) return;
+      await this.pool.query(
+        `UPDATE v2_paper_trades t SET trade = t.trade || jsonb_build_object('lastPrice', m.p, 'lastPriceAt', m.at)
+         FROM (SELECT unnest($1::uuid[]) AS id, unnest($2::float8[]) AS p, unnest($3::text[]) AS at) m
+         WHERE t.id = m.id AND t.status = 'OPEN'`,
+        [marks.map((m) => m.id), marks.map((m) => m.lastPrice), marks.map((m) => m.at)],
+      );
+    },
+    listTrades: async (f: { status?: 'OPEN' | 'CLOSED'; strategyId?: string; connectionId?: string; since?: string; limit?: number }) => {
+      const where: string[] = [];
+      const vals: unknown[] = [];
+      if (f.status) {
+        vals.push(f.status);
+        where.push(`status = $${vals.length}`);
+      }
+      if (f.strategyId) {
+        vals.push(f.strategyId);
+        where.push(`strategy_id = $${vals.length}`);
+      }
+      if (f.connectionId) {
+        vals.push(f.connectionId);
+        where.push(`connection_id = $${vals.length}`);
+      }
+      if (f.since) {
+        vals.push(f.since);
+        where.push(`entry_at >= $${vals.length}`);
+      }
+      vals.push(Math.min(f.limit ?? 1000, 10_000));
+      const sql = `SELECT id, trade FROM v2_paper_trades ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY entry_at DESC LIMIT $${vals.length}`;
+      return (await this.pool.query(sql, vals)).rows.map(mapPaperTrade);
+    },
+    reset: async (strategyId: string) => (await this.pool.query('DELETE FROM v2_paper_trades WHERE strategy_id = $1', [strategyId])).rowCount ?? 0,
+    // Until migration 011 runs (next `npm run dev` / `npm run db:migrate`) there are simply no own values.
+    getOverride: async (connectionId: string) => {
+      const r = (await this.pool.query('SELECT override FROM v2_paper_overrides WHERE connection_id = $1', [connectionId]).catch(noTable({ rows: [] }))).rows[0];
+      return r ? (r.override as PaperOverride) : null;
+    },
+    saveOverride: async (connectionId: string, override: PaperOverride) => {
+      if (!Object.keys(override).length) {
+        await this.pool.query('DELETE FROM v2_paper_overrides WHERE connection_id = $1', [connectionId]);
+        return null;
+      }
+      await this.pool.query(
+        `INSERT INTO v2_paper_overrides (connection_id, override, updated_at) VALUES ($1, $2, now()) ON CONFLICT (connection_id) DO UPDATE SET override = EXCLUDED.override, updated_at = now()`,
+        [connectionId, JSON.stringify(override)],
+      );
+      return override;
+    },
+    listOverrides: async () =>
+      (await this.pool.query('SELECT connection_id, override FROM v2_paper_overrides').catch(noTable({ rows: [] }))).rows.map((r: any) => ({ connectionId: r.connection_id as string, override: r.override as PaperOverride })),
   };
 
   live = {

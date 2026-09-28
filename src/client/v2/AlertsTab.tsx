@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import type { LegDef, LegId, V2Alert, V2Unit } from '@/shared/v2';
@@ -13,6 +13,7 @@ import { candleRange, istStampIso } from './format';
 import { H } from './help';
 import { InlineSpinner, SkeletonRows } from '../components/loaders';
 import { stopAlarm } from '../lib/notify';
+import { FilterBar, activeCount, toQuery, useFilters } from './FilterBar';
 
 const STATUS_TONE: Record<V2Alert['status'], 'bull' | 'warn' | 'bear' | 'accent'> = { SENT: 'bull', PARTIAL: 'warn', FAILED: 'bear', ACKNOWLEDGED: 'accent' };
 
@@ -82,19 +83,33 @@ export function AlertRow({ alert: a }: { alert: V2Alert }) {
 
 type View = 'active' | 'history' | 'signals';
 
+const LIMIT = 500;
+
 export function AlertsTab() {
   const [view, setView] = useState<View>('active');
   // Opening the alerts counts as seeing them: silence a ringing alarm.
   useEffect(() => stopAlarm(), []);
-  const [strategyId, setStrategyId] = useState('');
+  const [filters, setFilters] = useFilters('alerts');
   const strategies = useQuery({ queryKey: ['v2-strategies'], queryFn: v2Api.strategies });
+  const q = toQuery(filters, strategies.data ?? []);
+  const { outcomes, sources, statuses, sides: _sides, ...base } = q;
+  const ready = !filters.groups.length || !!strategies.data; // group labels resolve through the strategies
   const alerts = useQuery({
-    queryKey: ['v2-alerts', view, strategyId],
-    queryFn: () => v2Api.alerts({ active: view === 'active', strategyId: strategyId || undefined, limit: 200 }),
-    enabled: view !== 'signals',
+    queryKey: ['v2-alerts', view, q],
+    queryFn: () => v2Api.alerts({ ...base, sources, statuses, active: view === 'active', limit: LIMIT }),
+    enabled: view !== 'signals' && ready,
     refetchInterval: 30_000,
+    placeholderData: keepPreviousData,
   });
-  const signals = useQuery({ queryKey: ['v2-signals', strategyId], queryFn: () => v2Api.signals({ strategyId: strategyId || undefined, limit: 200 }), enabled: view === 'signals' });
+  const signals = useQuery({
+    queryKey: ['v2-signals', q],
+    queryFn: () => v2Api.signals({ ...base, outcomes, limit: LIMIT }),
+    enabled: view === 'signals' && ready,
+    placeholderData: keepPreviousData,
+  });
+  const rows = view === 'signals' ? signals.data : alerts.data;
+  const noun = view === 'signals' ? 'signal' : view === 'active' ? 'active alert' : 'alert';
+  const shown = rows ? `${rows.length === LIMIT ? `latest ${LIMIT}` : rows.length} ${noun}${rows.length === 1 ? '' : 's'}${activeCount(filters, view === 'signals' ? ['outcomes'] : ['sources', 'statuses']) ? ' match' : ''}` : undefined;
 
   return (
     <div className="flex flex-col gap-4">
@@ -108,17 +123,13 @@ export function AlertsTab() {
             { value: 'signals', label: 'Signals', help: { title: 'Signals', body: 'Every time a strategy fired — delivered or suppressed, with the reason.' } },
           ]}
         />
-        <Tooltip content={{ title: 'Strategy filter', body: 'Show only this strategy’s records.' }}>
-          <select aria-label="Strategy filter" className="input py-1.5 text-xs" value={strategyId} onChange={(e) => setStrategyId(e.target.value)}>
-            <option value="">All strategies</option>
-            {strategies.data?.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </Tooltip>
       </div>
+      <FilterBar value={filters} onChange={setFilters} strategies={strategies.data ?? []} fields={view === 'signals' ? ['outcomes'] : ['sources', 'statuses']} shown={shown} />
+      {rows?.length === LIMIT && (
+        <Tooltip content={H.filters.capped}>
+          <p className="-mt-2 text-[11px] text-warn">Showing the newest {LIMIT} — narrow the period or filters to see older ones.</p>
+        </Tooltip>
+      )}
       {view !== 'signals' && (
         <Card className="p-0 overflow-hidden">
           {alerts.isLoading ? (
@@ -130,7 +141,7 @@ export function AlertsTab() {
               ))}
             </div>
           ) : (
-            <EmptyState title={view === 'active' ? 'No active alerts' : 'No alerts yet'} />
+            <EmptyState title={activeCount(filters, ['sources', 'statuses']) ? 'No alerts match these filters' : view === 'active' ? 'No active alerts' : 'No alerts yet'} hint={activeCount(filters, ['sources', 'statuses']) ? 'Change or clear the filters above.' : undefined} />
           )}
         </Card>
       )}
@@ -172,7 +183,7 @@ export function AlertsTab() {
               </table>
             </div>
           ) : (
-            <EmptyState title="No signals yet" />
+            <EmptyState title={activeCount(filters, ['outcomes']) ? 'No signals match these filters' : 'No signals yet'} hint={activeCount(filters, ['outcomes']) ? 'Change or clear the filters above.' : undefined} />
           )}
         </Card>
       )}

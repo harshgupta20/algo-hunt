@@ -6,6 +6,10 @@ import type {
   CompareResult,
   ConnectionConfig,
   LiveStatus,
+  PaperOverride,
+  PaperPlan,
+  PaperSummary,
+  PaperTrade,
   ScanRun,
   SignalOutcome,
   StrategyDefinition,
@@ -23,6 +27,7 @@ import type {
   V2Unit,
   ValidationIssue,
 } from '@/shared/v2';
+import { filterParams, normalizePaperSummary, type AlertQuery, type PaperQuery, type SignalQuery } from '@/shared/v2';
 
 const BASE = '/api/v2';
 
@@ -182,25 +187,23 @@ export const v2Api = {
 
   compare: (body: CompareInput) => post<CompareResult>('/compare', body),
 
-  alerts: (q: { connectionId?: string; strategyId?: string; active?: boolean; limit?: number } = {}) => {
-    const p = new URLSearchParams();
-    if (q.connectionId) p.set('connectionId', q.connectionId);
-    if (q.strategyId) p.set('strategyId', q.strategyId);
-    if (q.active) p.set('active', '1');
-    if (q.limit) p.set('limit', String(q.limit));
-    return request<V2Alert[]>(`/alerts?${p}`);
-  },
+  alerts: (q: AlertQuery = {}) => request<V2Alert[]>(`/alerts?${filterParams(q)}`),
   acknowledge: (id: string) => post<V2Alert>(`/alerts/${id}/acknowledge`),
-  signals: (q: { connectionId?: string; strategyId?: string; limit?: number } = {}) => {
-    const p = new URLSearchParams();
-    if (q.connectionId) p.set('connectionId', q.connectionId);
-    if (q.strategyId) p.set('strategyId', q.strategyId);
-    if (q.limit) p.set('limit', String(q.limit));
-    return request<V2Signal[]>(`/signals?${p}`);
-  },
+  signals: (q: SignalQuery = {}) => request<V2Signal[]>(`/signals?${filterParams(q)}`),
+
 
   scan: (force = false) => post<{ run: ScanRun; skipped?: string }>('/scan', { force }),
   scanRuns: (limit = 100) => request<ScanRun[]>(`/scan-runs?limit=${limit}`),
+
+  paperPlan: (strategyId: string) => request<PaperPlan>(`/paper/plans/${strategyId}`),
+  savePaperPlan: (strategyId: string, plan: PaperPlan) => put<PaperPlan>(`/paper/plans/${strategyId}`, plan),
+  paperSummary: (q: PaperQuery = {}) => request<Partial<PaperSummary>>(`/paper/summary?${filterParams(q)}`).then(normalizePaperSummary),
+  paperSettings: () => request<{ plans: Record<string, PaperPlan>; overrides: Record<string, PaperOverride> }>('/paper/settings'),
+  saveConnectionPaper: (connectionId: string, override: PaperOverride) => put<{ override: PaperOverride | null }>(`/paper/connections/${connectionId}`, { override }),
+  resetConnectionPaper: (connectionId: string) => request<{ override: null }>(`/paper/connections/${connectionId}`, { method: 'DELETE' }),
+  paperTrades: (q: PaperQuery = {}) => request<PaperTrade[]>(`/paper/trades?${filterParams(q)}`),
+  closePaperTrade: (id: string) => post<PaperTrade>(`/paper/trades/${id}/close`),
+  resetPaper: (strategyId: string) => request<{ deleted: number }>(`/paper/strategies/${strategyId}/trades`, { method: 'DELETE' }),
 
   settings: () => request<V2Settings>('/settings'),
   saveSettings: (s: V2Settings) => put<V2Settings>('/settings', s),

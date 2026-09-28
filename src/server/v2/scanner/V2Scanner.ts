@@ -12,7 +12,10 @@
  *   8 plan         distinct (instrument, interval) fetches within the request budget
  *   9 fetch        candles, shared by every connection reading the same contract
  *  10 evaluate     expression per unit (three-valued), seeded previous result
- *  11 alert        policy → signal (deduped by identity) → alert → delivery; persist
+ *  11 alert        policy → signal (deduped by identity) → alert → paper trade → delivery; persist
+ *
+ * Before the gate: open paper trades are checked for their exits (target / stop / square-off / expiry)
+ * — only while the live worker is off; it checks them on every tick.
  */
 import { randomUUID } from 'node:crypto';
 import type { Market, ScanError, ScanRun, StrategyDefinition, Timeframe, UnitEvaluation, UnitState, V2Connection, V2Instrument, V2Product, V2Settings, V2Strategy, V2Unit } from '@/shared/v2';
@@ -29,7 +32,8 @@ import { evaluateUnit, pendingReason, type UnitEvalInput } from '../engine/evalu
 import { leafCount, legInstrument, seriesOf } from '../engine/series';
 import type { V2Store } from '../persistence/V2Store';
 import { atmReference, resolveUnits } from '../universe/resolve';
-import { commitUnit, previousResult, type Clock } from './commit';
+import { commitUnit, previousResult, type Clock, type CommitDeps } from './commit';
+import { PaperTrader } from '../paper/PaperTrader';
 import { LIVE_OFFLINE_WARN_MS, liveHealth } from '../live/health';
 
 const log = childLogger('v2-scan');
@@ -88,7 +92,21 @@ function emptyRun(now: number, budget: number, trigger: ScanRun['trigger'] = 'au
 }
 
 export class V2Scanner {
-  constructor(private readonly deps: ScannerDeps) {}
+  private readonly paper: PaperTrader;
+  private cals: Record<Market, MarketCalendar> | null = null;
+
+  constructor(private readonly deps: ScannerDeps) {
+    this.paper = new PaperTrader({ store: deps.store, now: () => this.now(), prices: (list) => deps.provider.getLtp(list) });
+  }
+
+  private commitDeps(): CommitDeps {
+    return {
+      store: this.deps.store,
+      channels: this.deps.channels,
+      now: () => this.now(),
+      onAlert: (a) => this.paper.onAlert({ ...a, cal: this.cals![a.product.market] }),
+    };
+  }
 
   private now(): number {
     return this.deps.clock ? this.deps.clock() : Date.now();
@@ -130,6 +148,8 @@ export class V2Scanner {
 
     // 1–2 · gate + connections
     const cals = calendars(await store.calendar.list());
+    this.cals = cals;
+    if (!opts.connectionIds) await this.monitorPaper(now, cals, run, error);
     let connections = (await store.connections.list()).filter((c) => c.enabled);
     if (opts.connectionIds) connections = connections.filter((c) => opts.connectionIds!.includes(c.id));
     if (!connections.length) {
@@ -316,6 +336,23 @@ export class V2Scanner {
     return finish();
   }
 
+  /** Exits of open paper trades — only while the live worker isn't running (it checks them on every tick). */
+  private async monitorPaper(now: number, cals: Record<Market, MarketCalendar>, run: ScanRun, error: (e: ScanError) => void): Promise<void> {
+    try {
+      const { store } = this.deps;
+      if (!(await store.paper.listOpen()).length) return;
+      if (liveHealth(await store.live.get().catch(() => null), now).covering) return;
+      if (!(await this.deps.provider.isConnected())) return;
+      const r = await this.paper.monitor(cals);
+      if (r.requested) run.requests++;
+      if (r.closed.length) run.notes.push(`Paper trading: closed ${r.closed.length} trade(s) (${r.closed.map((t) => `${t.instrument.symbol} ${t.exitReason?.toLowerCase().replace('_', '-')}`).join(', ')})`);
+    } catch (err) {
+      // Tables not created yet (migration 010 runs on the next `npm run dev` / `npm run db:migrate`): not a scan failure.
+      if ((err as { code?: string }).code === '42P01') run.notes.push('Paper trading is not set up in the database yet — restart `npm run dev` or run `npm run db:migrate`');
+      else error({ source: 'paper', message: `Checking paper trades failed: ${msg(err)}` });
+    }
+  }
+
   /** One Telegram message when the live worker went quiet without a clean stop (this scanner is now the backup). */
   private async warnWorkerOffline(lastSeen: string, settings: V2Settings): Promise<void> {
     const at = new Date(this.now()).toISOString();
@@ -340,7 +377,7 @@ export class V2Scanner {
 
     const state = p.states.get(unit.key) ?? initialState(c.id, unit.key);
     const prevResult = previousResult(p.clock, state, input, evaluation);
-    const next = await commitUnit({ store: this.deps.store, channels: this.deps.channels, now: () => this.now() }, p, unit, evaluation, prevResult, state, settings, run);
+    const next = await commitUnit(this.commitDeps(), p, unit, evaluation, prevResult, state, settings, run);
     await this.deps.store.units.upsert(next);
     p.states.set(unit.key, next);
   }

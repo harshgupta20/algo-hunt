@@ -105,6 +105,30 @@ A long-running process on your computer (same `.env`, database and Kite login as
   warning; the worker itself warns when its stream has been down for 60 s during market hours (and when it's back), and
   reminds you to log in to Kite 15 minutes before the first session if you haven't.
 
+## 4c. Paper trading
+
+On for every connection by default. The plan a connection trades with = its strategy's plan (`v2_paper_plans`;
+the preferred defaults, switched on, when none is saved) with the connection's own values on top
+(`v2_paper_overrides`, only the changed keys; `effectivePlan` in `shared/v2/paper.ts`). When an alert is recorded,
+`commitUnit` calls the `onAlert` hook (`paper/PaperTrader.ts`) before delivery and adds its line to the message:
+
+- **Rule:** the top-level group whose trace is TRUE (children of a root OR), else the single "whole strategy" rule →
+  leg + Buy / Sell. The leg's contract comes from the alerting unit.
+- **Position slot:** one open trade per connection and strike shift (`shift:0`, `shift:-1` …) — the ATM may move
+  between alerts; a partial unique index enforces it. The same group again keeps it; another group closes it
+  (`OPPOSITE`) when the plan says so, then opens its own.
+- **Entry:** market price (live worker: streamed last price; scanner: Kite LTP; fallback: the leg's close on the
+  trigger candle) ± slippage, rounded against the trader to the tick; whole lots for the cash per trade (≥ 1),
+  money counted as premium (bought options, stocks) or estimated margin (futures, sold options).
+- **Exits:** stop-loss / target on every tick (live worker) or once a minute on LTP (scanner, only while the worker
+  isn't covering); square-off on the entry day or expiry close; charges from `paper/charges.ts`. Closing is
+  conditional on `status = 'OPEN'`, so two processes can't close a trade twice. The worker keeps open trades'
+  contracts subscribed even after the ATM moves.
+- **Results:** `paper/summary.ts` — per strategy / connection / overall stats (win rate, profit factor, average
+  win / loss, today's P&L, drawdown on cumulative net P&L); money needed = the peak of capital in use at the same
+  time; return = net P&L ÷ that; P&L per day, per exit reason and per entry hour; a sparkline per connection /
+  strategy. `from` limits everything to trades entered since an IST date.
+
 ## 5. Module map
 
 ```
@@ -119,13 +143,14 @@ src/server/v2/
 ├── scanner/          V2Scanner · commit (alert decision shared with the live worker)
 ├── live/             LiveWorker · KiteStream · ticks (Kite binary protocol) · LiveCandles · plan · verify
 │                     · FetchQueue · health
+├── paper/            PaperTrader (open on alerts, exits) · charges (Zerodha charges, margin estimate) · summary
 ├── debug/            tools (explain now, compare across products)
-├── persistence/      V2Store · PgV2Store (v2_* tables, migrations 007 + 008)
+├── persistence/      V2Store · PgV2Store (v2_* tables, migrations 007–011)
 ├── V2Service.ts      operations behind /api/v2/*
 └── index.ts          createV2Module() — wired into the API context · createV2LiveWorker()
 src/server/workers/v2Live.ts   the `npm run live` process (also `--check`, `--force`)
 src/client/v2/        V2Hub (tabs) · strategies/ (editor, legs, conditions) · connections/ · compare/ · alerts, products,
-                      scanner, settings, dashboard · ProductPicker · ExplainView · help.ts (tooltips)
+                      paper/ (Paper tab, charts, paper settings fields + connection editor) · scanner, settings, dashboard · ProductPicker · ExplainView · help.ts (tooltips)
 ```
 
 A boundary test (`tests/v2/boundary.test.ts`) keeps V2 independent of the retired V1 / MCX V2 module paths,
@@ -140,6 +165,8 @@ Migration `007_v2.sql` (additive):
 `v2_unit_state` · `v2_signals` (unique identity) · `v2_alerts` / `v2_deliveries` · `v2_scan_runs` · `v2_settings`.
 Deleting a strategy cascades to its connections, their unit states, signals and alerts.
 Migration `008_v2_live.sql` adds `v2_live_status` (one heartbeat / status row written by the live worker).
+Migration `010_v2_paper.sql` adds `v2_paper_plans` and `v2_paper_trades` (paper trading); `011_v2_paper_connections.sql`
+adds `v2_paper_overrides` (a connection's own paper values).
 
 ## 7. Compare — how to read it
 

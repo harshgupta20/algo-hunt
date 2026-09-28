@@ -2,11 +2,12 @@
  * The last step of evaluating a unit, shared by the cron scanner and the live
  * worker so both decide alerts identically:
  *   previous result (stored, or re-evaluated) → alert policy → signal (deduped by
- *   identity) → alert → delivery. The caller persists the returned unit state.
+ *   identity) → alert → paper trade (optional) → delivery. The caller persists the
+ *   returned unit state.
  */
 import type { ScanError, TriState, UnitEvaluation, UnitState, V2Connection, V2Product, V2Settings, V2Strategy, V2Unit } from '@/shared/v2';
 import { decide, signalIdentity } from '../alerts/alertPolicy';
-import { deliver, formatAlert, type ChannelFactory } from '../alerts/notifications';
+import { deliver, formatAlert, type ChannelFactory, type Message } from '../alerts/notifications';
 import { evaluateUnit, type UnitEvalInput } from '../engine/evaluator';
 import type { V2Store } from '../persistence/V2Store';
 
@@ -18,10 +19,21 @@ export interface Clock {
   prevAt: number | null;
 }
 
+export interface AlertEvent {
+  connection: V2Connection;
+  strategy: V2Strategy;
+  product: V2Product;
+  unit: V2Unit;
+  evaluation: UnitEvaluation;
+  alertId: string;
+}
+
 export interface CommitDeps {
   store: V2Store;
   channels: ChannelFactory;
   now: () => number;
+  /** Paper trading: runs for every new alert; the line it returns is added to the alert message. */
+  onAlert?: (a: AlertEvent) => Promise<string | null>;
 }
 
 export interface UnitTarget {
@@ -48,6 +60,13 @@ export function previousResult(clock: Clock, state: UnitState, input: UnitEvalIn
   if (clock.prevOpenMs === null || clock.prevAt === null) return null;
   if (state.lastEvaluatedCandle === Math.floor(clock.prevOpenMs / 1000)) return state.lastResult;
   return evaluateUnit({ ...input, triggerOpenMs: clock.prevOpenMs, at: clock.prevAt }).result;
+}
+
+const escapeHtml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function withLine(m: Message, line: string | null): Message {
+  if (!line) return m;
+  return { ...m, text: `${m.text}\n\n${line}`, html: `${m.html}<p>${escapeHtml(line).replace(/\n/g, '<br/>')}</p>` };
 }
 
 /** Decide, record and deliver one unit's evaluation. Returns the unit's next state (not yet persisted). */
@@ -108,8 +127,16 @@ export async function commitUnit(
         };
         const alert = await store.alerts.insert(draft);
         stats.alerts++;
+        let paperLine: string | null = null;
+        if (deps.onAlert) {
+          try {
+            paperLine = await deps.onAlert({ connection: c, strategy: s, product, unit, evaluation, alertId: alert.id });
+          } catch (err) {
+            stats.errors.push({ source: 'paper', connectionId: c.id, unitKey: unit.key, message: `Paper trade failed: ${err instanceof Error ? err.message : String(err)}` });
+          }
+        }
         if (decision.outcome === 'ALERTED') {
-          const message = formatAlert(draft, { productSymbol: product.symbol, productName: product.name, legs: d.legs });
+          const message = withLine(formatAlert(draft, { productSymbol: product.symbol, productName: product.name, legs: d.legs }), paperLine);
           const { deliveries, status } = await deliver(deps.channels, settings, policy.channels, message, deps.now);
           for (const del of deliveries) await store.alerts.addDelivery(alert.id, del);
           if (status !== 'SENT') await store.alerts.setStatus(alert.id, status);

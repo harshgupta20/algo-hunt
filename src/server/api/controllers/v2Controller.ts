@@ -1,6 +1,23 @@
 import { z } from 'zod';
-import type { ConnectionConfig, LegKind, StrategyDefinition } from '@/shared/v2';
-import { LEG_KINDS, MAX_CONNECT, calendarSchema, connectionConfigSchema, settingsSchema, strategyDefinitionSchema } from '@/shared/v2';
+import type { ConnectionConfig, LegKind, PaperSide, RecordFilters, StrategyDefinition, Timeframe } from '@/shared/v2';
+
+const SIDES: PaperSide[] = ['BUY', 'SELL'];
+import {
+  ALERT_STATUSES,
+  EVALUATION_SOURCES,
+  LEG_KINDS,
+  MARKETS,
+  MAX_CONNECT,
+  PRODUCT_KINDS,
+  SIGNAL_OUTCOMES,
+  TIMEFRAME,
+  calendarSchema,
+  connectionConfigSchema,
+  paperOverrideSchema,
+  paperPlanSchema,
+  settingsSchema,
+  strategyDefinitionSchema,
+} from '@/shared/v2';
 import type { AppContext } from '../context';
 import { created, type Handler } from '../http';
 import { parse } from '../schemas';
@@ -27,6 +44,25 @@ export function v2Controller(ctx: AppContext) {
   const svc = () => ctx.v2.service;
   const num = (v: string | null) => (v ? Number(v) : undefined);
   const str = (v: string | null) => v ?? undefined;
+  const date = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
+  /** A comma-separated list, keeping only known values. */
+  const csv = <T extends string>(v: string | null, allowed: readonly T[]): T[] | undefined => {
+    const list = v?.split(',').map((x) => x.trim()).filter((x): x is T => (allowed as readonly string[]).includes(x));
+    return list?.length ? [...new Set(list)] : undefined;
+  };
+  /** Filters shared by alerts, signals and paper trades. */
+  const records = (q: URLSearchParams): RecordFilters => ({
+    strategyId: str(q.get('strategyId')),
+    connectionId: str(q.get('connectionId')),
+    kinds: csv(q.get('kinds'), PRODUCT_KINDS),
+    markets: csv(q.get('markets'), MARKETS),
+    search: str(q.get('search'))?.slice(0, 40),
+    timeframes: csv(q.get('timeframes'), Object.keys(TIMEFRAME) as Timeframe[]),
+    from: date(q.get('from')),
+    to: date(q.get('to')),
+    groups: q.get('groups')?.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 50),
+    limit: num(q.get('limit')),
+  });
   const needs = (v: string | null) => {
     const kinds = v?.split(',').filter((k): k is LegKind => LEG_KINDS.some((l) => l.kind === k));
     return kinds?.length ? kinds : undefined;
@@ -104,16 +140,29 @@ export function v2Controller(ctx: AppContext) {
 
     alerts: (req) =>
       svc().alerts({
-        connectionId: str(req.query.get('connectionId')),
-        strategyId: str(req.query.get('strategyId')),
+        ...records(req.query),
         active: req.query.get('active') === '1',
-        limit: num(req.query.get('limit')),
+        statuses: csv(req.query.get('statuses'), ALERT_STATUSES),
+        sources: csv(req.query.get('sources'), EVALUATION_SOURCES),
       }),
     acknowledge: (req) => svc().acknowledge(req.params.id!),
-    signals: (req) => svc().signals({ connectionId: str(req.query.get('connectionId')), strategyId: str(req.query.get('strategyId')), limit: num(req.query.get('limit')) }),
+    signals: (req) => svc().signals({ ...records(req.query), outcomes: csv(req.query.get('outcomes'), SIGNAL_OUTCOMES) }),
 
     scan: (req) => svc().scan({ force: parse(z.object({ force: z.boolean().optional() }), req.body ?? {}).force }),
     scanRuns: (req) => svc().scanRuns(num(req.query.get('limit'))),
+
+    paperPlan: (req) => svc().paperPlan(req.params.id!),
+    savePaperPlan: (req) => svc().savePaperPlan(req.params.id!, parse(paperPlanSchema, req.body)),
+    paperSummary: (req) => svc().paperSummary({ ...records(req.query), sides: csv(req.query.get('sides'), SIDES) }),
+    paperSettings: () => svc().paperSettings(),
+    saveConnectionPaper: (req) => svc().saveConnectionPaper(req.params.id!, parse(z.object({ override: paperOverrideSchema }), req.body).override),
+    resetConnectionPaper: (req) => svc().saveConnectionPaper(req.params.id!, {}),
+    paperTrades: (req) => {
+      const status = req.query.get('status');
+      return svc().paperTrades({ ...records(req.query), status: status === 'OPEN' || status === 'CLOSED' ? status : undefined, sides: csv(req.query.get('sides'), SIDES) });
+    },
+    closePaperTrade: (req) => svc().closePaperTrade(req.params.id!),
+    resetPaper: (req) => svc().resetPaper(req.params.id!),
 
     settings: () => svc().settings(),
     saveSettings: (req) => svc().saveSettings({ telegramChats: [], ...parse(settingsSchema, req.body) }),

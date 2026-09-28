@@ -43,6 +43,9 @@ through [PgV2Store](../src/server/v2/persistence/PgV2Store.ts).
 | `v2_alerts` / `v2_deliveries` | Alerts (unit with its leg contracts, evaluation) and per-recipient results (`target` = Telegram chat / email recipients) |
 | `v2_scan_runs` | Scanner cycles (summary JSON incl. errors; pruned after 3 days) |
 | `v2_settings` | One JSON row: Telegram chats (`telegramChats: [{ id, name }]`; older rows with a single `telegramChatId` are read as a one-chat list), email recipients / sender, request budget |
+| `v2_paper_plans` | Paper-trading plan per strategy — the defaults for its connections (`strategy_id` PK → `v2_strategies`, cascade; `plan` JSON: enabled, cash per trade, rules, target / stop %, square-off, charges, slippage). No row = the preferred defaults, switched on (migration 010) |
+| `v2_paper_trades` | Simulated trades opened by alerts: `trade` JSON (contract, lots, entry / exit, terms, P&L) plus indexed `strategy_id`, `connection_id` (cascade), `alert_id` (set null), `slot`, `status`, `entry_at`, `exit_at`, `net_pnl`; a partial unique index allows one OPEN trade per (connection, slot = strike position) (migration 010) |
+| `v2_paper_overrides` | A connection's own paper values over its strategy's plan (`connection_id` PK → `v2_connections`, cascade; `override` JSON: only the changed keys) (migration 011) |
 | `v2_live_status` | One row written every 5 s by the live worker (`npm run live`): heartbeat, state, sockets, contracts, accuracy counters, last candle closes; `offline_notified_at` = the backup scanner already warned (migration 008) |
 
 ---
@@ -69,6 +72,8 @@ Dropping them is optional and irreversible — only add a migration for it if yo
 | [007_v2.sql](../db/migrations/007_v2.sql) | V2 tables (all `v2_`-prefixed) |
 | [008_v2_live.sql](../db/migrations/008_v2_live.sql) | `v2_live_status` (live worker heartbeat) |
 | [009_v2_delivery_target.sql](../db/migrations/009_v2_delivery_target.sql) | `v2_deliveries.target` — who each delivery went to (one row per Telegram chat) |
+| [010_v2_paper.sql](../db/migrations/010_v2_paper.sql) | `v2_paper_plans`, `v2_paper_trades` (paper trading) |
+| [011_v2_paper_connections.sql](../db/migrations/011_v2_paper_connections.sql) | `v2_paper_overrides` (a connection's own paper values) |
 
 Keep every migration file: the runner tracks applied files by name, and a fresh database is built by replaying them
 in order.
