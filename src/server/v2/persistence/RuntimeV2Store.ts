@@ -43,15 +43,19 @@ import type {
   V2SignalItem,
   V2Strategy,
 } from '@/shared/v2';
-import { offersKinds } from '@/shared/v2';
+import { newestFirst, offersKinds, olderThan } from '@/shared/v2';
 import type { AlertFilters, DatabaseSize, NewAlert, NewPaperTrade, NewSignal, ProductFilters, PruneResult, RecordStoreFilters, SignalFilters, V2Store } from './V2Store';
 import { WriteQueue, type WriteQueueOptions } from './writeQueue';
 
 const KEEP_SIGNALS = 1_000;
 const KEEP_RUNS = 200;
 const KEEP_FEED = 200;
-/** Different list queries (filters) kept until the next alert / signal. */
-const KEEP_LISTS = 24;
+/** Alerts of this run kept in memory (merged into lists, served in full when opened). */
+const KEEP_RECENT = 1_000;
+/** List pages (filters + cursor) read from the database and kept. */
+const KEEP_LISTS = 40;
+/** Closed paper trades kept in memory (all of them, up to this many). */
+const KEEP_CLOSED = 50_000;
 const SIZE_FRESH_MS = 10 * 60_000;
 /** After the database failed to give the alarm feed, try again after this long (the alarm uses this run's alerts meanwhile). */
 const FEED_RETRY_MS = 60_000;
@@ -88,16 +92,21 @@ interface RuntimeState {
   loading: Map<string, Promise<unknown>>;
   /** Database writes waiting to be saved (created with the first store). */
   writes?: WriteQueue;
-  /** Alerts recorded by this run (newest last) — deliveries added here; the alarm's fallback while Neon is unreachable. */
+  /** Alerts recorded by this run (newest last), in full — merged into lists, deliveries added here, the alarm's fallback. */
   recent: Map<string, V2Alert>;
   /** Identities of the alerting signals this run recorded (dedupe without asking the database). */
   alerted: Set<string>;
-  /** Bumped by every change to alerts / alerting signals: list results read before are reused until then. */
-  alertsVersion: number;
-  signalsVersion: number;
-  lists: Map<string, { version: number; rows: unknown }>;
+  /**
+   * List pages read from the database. New alerts / signals don't throw them away — they are merged in from
+   * memory; a page is read again only when history changed (`listGen`: acknowledge, deletions) or when a record
+   * created after it was read has left memory (`evicted*At`).
+   */
+  lists: Map<string, { gen: number; readAt: string; rows: unknown }>;
+  listGen: number;
+  evictedAlertAt: string;
+  evictedSignalAt: string;
   feedFailedAt: number | null;
-  /** The last full read of closed paper trades + the ones closed since (the Paper tab while Neon is unreachable). */
+  /** Every closed paper trade, read once (null until then); trades closed before that read waited in `closedSince`. */
   closedRead: PaperTrade[] | null;
   closedSince: PaperTrade[];
   size: { at: number; value: DatabaseSize } | null;
@@ -119,9 +128,10 @@ export function createRuntimeState(): RuntimeState {
     loading: new Map(),
     recent: new Map(),
     alerted: new Set(),
-    alertsVersion: 0,
-    signalsVersion: 0,
     lists: new Map(),
+    listGen: 0,
+    evictedAlertAt: '',
+    evictedSignalAt: '',
     feedFailedAt: null,
     closedRead: null,
     closedSince: [],
@@ -152,7 +162,13 @@ const stripTrace = <E extends { trace?: unknown }>(e: E): Omit<E, 'trace'> => {
 const shallowTrace = (t: ExprTrace): ExprTrace => ({ id: t.id, type: t.type, result: t.result, label: t.label, children: t.children?.map((c) => ({ id: c.id, type: c.type, label: c.label, result: c.result })) });
 const PRODUCT_ORDER: Record<ProductKind, number> = { INDEX: 0, COMMODITY: 1, STOCK: 2 };
 const feedItem = (a: V2Alert): AlertFeedItem => ({ id: a.id, strategyName: a.strategyName, productId: a.productId, unit: clone(a.unit), createdAt: a.createdAt });
-const newestFirst = <T extends { createdAt: string }>(a: T, b: T) => b.createdAt.localeCompare(a.createdAt);
+const byCreated = newestFirst<{ id: string; createdAt: string }>((x) => x.createdAt);
+const byEntry = newestFirst<PaperTrade>((t) => t.entryAt);
+/** An alert as lists show it (without the condition trace and the duplicate unit). */
+const alertItem = (a: V2Alert): V2AlertItem => {
+  const { trace: _t, unit: _u, ...evaluation } = a.evaluation;
+  return clone({ ...a, evaluation });
+};
 
 export class RuntimeV2Store implements V2Store {
   private readonly q: WriteQueue;
@@ -177,14 +193,18 @@ export class RuntimeV2Store implements V2Store {
     return fn();
   }
 
-  /** A list read from the database, reused until `version` changes (not cached while writes wait). Falls back to the last result while the database can't be reached. */
-  private async cachedList<T>(key: string, version: number, load: () => Promise<T>): Promise<T> {
+  /**
+   * A list page read from the database and kept (see RuntimeState.lists); records of this run are merged in by
+   * the caller. Not kept while writes wait. Falls back to the last read while the database can't be reached.
+   */
+  private async cachedList<T>(key: string, evictedAt: string, load: () => Promise<T>): Promise<T> {
     const hit = this.rt.lists.get(key);
-    if (hit && hit.version === version) {
+    if (hit && hit.gen === this.rt.listGen && hit.readAt > evictedAt) {
       this.rt.lists.delete(key);
       this.rt.lists.set(key, hit);
       return clone(hit.rows as T);
     }
+    const readAt = this.iso();
     let rows: T;
     try {
       rows = await this.read(load);
@@ -194,17 +214,21 @@ export class RuntimeV2Store implements V2Store {
     }
     if (!this.q.size) {
       this.rt.lists.delete(key);
-      this.rt.lists.set(key, { version, rows: clone(rows) });
+      this.rt.lists.set(key, { gen: this.rt.listGen, readAt, rows: clone(rows) });
       while (this.rt.lists.size > KEEP_LISTS) this.rt.lists.delete(this.rt.lists.keys().next().value!);
     }
     return rows;
   }
 
-  /** Alert / signal history changed (deleted with a strategy, connection or by the history clean-up). */
-  private historyChanged(): void {
-    this.rt.alertsVersion++;
-    this.rt.signalsVersion++;
+  /** Records changed in a way merging can't show (an acknowledgement): read list pages again. */
+  private listsChanged(): void {
+    this.rt.listGen++;
     this.rt.lists.clear();
+  }
+
+  /** Alert / signal history deleted (with a strategy or connection, the history clean-up). */
+  private historyChanged(): void {
+    this.listsChanged();
     this.rt.feed = undefined;
   }
 
@@ -226,6 +250,7 @@ export class RuntimeV2Store implements V2Store {
       this.openMap(),
       this.unitMap(),
       this.feedList(),
+      this.closedAll(),
     ]);
   }
 
@@ -313,8 +338,8 @@ export class RuntimeV2Store implements V2Store {
       clone(
         (await this.productList())
           .filter((p) => this.productMatches(p, f))
-          .sort((a, b) => PRODUCT_ORDER[a.kind] - PRODUCT_ORDER[b.kind] || Number(b.hasOptions) - Number(a.hasOptions) || a.symbol.localeCompare(b.symbol))
-          .slice(0, Math.min(f.limit ?? 5000, 5000)),
+          .sort((a, b) => PRODUCT_ORDER[a.kind] - PRODUCT_ORDER[b.kind] || Number(b.hasOptions) - Number(a.hasOptions) || a.symbol.localeCompare(b.symbol) || a.id.localeCompare(b.id))
+          .slice(Math.max(0, f.offset ?? 0), Math.max(0, f.offset ?? 0) + Math.min(f.limit ?? 5000, 5000)),
       ),
     get: async (id: string) => clone((await this.productList()).find((p) => p.id === id) ?? null),
     count: async () => (await this.productList()).length,
@@ -397,8 +422,7 @@ export class RuntimeV2Store implements V2Store {
       this.rt.plans?.delete(id);
       for (const [tid, t] of this.rt.open ?? []) if (t.strategyId === id) this.rt.open!.delete(tid);
       for (const [aid, a] of this.rt.recent) if (a.strategyId === id) this.rt.recent.delete(aid);
-      this.rt.closedVersion++;
-      this.rt.closedRead = null;
+      this.dropClosed((t) => t.strategyId === id);
       this.historyChanged();
       this.changed();
       return ok;
@@ -450,8 +474,7 @@ export class RuntimeV2Store implements V2Store {
       this.rt.overrides?.delete(id);
       for (const [tid, t] of this.rt.open ?? []) if (t.connectionId === id) this.rt.open!.delete(tid);
       for (const [aid, a] of this.rt.recent) if (a.connectionId === id) this.rt.recent.delete(aid);
-      this.rt.closedVersion++;
-      this.rt.closedRead = null;
+      this.dropClosed((t) => t.connectionId === id);
       this.historyChanged();
       this.changed();
       return ok;
@@ -463,7 +486,8 @@ export class RuntimeV2Store implements V2Store {
   private async unitMap(): Promise<Map<string, UnitState>> {
     await this.once('units', () => !!this.rt.units, async () => {
       const conns = [...(await this.connectionMap()).keys()];
-      const list = conns.length ? await this.read(() => this.db.units.listFor(conns)) : [];
+      // Without the saved last evaluations (old, and most of each row) — this run evaluates afresh.
+      const list = conns.length ? await this.read(() => this.db.units.listFor(conns, { light: true })) : [];
       this.rt.units = new Map(list.map((u) => [unitKey(u.connectionId, u.unitKey), u]));
       for (const u of list) this.rt.unitSaved.set(unitKey(u.connectionId, u.unitKey), decisionSig(u));
     });
@@ -473,7 +497,7 @@ export class RuntimeV2Store implements V2Store {
   units = {
     list: async (connectionId: string) =>
       clone([...(await this.unitMap()).values()].filter((u) => u.connectionId === connectionId).sort((a, b) => a.unitKey.localeCompare(b.unitKey))),
-    listFor: async (connectionIds: string[]) => {
+    listFor: async (connectionIds: string[], _opts?: { light?: boolean }) => {
       const set = new Set(connectionIds);
       return clone([...(await this.unitMap()).values()].filter((u) => set.has(u.connectionId)));
     },
@@ -519,21 +543,24 @@ export class RuntimeV2Store implements V2Store {
 
   // ---- signals: alerting ones in Neon (their dedupe), suppressed ones in memory ----------------
 
-  /** The filters alerts and signals share, on a signal held in memory. */
-  private async signalMatches(f: RecordStoreFilters, s: V2Signal): Promise<boolean> {
-    const productId = s.evaluation.productId;
-    const p = f.kinds?.length || f.markets?.length ? (await this.productList()).find((x) => x.id === productId) : undefined;
-    const symbol = productId.split(':')[1] ?? '';
+  /** The filters alerts and signals share (as PgV2Store's recordWhere), on a record held in memory — the page cursor included. */
+  private async recordMatches(
+    f: RecordStoreFilters,
+    r: { id: string; connectionId: string; strategyId: string; productId: string; triggerTimeframe: string; createdAt: string; trace?: ExprTrace },
+  ): Promise<boolean> {
+    const p = f.kinds?.length || f.markets?.length ? (await this.productList()).find((x) => x.id === r.productId) : undefined;
+    const symbol = r.productId.split(':')[1] ?? '';
     return (
-      (!f.connectionId || s.connectionId === f.connectionId) &&
-      (!f.strategyId || s.strategyId === f.strategyId) &&
+      (!f.connectionId || r.connectionId === f.connectionId) &&
+      (!f.strategyId || r.strategyId === f.strategyId) &&
       (!f.kinds?.length || (!!p && f.kinds.includes(p.kind))) &&
       (!f.markets?.length || (!!p && f.markets.includes(p.market))) &&
       (!f.search?.trim() || symbol.toLowerCase().includes(f.search.trim().toLowerCase())) &&
-      (!f.timeframes?.length || f.timeframes.includes(s.triggerTimeframe)) &&
-      (!f.since || s.createdAt >= f.since) &&
-      (!f.until || s.createdAt < f.until) &&
-      (!f.groups?.length || (s.evaluation.trace?.children ?? []).some((c) => c.result === 'TRUE' && f.groups!.includes(c.id)))
+      (!f.timeframes?.length || f.timeframes.includes(r.triggerTimeframe as never)) &&
+      (!f.since || r.createdAt >= f.since) &&
+      (!f.until || r.createdAt < f.until) &&
+      (!f.groups?.length || (r.trace?.children ?? []).some((c) => c.result === 'TRUE' && f.groups!.includes(c.id))) &&
+      (!f.before || olderThan(r.createdAt, r.id, f.before))
     );
   }
 
@@ -546,35 +573,41 @@ export class RuntimeV2Store implements V2Store {
         this.q.push({ op: 'signals.insert', args: [{ ...s, id: out.id, createdAt: out.createdAt, evaluation: { ...s.evaluation, trace: shallowTrace(s.evaluation.trace) } }], provides: out.id });
         this.rt.alerted.add(s.identity);
         if (this.rt.alerted.size > 20_000) for (const k of [...this.rt.alerted].slice(0, 10_000)) this.rt.alerted.delete(k);
-        this.rt.signalsVersion++;
       }
       this.rt.signals.unshift(out);
-      if (this.rt.signals.length > KEEP_SIGNALS) this.rt.signals.length = KEEP_SIGNALS;
+      if (this.rt.signals.length > KEEP_SIGNALS) {
+        // An alerting signal leaving memory: pages read before it was recorded no longer show it — read them again.
+        for (const x of this.rt.signals.splice(KEEP_SIGNALS)) if ((x.outcome === 'ALERTED' || x.outcome === 'NO_CHANNEL') && x.createdAt > this.rt.evictedSignalAt) this.rt.evictedSignalAt = x.createdAt;
+      }
       return clone(out);
     },
+    /** A page: the stored signals (read once per filters + cursor) with this run's merged in. */
     list: async (f: SignalFilters): Promise<V2SignalItem[]> => {
       const limit = Math.min(f.limit ?? 100, 1000);
-      const stored = await this.cachedList(`signals:${JSON.stringify(f)}`, this.rt.signalsVersion, () => this.db.signals.list({ ...f, limit }));
-      const recent: V2SignalItem[] = [];
-      for (const s of this.rt.signals) if ((!f.outcomes?.length || f.outcomes.includes(s.outcome)) && (await this.signalMatches(f, s))) recent.push({ ...s, evaluation: stripTrace(s.evaluation) });
+      const stored = await this.cachedList(`signals:${JSON.stringify({ ...f, limit })}`, this.rt.evictedSignalAt, () => this.db.signals.list({ ...f, limit }));
       const byId = new Map<string, V2SignalItem>();
-      for (const s of [...recent, ...stored]) if (!byId.has(s.id) && ![...byId.values()].some((x) => x.identity === s.identity)) byId.set(s.id, s);
-      return [...byId.values()].sort(newestFirst).slice(0, limit);
+      for (const s of this.rt.signals) {
+        if ((f.outcomes?.length && !f.outcomes.includes(s.outcome)) || !(await this.recordMatches(f, { ...s, productId: s.evaluation.productId, trace: s.evaluation.trace }))) continue;
+        byId.set(s.id, { ...clone(s), evaluation: stripTrace(clone(s.evaluation)) });
+      }
+      const identities = new Set([...byId.values()].map((x) => x.identity));
+      for (const s of stored) if (!byId.has(s.id) && !identities.has(s.identity)) byId.set(s.id, s);
+      return [...byId.values()].sort(byCreated).slice(0, limit);
     },
   };
 
-  // ---- alerts: in memory at once, saved in the background; lists from Neon (reused until the next change) -----
+  // ---- alerts: in memory at once, saved in the background; list pages from Neon with this run's merged in ----
 
   /** The newest alerts for the alarm — read once, then kept up to date in memory. */
   private async feedList(): Promise<AlertFeedItem[]> {
     if (this.rt.feed) return this.rt.feed;
-    const mine = () => [...this.rt.recent.values()].map(feedItem).sort(newestFirst).slice(0, KEEP_FEED);
+    const mine = () => [...this.rt.recent.values()].map(feedItem).sort(byCreated).slice(0, KEEP_FEED);
     if (this.rt.feedFailedAt !== null && this.clock() - this.rt.feedFailedAt < FEED_RETRY_MS) return mine();
     try {
       await this.once('feed', () => !!this.rt.feed, async () => {
         const rows = await this.read(() => this.db.alerts.feed(null, KEEP_FEED));
         const ids = new Set(rows.map((a) => a.id));
-        this.rt.feed = [...rows, ...mine().filter((a) => !ids.has(a.id))].sort(newestFirst).slice(0, KEEP_FEED);
+        this.rt.feed = [...rows, ...mine().filter((a) => !ids.has(a.id))].sort(byCreated).slice(0, KEEP_FEED);
         this.rt.feedFailedAt = null;
       });
       return this.rt.feed!;
@@ -584,11 +617,13 @@ export class RuntimeV2Store implements V2Store {
     }
   }
 
-  /** Change an alert this run recorded (delivery / status), and the lists that may show it. */
-  private touchAlert(id: string, patch: (a: V2Alert) => void): void {
-    const a = this.rt.recent.get(id);
-    if (a) patch(a);
-    this.rt.alertsVersion++;
+  private async alertMatches(f: AlertFilters, a: V2Alert): Promise<boolean> {
+    return (
+      (!f.active || !a.acknowledgedAt) &&
+      (!f.statuses?.length || f.statuses.includes(a.status)) &&
+      (!f.sources?.length || f.sources.includes(a.evaluation.source ?? 'HISTORICAL')) &&
+      (await this.recordMatches(f, { ...a, trace: a.evaluation.trace }))
+    );
   }
 
   alerts = {
@@ -596,40 +631,51 @@ export class RuntimeV2Store implements V2Store {
       const out: V2Alert = { ...clone(a), id: a.id ?? crypto.randomUUID(), deliveries: [], acknowledgedAt: null, createdAt: this.iso() };
       this.q.push({ op: 'alerts.insert', args: [{ ...a, id: out.id, createdAt: out.createdAt }], provides: out.id, dependsOn: [a.signalId] });
       this.rt.recent.set(out.id, out);
-      if (this.rt.recent.size > KEEP_FEED) this.rt.recent.delete(this.rt.recent.keys().next().value!);
+      if (this.rt.recent.size > KEEP_RECENT) {
+        const [oldest] = this.rt.recent.values();
+        this.rt.recent.delete(oldest!.id);
+        // Pages read before that alert was recorded no longer show it — read them again.
+        if (oldest!.createdAt > this.rt.evictedAlertAt) this.rt.evictedAlertAt = oldest!.createdAt;
+      }
       if (this.rt.feed) {
         this.rt.feed.unshift(feedItem(out));
         if (this.rt.feed.length > KEEP_FEED) this.rt.feed.length = KEEP_FEED;
       }
-      this.rt.alertsVersion++;
       return clone(out);
     },
     addDelivery: async (id: string, d: Delivery) => {
       this.q.push({ op: 'alerts.addDelivery', args: [id, d], dependsOn: [id] });
-      this.touchAlert(id, (a) => a.deliveries.push(clone(d)));
+      this.rt.recent.get(id)?.deliveries.push(clone(d));
     },
     setStatus: async (id: string, status: V2Alert['status']) => {
       this.q.push({ op: 'alerts.setStatus', args: [id, status], dependsOn: [id] });
-      this.touchAlert(id, (a) => (a.status = status));
+      const a = this.rt.recent.get(id);
+      if (a) a.status = status;
     },
     acknowledge: async (id: string, at: string) => {
       const out = await this.read(() => this.db.alerts.acknowledge(id, at));
-      this.touchAlert(id, (a) => {
+      const a = this.rt.recent.get(id);
+      if (a) {
         a.status = 'ACKNOWLEDGED';
         a.acknowledgedAt = at;
-      });
+      }
+      this.listsChanged(); // it leaves the active list
       return out;
     },
+    /** This run's alerts from memory (in full); older ones from the database. */
     get: async (id: string) => {
-      try {
-        return (await this.read(() => this.db.alerts.get(id))) ?? clone(this.rt.recent.get(id) ?? null);
-      } catch (err) {
-        const mine = this.rt.recent.get(id);
-        if (mine) return clone(mine); // not saved yet / Neon unreachable
-        throw err;
-      }
+      const mine = this.rt.recent.get(id);
+      if (mine) return clone(mine);
+      return this.read(() => this.db.alerts.get(id));
     },
-    list: (f: AlertFilters): Promise<V2AlertItem[]> => this.cachedList(`alerts:${JSON.stringify(f)}`, this.rt.alertsVersion, () => this.db.alerts.list(f)),
+    /** A page: the stored alerts (read once per filters + cursor) with this run's merged in (memory wins: deliveries, status). */
+    list: async (f: AlertFilters): Promise<V2AlertItem[]> => {
+      const limit = Math.min(f.limit ?? 200, 1000);
+      const stored = await this.cachedList(`alerts:${JSON.stringify({ ...f, limit })}`, this.rt.evictedAlertAt, () => this.db.alerts.list({ ...f, limit }));
+      const byId = new Map(stored.map((a) => [a.id, a]));
+      for (const a of this.rt.recent.values()) if (await this.alertMatches(f, a)) byId.set(a.id, alertItem(a));
+      return [...byId.values()].sort(byCreated).slice(0, limit);
+    },
     feed: async (after: string | null, limit: number) =>
       clone(
         (await this.feedList())
@@ -691,9 +737,7 @@ export class RuntimeV2Store implements V2Store {
       this.rt.signals = this.rt.signals.filter((x) => x.createdAt >= before);
       this.rt.runs = this.rt.runs.filter((r) => r.startedAt >= before);
       for (const [id, a] of this.rt.recent) if (a.createdAt < before) this.rt.recent.delete(id);
-      this.rt.closedSince = this.rt.closedSince.filter((t) => !t.exitAt || t.exitAt >= before);
-      this.rt.closedRead = null;
-      this.rt.closedVersion++;
+      this.dropClosed((t) => !!t.exitAt && t.exitAt < before);
       this.rt.size = null;
       this.historyChanged();
       return out;
@@ -701,6 +745,35 @@ export class RuntimeV2Store implements V2Store {
   };
 
   // ---- paper trading -----------------------------------------------------------------------------
+
+  /**
+   * Every closed paper trade: read once, then kept in memory (a closed trade never changes) — the Paper tab
+   * and its filters page through it without asking the database. Trades closed before the read wait in
+   * `closedSince`. While the database can't be reached, those are what there is.
+   */
+  private async closedAll(): Promise<PaperTrade[]> {
+    if (!this.rt.closedRead) {
+      try {
+        await this.once('closed', () => !!this.rt.closedRead, async () => {
+          const rows = await this.read(() => this.db.paper.listTrades({ status: 'CLOSED', limit: KEEP_CLOSED }));
+          const ids = new Set(rows.map((t) => t.id));
+          this.rt.closedRead = [...this.rt.closedSince.filter((t) => !ids.has(t.id)), ...rows].sort(byEntry);
+          this.rt.closedSince = [];
+        });
+      } catch (err) {
+        if (!this.rt.closedSince.length) throw err;
+        return this.rt.closedSince;
+      }
+    }
+    return this.rt.closedRead!;
+  }
+
+  /** Forget closed trades (deleted with their strategy / connection, reset, the history clean-up). */
+  private dropClosed(gone: (t: PaperTrade) => boolean): void {
+    if (this.rt.closedRead) this.rt.closedRead = this.rt.closedRead.filter((t) => !gone(t));
+    this.rt.closedSince = this.rt.closedSince.filter((t) => !gone(t));
+    this.rt.closedVersion++;
+  }
 
   private async planMap(): Promise<Map<string, PaperPlan>> {
     await this.once('plans', () => !!this.rt.plans, async () => {
@@ -748,8 +821,10 @@ export class RuntimeV2Store implements V2Store {
       const closed: PaperTrade = { ...t, ...clone(patch), status: 'CLOSED' };
       open.delete(id);
       this.q.push({ op: 'paper.closeTrade', args: [id, patch], dependsOn: [id] });
-      this.rt.closedSince.unshift(closed);
-      if (this.rt.closedSince.length > 5_000) this.rt.closedSince.length = 5_000;
+      const into = this.rt.closedRead ?? this.rt.closedSince;
+      into.unshift(closed);
+      into.sort(byEntry);
+      if (into.length > KEEP_CLOSED) into.length = KEEP_CLOSED;
       this.rt.closedVersion++;
       return clone(closed);
     },
@@ -761,27 +836,13 @@ export class RuntimeV2Store implements V2Store {
         if (t) open.set(m.id, { ...t, lastPrice: m.lastPrice, lastPriceAt: m.at });
       }
     },
+    /** Open trades and every closed one from memory (closed ones read from the database once). */
     listTrades: async (f: { status?: 'OPEN' | 'CLOSED'; strategyId?: string; connectionId?: string; since?: string; limit?: number }) => {
-      const limit = Math.min(f.limit ?? 1000, 50_000);
+      const limit = Math.min(f.limit ?? 1000, KEEP_CLOSED);
       const keep = (t: PaperTrade) => (!f.strategyId || t.strategyId === f.strategyId) && (!f.connectionId || t.connectionId === f.connectionId) && (!f.since || t.entryAt >= f.since);
-      const open = [...(await this.openMap()).values()].filter(keep);
-      if (f.status === 'OPEN') return clone(open.sort((a, b) => b.entryAt.localeCompare(a.entryAt)).slice(0, limit));
-      let closed: PaperTrade[];
-      const everything = !f.strategyId && !f.connectionId && !f.since;
-      try {
-        closed = await this.read(() => this.db.paper.listTrades({ ...f, status: 'CLOSED', limit }));
-        if (everything && !this.q.size) {
-          this.rt.closedRead = clone(closed);
-          this.rt.closedSince = [];
-        }
-      } catch (err) {
-        // Neon unreachable: what was read before + the trades closed since.
-        if (!this.rt.closedRead) throw err;
-        const ids = new Set(this.rt.closedSince.map((t) => t.id));
-        closed = clone([...this.rt.closedSince, ...this.rt.closedRead.filter((t) => !ids.has(t.id))].filter(keep).slice(0, limit));
-      }
-      if (f.status === 'CLOSED') return closed;
-      return [...clone(open), ...closed].sort((a, b) => b.entryAt.localeCompare(a.entryAt)).slice(0, limit);
+      const open = f.status === 'CLOSED' ? [] : [...(await this.openMap()).values()].filter(keep);
+      const closed = f.status === 'OPEN' ? [] : (await this.closedAll()).filter(keep);
+      return clone([...open, ...closed].sort(byEntry).slice(0, limit));
     },
     getOverride: async (connectionId: string) => clone((await this.overrideMap()).get(connectionId) ?? null),
     saveOverride: async (connectionId: string, override: PaperOverride) => {
@@ -797,9 +858,7 @@ export class RuntimeV2Store implements V2Store {
     reset: async (strategyId: string) => {
       const n = await this.read(() => this.db.paper.reset(strategyId));
       for (const [id, t] of await this.openMap()) if (t.strategyId === strategyId) this.rt.open!.delete(id);
-      this.rt.closedSince = this.rt.closedSince.filter((t) => t.strategyId !== strategyId);
-      this.rt.closedRead = null;
-      this.rt.closedVersion++;
+      this.dropClosed((t) => t.strategyId === strategyId);
       return n;
     },
   };

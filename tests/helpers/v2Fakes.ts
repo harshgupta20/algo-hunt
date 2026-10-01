@@ -30,7 +30,7 @@ import type {
   V2Strategy,
   V2StrategyVersion,
 } from '../../src/shared/v2';
-import { DEFAULT_V2_SETTINGS, offersKinds } from '../../src/shared/v2';
+import { DEFAULT_V2_SETTINGS, newestFirst, offersKinds, olderThan } from '../../src/shared/v2';
 import type { ChannelFactory, ChannelName, Channel, Message } from '../../src/server/v2/alerts/notifications';
 import type { RawCandle } from '../../src/server/v2/engine/candles';
 import type { CandleQuery, InstrumentDump, Quote, V2DataProvider } from '../../src/server/v2/data/DataProvider';
@@ -94,7 +94,7 @@ export class MemoryV2Store implements V2Store {
             (!f.market || p.market === f.market) &&
             (!f.needs || offersKinds(p, f.needs)) &&
             (!f.search || p.symbol.includes(f.search.toUpperCase()) || p.name.toUpperCase().includes(f.search.toUpperCase())),
-        ),
+        ).slice(f.offset ?? 0, (f.offset ?? 0) + (f.limit ?? 5000)),
       ),
     get: async (id: string) => clone(this.data.products.find((p) => p.id === id) ?? null),
     count: async () => this.data.products.length,
@@ -170,7 +170,8 @@ export class MemoryV2Store implements V2Store {
   units = {
     list: async (cid: string) => clone([...this.data.units.values()].filter((u) => u.connectionId === cid)),
     get: async (cid: string, key: string) => clone(this.data.units.get(`${cid}|${key}`) ?? null),
-    listFor: async (ids: string[]) => clone([...this.data.units.values()].filter((u) => ids.includes(u.connectionId))),
+    listFor: async (ids: string[], opts: { light?: boolean } = {}) =>
+      clone([...this.data.units.values()].filter((u) => ids.includes(u.connectionId)).map((u) => (opts.light ? { ...u, lastEvaluation: null } : u))),
     upsert: async (s: UnitState) => {
       this.data.units.set(`${s.connectionId}|${s.unitKey}`, clone({ ...s, updatedAt: this.iso() }));
     },
@@ -198,7 +199,7 @@ export class MemoryV2Store implements V2Store {
     list: async (f: SignalFilters) =>
       clone(
         [...this.data.signals]
-          .reverse()
+          .sort(newestFirst((x) => x.createdAt))
           .filter((s) => this.matches(f, { ...s, productId: s.evaluation.productId }) && (!f.outcomes?.length || f.outcomes.includes(s.outcome)))
           .slice(0, f.limit ?? 100),
       ),
@@ -234,7 +235,7 @@ export class MemoryV2Store implements V2Store {
     list: async (f: AlertFilters) =>
       clone(
         [...this.data.alerts]
-          .reverse()
+          .sort(newestFirst((x) => x.createdAt))
           .filter(
             (a) =>
               this.matches(f, a) &&
@@ -288,7 +289,7 @@ export class MemoryV2Store implements V2Store {
   /** The filters alerts and signals share (as PgV2Store's recordWhere). */
   private matches(
     f: RecordStoreFilters,
-    r: { connectionId: string; strategyId: string; productId: string; triggerTimeframe: string; createdAt: string; evaluation: { trace: { children?: Array<{ id: string; result: string }> } } },
+    r: { id: string; connectionId: string; strategyId: string; productId: string; triggerTimeframe: string; createdAt: string; evaluation: { trace: { children?: Array<{ id: string; result: string }> } } },
   ): boolean {
     const p = this.data.products.find((x) => x.id === r.productId);
     const symbol = r.productId.split(':')[1] ?? '';
@@ -301,7 +302,8 @@ export class MemoryV2Store implements V2Store {
       (!f.timeframes?.length || f.timeframes.includes(r.triggerTimeframe as never)) &&
       (!f.since || r.createdAt >= f.since) &&
       (!f.until || r.createdAt < f.until) &&
-      (!f.groups?.length || (r.evaluation.trace.children ?? []).some((g) => g.result === 'TRUE' && f.groups!.includes(g.id)))
+      (!f.groups?.length || (r.evaluation.trace.children ?? []).some((g) => g.result === 'TRUE' && f.groups!.includes(g.id))) &&
+      (!f.before || olderThan(r.createdAt, r.id, f.before))
     );
   }
 

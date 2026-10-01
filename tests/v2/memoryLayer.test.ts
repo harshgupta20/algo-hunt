@@ -104,7 +104,7 @@ describe('memory layer — database traffic in a session', () => {
     expect((await svc.paperTrades({ status: 'OPEN' })).length).toBe(1);
     expect(db.total()).toBe(0);
 
-    // 11:05 the target is hit: one write closes the trade; the Paper tab reads the closed trade once.
+    // 11:05 the target is hit: one write closes the trade; the Paper tab shows it from memory.
     clock.now = ist(D, '11:05');
     provider.ltp.set(atmCe.token, 121);
     await svc.scan();
@@ -113,7 +113,7 @@ describe('memory layer — database traffic in a session', () => {
     db.reset();
     await svc.paperSummary();
     await svc.paperSummary();
-    expect(Object.fromEntries(db.calls)).toEqual({ 'paper.listTrades': 1 });
+    expect(Object.fromEntries(db.calls)).toEqual({});
     expect((await svc.paperSummary()).overall).toMatchObject({ trades: 1, wins: 1 });
     expect(inner.data.alerts).toHaveLength(1); // the core record is in the database
     expect(inner.data.paperTrades[0]).toMatchObject({ status: 'CLOSED', exitReason: 'TARGET' });

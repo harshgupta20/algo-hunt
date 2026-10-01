@@ -177,7 +177,7 @@ describe('database unreachable', () => {
 });
 
 describe('lists and history', () => {
-  it('alert and signal lists are read once and reused until an alert / signal changes them', async () => {
+  it('alert and signal lists are read once; new alerts and signals are added from memory, not re-read', async () => {
     const clock = { now: ist('2026-10-07', '10:00') };
     const db = switchable(new MemoryV2Store(() => clock.now));
     const store = new RuntimeV2Store(db.store, () => clock.now, createRuntimeState());
@@ -191,9 +191,43 @@ describe('lists and history', () => {
     expect([calls('alerts.list'), calls('signals.list')]).toEqual([1, 1]);
     const sig = await store.signals.insert({ identity: 'x', connectionId: c.id, strategyId: s.id, version: 1, unitKey: 'k', triggerTimeframe: '15m', candleTime: 1, outcome: 'ALERTED', evaluation: { productId: 'NSE:NIFTY', trace: { id: 'r', type: 'AND', result: 'TRUE' } } as never });
     await store.alerts.insert({ signalId: sig!.id, connectionId: c.id, strategyId: s.id, strategyName: 'Spec', version: 1, productId: 'NSE:NIFTY', status: 'SENT', unit: {} as never, triggerTimeframe: '15m', candleTime: 1, evaluation: {} as never });
-    expect(await store.alerts.list({ active: true, limit: 50 })).toHaveLength(1); // the new alert (saved first)
+    expect(await store.alerts.list({ active: true, limit: 50 })).toHaveLength(1); // the new alert, from memory
     expect((await store.signals.list({ limit: 100 })).map((x) => x.identity)).toEqual(['x']);
-    expect([calls('alerts.list'), calls('signals.list')]).toEqual([2, 2]);
+    expect([calls('alerts.list'), calls('signals.list')]).toEqual([1, 1]);
+    // Acknowledging changes what the database has: the active list is read again (and the alert is gone from it).
+    const [a] = await store.alerts.list({ active: true, limit: 50 });
+    await store.alerts.acknowledge(a!.id, '2026-10-07T05:00:00.000Z');
+    expect(await store.alerts.list({ active: true, limit: 50 })).toEqual([]);
+    expect(calls('alerts.list')).toBe(2);
+  });
+
+  it('pages read before new alerts arrive: page 1 shows the new ones first, page 2 continues — nothing re-read, nothing lost', async () => {
+    const clock = { now: ist('2026-10-07', '10:00') };
+    const db = switchable(new MemoryV2Store(() => clock.now));
+    const store = new RuntimeV2Store(db.store, () => clock.now, createRuntimeState());
+    const s = await store.strategies.create({ ...strategy([{ id: 'A', kind: 'FUT' }], cond(field(legSeries('A')), 'GT', num(1))), name: 'Spec' });
+    const c = await store.connections.create(s.id, 'NSE:NIFTY', config());
+    const add = async (n: number) => {
+      clock.now += 60_000;
+      const sig = await store.signals.insert({ identity: `a${n}`, connectionId: c.id, strategyId: s.id, version: 1, unitKey: 'k', triggerTimeframe: '15m', candleTime: n, outcome: 'ALERTED', evaluation: { productId: 'NSE:NIFTY', trace: { id: 'r', type: 'AND', result: 'TRUE' } } as never });
+      return store.alerts.insert({ signalId: sig!.id, connectionId: c.id, strategyId: s.id, strategyName: 'Spec', version: 1, productId: 'NSE:NIFTY', status: 'SENT', unit: {} as never, triggerTimeframe: '15m', candleTime: n, evaluation: { productId: 'NSE:NIFTY', trace: { id: 'r', type: 'AND', result: 'TRUE' } } as never });
+    };
+    for (let n = 1; n <= 5; n++) await add(n);
+    await store.flushWrites();
+    const p1 = await store.alerts.list({ limit: 3 });
+    expect(p1.map((a) => a.candleTime)).toEqual([5, 4, 3]);
+    const calls = () => db.state.calls.get('alerts.list') ?? 0;
+    const before = calls();
+    await add(6);
+    await add(7); // two new alerts, not saved yet
+    const again = await store.alerts.list({ limit: 3 });
+    expect(again.map((a) => a.candleTime)).toEqual([7, 6, 5]);
+    expect(calls()).toBe(before); // page 1 wasn't read again
+    const p2 = await store.alerts.list({ limit: 3, before: { at: again.at(-1)!.createdAt, id: again.at(-1)!.id } });
+    expect(p2.map((a) => a.candleTime)).toEqual([4, 3, 2]);
+    const p3 = await store.alerts.list({ limit: 3, before: { at: p2.at(-1)!.createdAt, id: p2.at(-1)!.id } });
+    expect(p3.map((a) => a.candleTime)).toEqual([1]);
+    expect((await store.alerts.get(again[0]!.id))?.candleTime).toBe(7); // today's alert opens from memory
   });
 
   it('history is kept until a period is chosen; then older records are deleted, now and once a day', async () => {

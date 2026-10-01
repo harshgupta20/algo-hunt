@@ -27,6 +27,7 @@ import { Sparkline } from '../paper/charts';
 import { inr, pct, pnlClass, signedInr } from '../paper/money';
 import { PaperTermsFields } from '../paper/PaperFields';
 import { ByHour, HowClosed, Panel, PnlPanel, StatCells, Th, TradeTable, download, pf, td, th, toCsv } from '../paper/PaperTab';
+import { LoadMore } from '../LoadMore';
 
 const DAY = 86_400_000;
 const spanDays = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / DAY) + 1;
@@ -35,6 +36,7 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
   const names = useMemo(() => new Map([...known, [r.strategyId, r.strategyName]]), [known, r.strategyId, r.strategyName]);
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [rows, setRows] = useState(50);
+  const [skippedRows, setSkippedRows] = useState(50);
   const [showSkipped, setShowSkipped] = useState(false);
   const o = r.summary.overall;
   const tone = (n: number | null | undefined) => (n === null || n === undefined || Math.abs(n) < 0.005 ? undefined : n > 0 ? 'bull' : 'bear');
@@ -166,7 +168,16 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
       </Panel>
 
       <Panel title="Trades" help={H.backtest.trades} flush>
-        {r.trades.length ? <TradeTable trades={r.trades} names={names} rows={rows} onMore={() => setRows((n) => n + 50)} opened /> : <EmptyState title="No trades" hint="No alert in this period became a trade — see the alerts not traded below." />}
+        {r.trades.length ? (
+          <TradeTable
+            trades={r.trades.slice(0, rows)}
+            names={names}
+            opened
+            footer={<LoadMore hasMore={r.trades.length > rows} loading={false} onMore={() => setRows((n) => n + 50)} shown={Math.min(rows, r.trades.length)} noun="trades" help={H.paper.more} />}
+          />
+        ) : (
+          <EmptyState title="No trades" hint="No alert in this period became a trade — see the alerts not traded below." />
+        )}
       </Panel>
 
       {r.skipped.length > 0 && (
@@ -183,15 +194,18 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
           }
         >
           {showSkipped && (
-            <ul className="divide-y divide-ink-700/50 text-xs">
-              {r.skipped.map((s, i) => (
-                <li key={`${s.at}-${i}`} className="flex flex-wrap gap-3 px-4 py-2">
-                  <span className="w-28 text-slate-400">{istStampIso(s.at)}</span>
-                  <span className="w-24 font-medium text-slate-200">{symbol(s.productId)}</span>
-                  <span className="text-slate-300">{s.reason}</span>
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="divide-y divide-ink-700/50 text-xs">
+                {r.skipped.slice(0, skippedRows).map((s, i) => (
+                  <li key={`${s.at}-${i}`} className="flex flex-wrap gap-3 px-4 py-2">
+                    <span className="w-28 text-slate-400">{istStampIso(s.at)}</span>
+                    <span className="w-24 font-medium text-slate-200">{symbol(s.productId)}</span>
+                    <span className="text-slate-300">{s.reason}</span>
+                  </li>
+                ))}
+              </ul>
+              <LoadMore hasMore={r.skipped.length > skippedRows} loading={false} onMore={() => setSkippedRows((n) => n + 50)} shown={Math.min(skippedRows, r.skipped.length)} noun="alerts" />
+            </>
           )}
         </Panel>
       )}

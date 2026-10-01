@@ -93,8 +93,9 @@ The running app reads each kind of data from the database once, then keeps it in
 | Status | — | Live-worker heartbeat, locks, the change stamp the screens poll |
 
 A trading hour of scans and open screens makes **no database calls** once warm; an alert costs about five writes, a
-paper exit one ([tests/v2/memoryLayer.test.ts](tests/v2/memoryLayer.test.ts) counts them). Alert and signal lists
-are read once and reused until the next alert, so Neon can sleep whenever nothing fires. The Signals and Scanner
+paper exit one ([tests/v2/memoryLayer.test.ts](tests/v2/memoryLayer.test.ts) counts them). Alert and signal list
+pages are read once and new alerts are merged in from memory; closed paper trades are read once at start; the daily
+contract sync rewrites only the products that changed. Long lists load 50 rows at a time as you scroll. The Signals and Scanner
 tabs show history since the app last started. On Vercel, with `LIVE_WORKER=off`, or next to a separate
 `npm run live`, the app reads and writes everything in the database instead (more than one process shares it).
 

@@ -47,6 +47,8 @@ export interface RecordStoreFilters {
   until?: string;
   groups?: string[];
   limit?: number;
+  /** Next page: rows recorded before this (time, id) — lists are newest first, ties by id. */
+  before?: { at: string; id: string };
 }
 
 export interface AlertFilters extends RecordStoreFilters {
@@ -89,6 +91,8 @@ export interface ProductFilters {
   /** Only products offering every one of these legs (what a strategy needs). */
   needs?: LegKind[];
   limit?: number;
+  /** Skip this many (pages of the catalogue). */
+  offset?: number;
 }
 
 export interface V2Store {
@@ -132,8 +136,8 @@ export interface V2Store {
   };
   units: {
     list(connectionId: string): Promise<UnitState[]>;
-    /** Unit states of several connections in one query (live worker, per trigger candle). */
-    listFor(connectionIds: string[]): Promise<UnitState[]>;
+    /** Unit states of several connections in one query (live worker, per trigger candle). `light` = without the last evaluation (its biggest part). */
+    listFor(connectionIds: string[], opts?: { light?: boolean }): Promise<UnitState[]>;
     get(connectionId: string, unitKey: string): Promise<UnitState | null>;
     upsert(state: UnitState): Promise<void>;
     /** Batched upsert (one statement). */

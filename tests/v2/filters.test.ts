@@ -5,7 +5,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { EvaluationSource, PaperTrade, Timeframe, UnitEvaluation, V2Alert } from '../../src/shared/v2';
-import { filterParams } from '../../src/shared/v2';
+import { filterParams, pageCursor } from '../../src/shared/v2';
 import { ProductService } from '../../src/server/v2/data/ProductService';
 import { V2Service } from '../../src/server/v2/V2Service';
 import { FixtureV2Provider, MemoryV2Store, RecordingChannels, fut, ist, ladder, spot } from '../helpers/v2Fakes';
@@ -69,7 +69,7 @@ describe('trader filters', () => {
     expect(products(await svc.alerts({ search: 'rel' }))).toEqual(['NSE:RELIANCE']);
     expect(products(await svc.alerts({ timeframes: ['5m'] }))).toEqual(['NSE:NIFTY']);
     expect(products(await svc.alerts({ strategyId: 's2' }))).toEqual(['MCX:GOLD']);
-    expect(products(await svc.alerts({ from: '2026-10-06', to: '2026-10-06' }))).toEqual(['NSE:RELIANCE', 'NSE:NIFTY']);
+    expect(products(await svc.alerts({ from: '2026-10-06', to: '2026-10-06' })).sort()).toEqual(['NSE:NIFTY', 'NSE:RELIANCE']); // same minute: either order
     expect(products(await svc.alerts({ from: '2026-10-07' }))).toEqual(['MCX:GOLD']);
   });
 
@@ -131,6 +131,34 @@ describe('trader filters', () => {
     expect(products(await svc.paperTrades({ groups: ['g-bull'], to: '2026-10-06' }))).toEqual(['NSE:NIFTY']);
     const sum = await svc.paperSummary({ kinds: ['INDEX', 'COMMODITY'] });
     expect(sum.overall).toMatchObject({ trades: 2, netPnl: 800 });
+
+    // Winners / losers, and the trade log a page at a time (the next page = entered before the last trade shown).
+    expect(products(await svc.paperTrades({ status: 'CLOSED', result: 'win' }))).toEqual(['MCX:GOLD', 'NSE:NIFTY']);
+    expect(products(await svc.paperTrades({ status: 'CLOSED', result: 'loss' }))).toEqual(['NSE:RELIANCE']);
+    const first = await svc.paperTrades({ status: 'CLOSED', limit: 2 });
+    const last = first.at(-1)!;
+    const next = await svc.paperTrades({ status: 'CLOSED', limit: 2, before: pageCursor(last.entryAt, last.id) });
+    expect([...products(first), ...products(next)]).toEqual(['MCX:GOLD', 'NSE:RELIANCE', 'NSE:NIFTY']);
+    const wins = await svc.paperTrades({ status: 'CLOSED', result: 'win', limit: 1 });
+    expect(products(await svc.paperTrades({ status: 'CLOSED', result: 'win', limit: 1, before: pageCursor(wins[0]!.entryAt, wins[0]!.id) }))).toEqual(['NSE:NIFTY']);
+    await expect(svc.paperTrades({ before: 'not-a-cursor' })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('alerts a page at a time: the same rows in the same order as one long list, whatever the filters', async () => {
+    const all = await svc.alerts({ limit: 100 });
+    const pages: string[] = [];
+    let before: string | undefined;
+    for (;;) {
+      const page = await svc.alerts({ limit: 1, before });
+      pages.push(...page.map((a) => a.id));
+      if (page.length < 1) break;
+      before = pageCursor(page[0]!.createdAt, page[0]!.id);
+    }
+    expect(pages).toEqual(all.map((a) => a.id));
+    const nse = await svc.alerts({ markets: ['NSE'], limit: 2 });
+    const rest = await svc.alerts({ markets: ['NSE'], limit: 2, before: pageCursor(nse[1]!.createdAt, nse[1]!.id) });
+    expect([...nse, ...rest].map((a) => a.productId).sort()).toEqual(['NSE:NIFTY', 'NSE:NIFTY', 'NSE:RELIANCE']);
+    expect(products((await svc.signals({ outcomes: ['ALERTED'], limit: 1, before: pageCursor(all[0]!.createdAt, 'ffffffff-ffff-ffff-ffff-ffffffffffff') })).map((s) => s.evaluation))).toHaveLength(1);
   });
 
   it('the client writes lists comma-separated and skips empty filters', () => {

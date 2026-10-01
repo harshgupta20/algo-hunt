@@ -26,6 +26,7 @@ import type {
 } from '@/shared/v2';
 import { settingsFromStored } from '@/shared/v2';
 import { getPool } from '../../db/pool';
+import { changedProducts, productPrints, type ProductPrints } from './instrumentPrints';
 import type { AlertFilters, DatabaseSize, NewAlert, NewPaperTrade, NewSignal, ProductFilters, PruneResult, RecordStoreFilters, SignalFilters, V2Store } from './V2Store';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -126,7 +127,15 @@ function recordWhere(f: RecordStoreFilters, product: string, where: string[], va
   if (f.groups?.length) {
     add(f.groups, (n) => `EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(evaluation->'trace'->'children', '[]'::jsonb)) g WHERE g->>'result' = 'TRUE' AND g->>'id' = ANY(${n}::text[]))`);
   }
+  // Next page: older than the last row shown. Times are compared to the millisecond (what the app sees), ties by id.
+  if (f.before) {
+    vals.push(f.before.at, f.before.id);
+    where.push(`(date_trunc('milliseconds', created_at), id) < ($${vals.length - 1}::timestamptz, $${vals.length}::uuid)`);
+  }
 }
+
+/** The order pages follow (matches the cursor above). */
+const NEWEST_FIRST = `ORDER BY date_trunc('milliseconds', created_at) DESC, id DESC`;
 
 /** A table that a pending migration creates: answer `fallback` instead of failing. */
 const noTable =
@@ -188,72 +197,97 @@ export class PgV2Store implements V2Store {
     }
   }
 
+  /** Contracts, many rows per statement. A token already stored is updated (Kite can move a token to a new contract). */
+  private async insertInstruments(c: pg.PoolClient, list: V2Instrument[]): Promise<void> {
+    for (let i = 0; i < list.length; i += 5000) {
+      const rows = list.slice(i, i + 5000);
+      await c.query(
+        `INSERT INTO v2_instruments (token, exchange, product_id, kind, symbol, expiry, strike, lot_size, tick_size)
+         SELECT * FROM unnest($1::bigint[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::float8[], $8::int[], $9::float8[])
+         ON CONFLICT (token) DO UPDATE SET exchange = EXCLUDED.exchange, product_id = EXCLUDED.product_id, kind = EXCLUDED.kind, symbol = EXCLUDED.symbol,
+           expiry = EXCLUDED.expiry, strike = EXCLUDED.strike, lot_size = EXCLUDED.lot_size, tick_size = EXCLUDED.tick_size`,
+        [
+          rows.map((r) => r.token),
+          rows.map((r) => r.exchange),
+          rows.map((r) => r.productId),
+          rows.map((r) => r.kind),
+          rows.map((r) => r.symbol),
+          rows.map((r) => r.expiry),
+          rows.map((r) => r.strike),
+          rows.map((r) => r.lotSize),
+          rows.map((r) => r.tickSize),
+        ],
+      );
+    }
+  }
+
+  private async insertProducts(c: pg.PoolClient, products: V2Product[]): Promise<void> {
+    for (let i = 0; i < products.length; i += 1000) {
+      const rows = products.slice(i, i + 1000);
+      await c.query(
+        `INSERT INTO v2_products (id, market, kind, symbol, name, has_spot, has_futures, has_options, future_expiries, option_expiries, strike_step, lot_size)
+         SELECT id, market, kind, symbol, name, has_spot, has_futures, has_options, fe::jsonb, oe::jsonb, step, lot
+         FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::bool[], $7::bool[], $8::bool[], $9::text[], $10::text[], $11::float8[], $12::int[])
+           AS t(id, market, kind, symbol, name, has_spot, has_futures, has_options, fe, oe, step, lot)`,
+        [
+          rows.map((p) => p.id),
+          rows.map((p) => p.market),
+          rows.map((p) => p.kind),
+          rows.map((p) => p.symbol),
+          rows.map((p) => p.name),
+          rows.map((p) => p.hasSpot),
+          rows.map((p) => p.hasFutures),
+          rows.map((p) => p.hasOptions),
+          rows.map((p) => JSON.stringify(p.futureExpiries)),
+          rows.map((p) => JSON.stringify(p.optionExpiries)),
+          rows.map((p) => p.strikeStep),
+          rows.map((p) => p.lotSize),
+        ],
+      );
+    }
+  }
+
   instruments = {
     /**
-     * Daily sync as a difference: only contracts that are new, expired or changed (Kite can reuse a token)
-     * are written — not the whole list (tens of thousands of rows) every morning. Products are small: rewritten.
+     * Daily sync of only what changed. Each product has a fingerprint of its contracts and catalogue row
+     * (instrumentPrints.ts); the last sync's fingerprints are kept in v2_settings ('instruments_prints'), so
+     * a normal morning rewrites a handful of products (new weekly expiries) and reads one small row — not the
+     * whole contract table. The first sync without fingerprints compares every contract once.
      */
     replaceAll: (list: V2Instrument[], products: V2Product[]) =>
       this.tx(async (c) => {
-        const have = new Map(
-          (await c.query('SELECT token, symbol, lot_size, tick_size FROM v2_instruments')).rows.map((r: any) => [Number(r.token), `${r.symbol}|${Number(r.lot_size)}|${Number(r.tick_size)}`]),
-        );
-        const want = new Map(list.map((i) => [i.token, i]));
-        const drop = [...have.keys()].filter((t) => {
-          const i = want.get(t);
-          return !i || have.get(t) !== `${i.symbol}|${i.lotSize}|${i.tickSize}`;
-        });
-        for (let i = 0; i < drop.length; i += 10_000) await c.query('DELETE FROM v2_instruments WHERE token = ANY($1::bigint[])', [drop.slice(i, i + 10_000)]);
-        const dropped = new Set(drop);
-        const fresh = list.filter((i) => !have.has(i.token) || dropped.has(i.token));
-        for (let i = 0; i < fresh.length; i += 5000) {
-          const rows = fresh.slice(i, i + 5000);
-          await c.query(
-            `INSERT INTO v2_instruments (token, exchange, product_id, kind, symbol, expiry, strike, lot_size, tick_size)
-             SELECT * FROM unnest($1::bigint[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::float8[], $8::int[], $9::float8[])
-             ON CONFLICT (token) DO NOTHING`,
-            [
-              rows.map((r) => r.token),
-              rows.map((r) => r.exchange),
-              rows.map((r) => r.productId),
-              rows.map((r) => r.kind),
-              rows.map((r) => r.symbol),
-              rows.map((r) => r.expiry),
-              rows.map((r) => r.strike),
-              rows.map((r) => r.lotSize),
-              rows.map((r) => r.tickSize),
-            ],
+        const prints = productPrints(list, products);
+        const before = (await c.query(`SELECT value FROM v2_settings WHERE key = 'instruments_prints'`)).rows[0]?.value as ProductPrints | undefined;
+        if (before) {
+          const { write, drop } = changedProducts(before, prints);
+          const touch = [...write, ...drop];
+          for (let i = 0; i < touch.length; i += 1000) {
+            const ids = touch.slice(i, i + 1000);
+            await c.query('DELETE FROM v2_instruments WHERE product_id = ANY($1::text[])', [ids]);
+            await c.query('DELETE FROM v2_products WHERE id = ANY($1::text[])', [ids]);
+          }
+          const rewrite = new Set(write);
+          await this.insertInstruments(c, list.filter((i) => rewrite.has(i.productId)));
+          await this.insertProducts(c, products.filter((p) => rewrite.has(p.id)));
+        } else {
+          const have = new Map(
+            (await c.query('SELECT token, symbol, lot_size, tick_size FROM v2_instruments')).rows.map((r: any) => [Number(r.token), `${r.symbol}|${Number(r.lot_size)}|${Number(r.tick_size)}`]),
           );
+          const want = new Map(list.map((i) => [i.token, i]));
+          const drop = [...have.keys()].filter((t) => {
+            const i = want.get(t);
+            return !i || have.get(t) !== `${i.symbol}|${i.lotSize}|${i.tickSize}`;
+          });
+          for (let i = 0; i < drop.length; i += 10_000) await c.query('DELETE FROM v2_instruments WHERE token = ANY($1::bigint[])', [drop.slice(i, i + 10_000)]);
+          const dropped = new Set(drop);
+          await this.insertInstruments(c, list.filter((i) => !have.has(i.token) || dropped.has(i.token)));
+          await c.query('DELETE FROM v2_products');
+          await this.insertProducts(c, products);
         }
-        await c.query('DELETE FROM v2_products');
-        for (let i = 0; i < products.length; i += 1000) {
-          const rows = products.slice(i, i + 1000);
-          await c.query(
-            `INSERT INTO v2_products (id, market, kind, symbol, name, has_spot, has_futures, has_options, future_expiries, option_expiries, strike_step, lot_size)
-             SELECT id, market, kind, symbol, name, has_spot, has_futures, has_options, fe::jsonb, oe::jsonb, step, lot
-             FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::bool[], $7::bool[], $8::bool[], $9::text[], $10::text[], $11::float8[], $12::int[])
-               AS t(id, market, kind, symbol, name, has_spot, has_futures, has_options, fe, oe, step, lot)`,
-            [
-              rows.map((p) => p.id),
-              rows.map((p) => p.market),
-              rows.map((p) => p.kind),
-              rows.map((p) => p.symbol),
-              rows.map((p) => p.name),
-              rows.map((p) => p.hasSpot),
-              rows.map((p) => p.hasFutures),
-              rows.map((p) => p.hasOptions),
-              rows.map((p) => JSON.stringify(p.futureExpiries)),
-              rows.map((p) => JSON.stringify(p.optionExpiries)),
-              rows.map((p) => p.strikeStep),
-              rows.map((p) => p.lotSize),
-            ],
-          );
-        }
+        const save = `INSERT INTO v2_settings (key, value, updated_at) VALUES ($1, $2, now()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`;
+        await c.query(save, ['instruments_prints', JSON.stringify(prints)]);
         // When and how many — read instead of scanning the table.
-        await c.query(
-          `INSERT INTO v2_settings (key, value, updated_at) VALUES ('instruments_sync', $1, now()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-          [JSON.stringify({ at: new Date().toISOString(), count: list.length })],
-        );
+        await c.query(save, ['instruments_sync', JSON.stringify({ at: new Date().toISOString(), count: list.length })]);
       }),
     forProduct: async (productId: string) => (await this.pool.query('SELECT * FROM v2_instruments WHERE product_id = $1', [productId])).rows.map(mapInstrument),
     count: async () => {
@@ -294,8 +328,10 @@ export class PgV2Store implements V2Store {
       const vals: unknown[] = [];
       const where = this.productWhere(f, vals);
       vals.push(Math.min(f.limit ?? 5000, 5000));
-      const order = `CASE kind WHEN 'INDEX' THEN 0 WHEN 'COMMODITY' THEN 1 ELSE 2 END, has_options DESC, symbol`;
-      return (await this.pool.query(`SELECT * FROM v2_products ${where} ORDER BY ${order} LIMIT $${vals.length}`, vals)).rows.map(mapProduct);
+      const limit = `$${vals.length}`;
+      vals.push(Math.max(0, Math.floor(f.offset ?? 0)));
+      const order = `CASE kind WHEN 'INDEX' THEN 0 WHEN 'COMMODITY' THEN 1 ELSE 2 END, has_options DESC, symbol, id`;
+      return (await this.pool.query(`SELECT * FROM v2_products ${where} ORDER BY ${order} LIMIT ${limit} OFFSET $${vals.length}`, vals)).rows.map(mapProduct);
     },
     countByKind: async (f: Pick<ProductFilters, 'search' | 'market' | 'needs'> = {}) => {
       const vals: unknown[] = [];
@@ -430,8 +466,11 @@ export class PgV2Store implements V2Store {
       const r = (await this.pool.query('SELECT * FROM v2_unit_state WHERE connection_id = $1 AND unit_key = $2', [connectionId, unitKey])).rows[0];
       return r ? mapUnit(r) : null;
     },
-    listFor: async (connectionIds: string[]) =>
-      connectionIds.length ? (await this.pool.query('SELECT * FROM v2_unit_state WHERE connection_id = ANY($1::uuid[])', [connectionIds])).rows.map(mapUnit) : [],
+    listFor: async (connectionIds: string[], opts: { light?: boolean } = {}) => {
+      if (!connectionIds.length) return [];
+      const cols = opts.light ? 'connection_id, unit_key, state, last_evaluated_candle, last_result, last_signal_candle, last_alert_at, cooldown_until, updated_at' : '*';
+      return (await this.pool.query(`SELECT ${cols} FROM v2_unit_state WHERE connection_id = ANY($1::uuid[])`, [connectionIds])).rows.map(mapUnit);
+    },
     upsert: async (s: UnitState) => this.units.upsertMany([s]),
     upsertMany: async (list: UnitState[]) => {
       for (let i = 0; i < list.length; i += 500) {
@@ -486,7 +525,7 @@ export class PgV2Store implements V2Store {
       vals.push(Math.min(f.limit ?? 100, 1000));
       // Lists leave the condition trace (most of each row's size) in the database.
       const cols = `id, identity, connection_id, strategy_id, version, unit_key, trigger_timeframe, candle_time, outcome, evaluation - 'trace' AS evaluation, created_at`;
-      return (await this.pool.query(`SELECT ${cols} FROM v2_signals ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT $${vals.length}`, vals)).rows.map(mapSignal);
+      return (await this.pool.query(`SELECT ${cols} FROM v2_signals ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ${NEWEST_FIRST} LIMIT $${vals.length}`, vals)).rows.map(mapSignal);
     },
   };
 
@@ -544,7 +583,7 @@ export class PgV2Store implements V2Store {
       vals.push(Math.min(f.limit ?? 200, 1000));
       // Lists leave the condition trace (most of each row's size) and the duplicate unit in the database.
       const cols = `id, signal_id, connection_id, strategy_id, strategy_name, version, product_id, status, unit, trigger_timeframe, candle_time, evaluation - 'trace' - 'unit' AS evaluation, acknowledged_at, created_at`;
-      const rows = (await this.pool.query(`SELECT ${cols} FROM v2_alerts ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT $${vals.length}`, vals)).rows;
+      const rows = (await this.pool.query(`SELECT ${cols} FROM v2_alerts ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ${NEWEST_FIRST} LIMIT $${vals.length}`, vals)).rows;
       const deliveries = await this.deliveriesFor(rows.map((r: any) => r.id));
       return rows.map((r: any) => mapAlert(r, deliveries.get(r.id) ?? []));
     },

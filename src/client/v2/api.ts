@@ -151,7 +151,7 @@ export interface CompareInput {
 export const v2Api = {
   status: () => request<V2Status>('/status'),
   live: () => request<LiveInfo>('/live'),
-  products: (q: { search?: string; kind?: string; market?: string; ids?: string[]; needs?: string[]; limit?: number } = {}) => {
+  products: (q: { search?: string; kind?: string; market?: string; ids?: string[]; needs?: string[]; limit?: number; offset?: number } = {}) => {
     const p = new URLSearchParams();
     if (q.search) p.set('search', q.search);
     if (q.kind) p.set('kind', q.kind);
@@ -159,6 +159,7 @@ export const v2Api = {
     if (q.ids?.length) p.set('ids', q.ids.join(','));
     if (q.needs?.length) p.set('needs', q.needs.join(','));
     if (q.limit) p.set('limit', String(q.limit));
+    if (q.offset) p.set('offset', String(q.offset));
     return request<V2Product[]>(`/products?${p}`);
   },
   syncProducts: () => post<{ instruments: number; products: number; syncedAt: string }>('/products/sync'),

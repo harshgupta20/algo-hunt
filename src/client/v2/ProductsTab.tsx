@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import type { ProductKind } from '@/shared/v2';
 import { PRODUCT_KIND_LABEL } from '@/shared/v2';
@@ -12,20 +12,27 @@ import { ProductLegs, Segmented } from './components';
 import { shortDate } from './format';
 import { H } from './help';
 import { InlineSpinner, SkeletonRows } from '../components/loaders';
+import { LoadMore, flatPages } from './LoadMore';
 
-/** Rows listed at once (the rest via search / filters). */
-const SHOWN = 300;
+/** Products per page (the next page loads as you scroll the table). */
+const PAGE = 100;
 
 export function ProductsTab() {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<'' | ProductKind>('');
-  const list = useQuery({ queryKey: ['v2-products', search, kind, 'tab'], queryFn: () => v2Api.products({ search: search || undefined, kind: kind || undefined, limit: SHOWN }) });
+  const list = useInfiniteQuery({
+    queryKey: ['v2-products', search, kind, 'tab'],
+    queryFn: ({ pageParam }) => v2Api.products({ search: search || undefined, kind: kind || undefined, limit: PAGE, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (page, pages) => (page.length < PAGE ? undefined : pages.length * PAGE),
+  });
+  const rows = flatPages(list.data?.pages);
   const counts = useQuery({ queryKey: ['v2-products', 'counts', search], queryFn: () => v2Api.productCounts({ search: search || undefined }) });
   const c = counts.data;
   const n = (v: number | undefined) => (v === undefined ? '' : ` (${v.toLocaleString('en-IN')})`);
   const matching = c ? (kind ? c[kind] : c.total) : undefined;
-  const shown = list.data?.length ?? 0;
+  const shown = rows.length;
   const sync = useMutation({
     mutationFn: v2Api.syncProducts,
     onSuccess: () => {
@@ -64,12 +71,12 @@ export function ProductsTab() {
         />
       </div>
       {matching !== undefined && list.data && (
-        <Tooltip content={{ title: 'Products shown', body: `The table lists up to ${SHOWN} products at a time. Use the search or a type filter to find the rest.` }}>
+        <Tooltip content={{ title: 'Products shown', body: `The table loads ${PAGE} products at a time — more as you scroll it. The search and the type filter narrow the whole catalogue.` }}>
           <p className="text-xs text-slate-400 -mb-2">
             {shown < matching ? (
               <>
                 Showing <span className="font-semibold text-slate-200">{shown.toLocaleString('en-IN')}</span> of{' '}
-                <span className="font-semibold text-slate-200">{matching.toLocaleString('en-IN')}</span> products — search to narrow the list
+                <span className="font-semibold text-slate-200">{matching.toLocaleString('en-IN')}</span> products — scroll the table for more, or search
               </>
             ) : (
               <>
@@ -83,7 +90,7 @@ export function ProductsTab() {
       <Card className="p-0 overflow-hidden">
         {list.isLoading ? (
           <SkeletonRows rows={8} />
-        ) : list.data?.length ? (
+        ) : rows.length ? (
           <div className="overflow-x-auto max-h-[36rem]">
             <table className="w-full text-xs">
               <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500 bg-ink-850 sticky top-0">
@@ -99,7 +106,7 @@ export function ProductsTab() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-700/40">
-                {list.data.map((p) => (
+                {rows.map((p) => (
                   <tr key={p.id}>
                     <td className="px-4 py-1.5">
                       <div className="font-medium text-slate-200">{p.symbol}</div>
@@ -121,6 +128,7 @@ export function ProductsTab() {
                 ))}
               </tbody>
             </table>
+            <LoadMore hasMore={!!list.hasNextPage} loading={list.isFetchingNextPage} onMore={() => void list.fetchNextPage()} shown={rows.length} noun="products" />
           </div>
         ) : (
           <EmptyState title="No products" hint="Connect Kite (Settings → Broker Connection) and press “Sync from Kite”." />

@@ -103,16 +103,23 @@ The state lives on `globalThis`, so every module copy in the process shares it.
 | Data | Where it goes |
 | --- | --- |
 | Strategies, connections, settings, paper plans / overrides, calendar, Kite session, preferences | Read once, cached, written through on change (a strategy's version history is read on demand) |
-| Instruments / products | Cached; Postgres sync is a diff (deletes gone or changed tokens, inserts new ones) once a day, with its time and count kept in `v2_settings` key `instruments_sync` |
-| Alerts, deliveries | Written in the background (below); the alarm feed is served from memory (the last 200 loaded once); alert lists are read once per filter and reused until an alert changes |
-| Signals | ALERTED / NO_CHANNEL written (in the background) with a shallow trace (top-level ids, labels, results); others kept in memory (last 1 000); deduped in memory by identity |
-| Unit state | Written (in the background) only when the alert decision changes (state, last signal candle, last alert, cooldown) |
-| Paper trades | Written (in the background) on open and on close; open trades and their marks (live P&L) in memory, one per slot checked there; closed trades read once per change |
+| Instruments / products | Cached. The daily sync keeps a fingerprint per product (its contracts + catalogue row, [instrumentPrints.ts](../src/server/v2/persistence/instrumentPrints.ts)) in `v2_settings` key `instruments_prints` and rewrites only the products whose fingerprint changed — a normal morning reads one small row and rewrites a few products (new weekly expiries), not ~100,000 contracts. The first sync without fingerprints compares every contract once. Time and count: key `instruments_sync` |
+| Alerts, deliveries | Written in the background (below); the alarm feed is served from memory (the last 200 loaded once); this run's alerts (last 1 000) are kept in full — opened from memory and merged into lists. List pages are read once per filters + page and kept: a new alert is added from memory instead of re-reading; a page is read again only after an acknowledgement or a deletion, or when a newer alert has left memory |
+| Signals | ALERTED / NO_CHANNEL written (in the background) with a shallow trace (top-level ids, labels, results); others kept in memory (last 1 000); deduped in memory by identity; list pages kept and merged like alerts |
+| Unit state | Written (in the background) only when the alert decision changes (state, last signal candle, last alert, cooldown); read at start without the saved last evaluations |
+| Paper trades | Written (in the background) on open and on close; open trades and their marks (live P&L) in memory, one per slot checked there; **every closed trade read once at start** (up to 50 000) and kept — closures are added in memory, the Paper and Strategies tabs and their filters never re-read |
 | Scanner runs, locks, live-worker status, the change stamp screens poll | Memory only |
 
 [tests/v2/memoryLayer.test.ts](../tests/v2/memoryLayer.test.ts) checks this on a simulated session: after warm-up an
 hour of minute scans and screen polls makes no database calls; an alert costs five writes (signal, alert, delivery,
-unit state, paper trade); a paper exit one; the Paper tab then reads the closed trades once.
+unit state, paper trade); a paper exit one; the Paper tab then shows it from memory.
+
+**Paging.** Alerts and signals are listed newest first, ties by id; a page ends at a row and the next page is
+everything older than it (`before=<time>|<id>`; Postgres compares the time to the millisecond, as the app sees it).
+Paper trades page the same way by entry time (all from memory), the product catalogue by offset. Every filter applies
+on the server, so each page is already filtered. Covered by [storeSpec.test.ts](../tests/v2/storeSpec.test.ts) (no
+row twice, none missed, filters on every page) and [databaseOutage.test.ts](../tests/v2/databaseOutage.test.ts) (new
+alerts on page 1 without a re-read, page 2 continuing).
 
 ### Saving in the background
 

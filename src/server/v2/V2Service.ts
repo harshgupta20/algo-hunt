@@ -23,7 +23,7 @@ import type {
   V2Strategy,
   ValidationIssue,
 } from '@/shared/v2';
-import { DEFAULT_TELEGRAM_BOT, defaultPaperPlan, hasErrors, resolveRules, incompatibility, strategySummary, validateConnection, validateStrategy } from '@/shared/v2';
+import { DEFAULT_TELEGRAM_BOT, defaultPaperPlan, hasErrors, newestFirst, olderThan, parseCursor, resolveRules, incompatibility, strategySummary, validateConnection, validateStrategy } from '@/shared/v2';
 import { istDate } from '../utils/marketTime';
 import { envChannelFactory, recentTelegramChats, telegramBotInfo, type ChannelFactory, type ChannelName } from './alerts/notifications';
 import { getConfig } from '../config/index';
@@ -72,6 +72,15 @@ function istRange(from?: string, to?: string): { since?: string; until?: string 
     since: from ? new Date(dateStartMs(from)).toISOString() : undefined,
     until: to ? new Date(dateStartMs(to) + 86_400_000).toISOString() : undefined,
   };
+}
+
+/** A page cursor from the API (`before`), or a 400 when it's malformed. */
+function cursor(v: string | undefined): { at: string; id: string } | undefined {
+  try {
+    return parseCursor(v);
+  } catch (err) {
+    throw new V2ServiceError(400, msg(err));
+  }
 }
 
 /** Paper-trading tables not created yet: say how to fix it instead of a raw database error. */
@@ -402,9 +411,10 @@ export class V2Service {
 
   // ---- alerts / signals / scanner ----------------------------------------------------------
 
+  /** Newest first, a page at a time (`before` = the last row's cursor). */
   alerts(q: AlertQuery = {}) {
-    const { from, to, ...rest } = q;
-    return this.deps.store.alerts.list({ ...rest, ...istRange(from, to), limit: Math.min(q.limit ?? 200, 1000) });
+    const { from, to, before, ...rest } = q;
+    return this.deps.store.alerts.list({ ...rest, ...istRange(from, to), before: cursor(before), limit: Math.min(q.limit ?? 200, 1000) });
   }
 
   /** One alert in full (with its condition trace). */
@@ -429,8 +439,8 @@ export class V2Service {
   }
 
   signals(q: SignalQuery = {}) {
-    const { from, to, ...rest } = q;
-    return this.deps.store.signals.list({ ...rest, ...istRange(from, to), limit: Math.min(q.limit ?? 200, 1000) });
+    const { from, to, before, ...rest } = q;
+    return this.deps.store.signals.list({ ...rest, ...istRange(from, to), before: cursor(before), limit: Math.min(q.limit ?? 200, 1000) });
   }
 
   scan(opts: ScanOptions = {}) {
@@ -488,7 +498,7 @@ export class V2Service {
       q.status === 'OPEN' ? Promise.resolve([]) : this.closedTrades(),
       q.status === 'CLOSED' ? Promise.resolve([]) : this.deps.store.paper.listTrades({ status: 'OPEN', strategyId: q.strategyId, connectionId: q.connectionId, since, limit: 5_000 }),
     ]);
-    return [...open, ...closed.filter(keep)].sort((a, b) => b.entryAt.localeCompare(a.entryAt));
+    return [...open, ...closed.filter(keep)].sort(newestFirst((t) => t.entryAt));
   }
 
   /** Results for the trades matching the filters (all when none); connections are narrowed the same way. */
@@ -559,13 +569,22 @@ export class V2Service {
     });
   }
 
+  /** Newest entry first, a page at a time (`before` = the last trade's cursor); `result` = winners / losers. */
   async paperTrades(q: PaperQuery = {}): Promise<PaperTrade[]> {
     return paperTables(async () => {
-      const limit = Math.min(q.limit ?? 500, 5_000);
+      const limit = Math.min(q.limit ?? 500, 50_000);
+      const after = cursor(q.before);
       const filtered = !!(q.kinds?.length || q.markets?.length || q.search?.trim() || q.timeframes?.length || q.to || q.sides?.length || q.groups?.length);
       const list = await this.paperTradesFor(q);
       const scope = filtered ? await this.paperScope(q, await this.deps.store.strategies.list(), list.map((t) => t.productId)) : null;
-      return (scope ? list.filter(scope.trade) : list).slice(0, limit).map((t) => (t.status === 'OPEN' ? { ...t, openPnl: unrealizedPnl(t) } : t));
+      const keep = (t: PaperTrade) =>
+        (!scope || scope.trade(t)) &&
+        (!q.result || (q.result === 'win' ? (t.netPnl ?? 0) > 0 : (t.netPnl ?? 0) < 0)) &&
+        (!after || olderThan(t.entryAt, t.id, after));
+      return list
+        .filter(keep)
+        .slice(0, limit)
+        .map((t) => (t.status === 'OPEN' ? { ...t, openPnl: unrealizedPnl(t) } : t));
     });
   }
 

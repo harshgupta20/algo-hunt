@@ -147,9 +147,12 @@ One filter bar on both tabs, remembered in your browser (separately for each tab
   group that fired, e.g. Bullish / Bearish). Alerts also offer **Candles** (Verified / Kite candles / Live candle /
   Not verified) and **Delivery** (Sent / Partial / Failed / Acknowledged); Signals offer **Outcome**; Paper offers
   **Side** (Buy / Sell).
-- **Clear** resets everything; the count at the right shows how many records match. Alerts list the newest 500 that
-  match — narrow the period to see older ones. On the Paper tab the period applies to the results and the trade log;
-  open positions are always shown (other filters still apply).
+- **Clear** resets everything; the count at the right shows how many records are listed (a **+** means more load as
+  you scroll). Long lists — alerts, signals, the paper trade log, backtest trades, products — show 50 (products 100)
+  at a time and load the next page by themselves when you scroll to the end (or press **Load more**); every filter
+  applies to every page. The trade log's **All / Winners / Losers** counts come from the results above, and **CSV**
+  exports every matching trade, not just the loaded pages. On the Paper tab the period applies to the results and the
+  trade log; open positions are always shown (other filters still apply).
 
 ## 5. Paper trading (on for every connection)
 

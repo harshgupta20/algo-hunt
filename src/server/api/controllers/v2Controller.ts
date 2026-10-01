@@ -63,6 +63,7 @@ export function v2Controller(ctx: AppContext) {
     to: date(q.get('to')),
     groups: q.get('groups')?.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 50),
     limit: num(q.get('limit')),
+    before: str(q.get('before')),
   });
   const needs = (v: string | null) => {
     const kinds = v?.split(',').filter((k): k is LegKind => LEG_KINDS.some((l) => l.kind === k));
@@ -80,6 +81,7 @@ export function v2Controller(ctx: AppContext) {
         ids: req.query.get('ids')?.split(',').filter(Boolean),
         needs: needs(req.query.get('needs')),
         limit: num(req.query.get('limit')),
+        offset: num(req.query.get('offset')),
       }),
     product: (req) => svc().product(req.params.id!),
     productCounts: (req) => svc().productCounts({ search: str(req.query.get('search')), market: str(req.query.get('market')), needs: needs(req.query.get('needs')) }),
@@ -166,7 +168,13 @@ export function v2Controller(ctx: AppContext) {
     resetConnectionPaper: (req) => svc().saveConnectionPaper(req.params.id!, {}),
     paperTrades: (req) => {
       const status = req.query.get('status');
-      return svc().paperTrades({ ...records(req.query), status: status === 'OPEN' || status === 'CLOSED' ? status : undefined, sides: csv(req.query.get('sides'), SIDES) });
+      const result = req.query.get('result');
+      return svc().paperTrades({
+        ...records(req.query),
+        status: status === 'OPEN' || status === 'CLOSED' ? status : undefined,
+        sides: csv(req.query.get('sides'), SIDES),
+        result: result === 'win' || result === 'loss' ? result : undefined,
+      });
     },
     closePaperTrade: (req) => svc().closePaperTrade(req.params.id!),
     resetPaper: (req) => svc().resetPaper(req.params.id!),

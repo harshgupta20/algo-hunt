@@ -10,17 +10,18 @@
  * Paper trading is on for every connection by default; nothing is sent to the broker.
  */
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Download, Pencil, RefreshCw, Trash2, Wallet, X } from 'lucide-react';
 import clsx from 'clsx';
 import type { PaperStats, PaperSummary, PaperTrade } from '@/shared/v2';
-import { paperGroups } from '@/shared/v2';
+import { pageCursor, paperGroups } from '@/shared/v2';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { Badge, EmptyState, IconButton, StatCard } from '../../components/ui';
 import { InlineSpinner, SkeletonRows, SkeletonStatGrid } from '../../components/loaders';
 import { v2Api } from '../api';
 import { InstrumentChip, Segmented } from '../components';
 import { FilterBar, activeCount, toQuery, useFilters } from '../FilterBar';
+import { LoadMore, flatPages } from '../LoadMore';
 import { istStampIso } from '../format';
 import { H } from '../help';
 import { PnlBars, RangeBar, Sparkline } from './charts';
@@ -500,8 +501,8 @@ function Ranking({ sum, onEditStrategy, onReset, resetting }: { sum: PaperSummar
   );
 }
 
-/** Closed trades: when, product, contract, side, size, fills, why it closed, how long, charges, net P&L. */
-export function TradeTable({ trades, names, rows, onMore, opened }: { trades: PaperTrade[]; names: Map<string, string>; rows: number; onMore: () => void; opened?: boolean }) {
+/** Closed trades: when, product, contract, side, size, fills, why it closed, how long, charges, net P&L. `footer`: the next page (LoadMore). */
+export function TradeTable({ trades, names, opened, footer }: { trades: PaperTrade[]; names: Map<string, string>; opened?: boolean; footer?: ReactNode }) {
   return (
     <>
       <div className="overflow-x-auto">
@@ -522,7 +523,7 @@ export function TradeTable({ trades, names, rows, onMore, opened }: { trades: Pa
             </tr>
           </thead>
           <tbody className="divide-y divide-ink-700/50">
-            {trades.slice(0, rows).map((t) => (
+            {trades.map((t) => (
               <tr key={t.id}>
                 {opened && <td className={clsx(td, 'text-slate-400')}>{istStampIso(t.entryAt)}</td>}
                 <td className={clsx(td, 'text-slate-400')}>{t.exitAt ? istStampIso(t.exitAt) : '—'}</td>
@@ -554,40 +555,52 @@ export function TradeTable({ trades, names, rows, onMore, opened }: { trades: Pa
           </tbody>
         </table>
       </div>
-      {trades.length > rows && (
-        <div className="flex justify-center p-3">
-          <Tooltip content={H.paper.more}>
-            <button type="button" className="btn-ghost py-1 text-xs" onClick={onMore}>
-              Show 50 more of {trades.length - rows}
-            </button>
-          </Tooltip>
-        </div>
-      )}
+      {footer}
     </>
   );
 }
 
 // ---- the tab ---------------------------------------------------------------------------------
 
+/** Trade-log rows per page (the next page loads as you scroll). */
+const LOG_PAGE = 50;
+const count = (n: number | undefined) => (n === undefined ? '' : ` (${n.toLocaleString('en-IN')})`);
+
 export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrategyId?: string; onEditStrategy: (strategyId?: string) => void }) {
   const qc = useQueryClient();
   const [filters, setFilters] = useFilters('paper', { strategyId: initialStrategyId });
   const [logView, setLogView] = useState<'all' | 'win' | 'loss'>('all');
-  const [logRows, setLogRows] = useState(50);
   const strategies = useQuery({ queryKey: ['v2-strategies'], queryFn: v2Api.strategies });
   const { sources: _s, statuses: _st, outcomes: _o, ...q } = toQuery(filters, strategies.data ?? []);
   const { from: _from, to: _to, ...qOpen } = q; // open positions: every period
   const ready = !filters.groups.length || !!strategies.data;
   const summary = useQuery({ queryKey: ['v2-paper', 'summary', q], queryFn: () => v2Api.paperSummary(q), refetchInterval: 60_000, enabled: ready, placeholderData: keepPreviousData });
   const open = useQuery({ queryKey: ['v2-paper', 'open', qOpen], queryFn: () => v2Api.paperTrades({ ...qOpen, status: 'OPEN', limit: 500 }), refetchInterval: 5_000, enabled: ready, placeholderData: keepPreviousData });
-  const log = useQuery({ queryKey: ['v2-paper', 'log', q], queryFn: () => v2Api.paperTrades({ ...q, status: 'CLOSED', limit: 1_000 }), refetchInterval: 120_000, enabled: ready, placeholderData: keepPreviousData });
+  // The trade log a page at a time; every filter (and winners / losers) is applied by the server.
+  const result = logView === 'all' ? undefined : logView;
+  const log = useInfiniteQuery({
+    queryKey: ['v2-paper', 'log', q, result],
+    queryFn: ({ pageParam }) => v2Api.paperTrades({ ...q, status: 'CLOSED', result, limit: LOG_PAGE, before: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => (page.length < LOG_PAGE ? undefined : pageCursor(page[page.length - 1]!.entryAt, page[page.length - 1]!.id)),
+    refetchInterval: 120_000,
+    enabled: ready,
+    placeholderData: keepPreviousData,
+  });
+  // CSV: every matching trade, not just the pages loaded.
+  const csv = useMutation({
+    mutationFn: async () => {
+      const closed = await v2Api.paperTrades({ ...q, status: 'CLOSED', result, limit: 50_000 });
+      download(`paper-trades-${new Date().toISOString().slice(0, 10)}.csv`, toCsv([...(open.data ?? []), ...closed], names));
+    },
+  });
   const refresh = () => qc.invalidateQueries({ queryKey: ['v2-paper'] });
   const close = useMutation({ mutationFn: (id: string) => v2Api.closePaperTrade(id), onSettled: refresh });
   const reset = useMutation({ mutationFn: (id: string) => v2Api.resetPaper(id), onSettled: refresh });
   const names = new Map((strategies.data ?? []).map((s) => [s.id, s.name]));
   const sum = summary.data;
   const openPnl = (open.data ?? []).reduce((a, t) => a + (t.openPnl ?? 0), 0);
-  const trades = useMemo(() => (log.data ?? []).filter((t) => (logView === 'all' ? true : logView === 'win' ? (t.netPnl ?? 0) > 0 : (t.netPnl ?? 0) < 0)), [log.data, logView]);
+  const trades = useMemo(() => flatPages(log.data?.pages), [log.data]);
   const switchedOn = sum?.connections.filter((c) => c.switchedOn) ?? [];
   const onReset = (id: string, name: string, n: number) => {
     if (window.confirm(`Delete all ${n} paper trade(s) of “${name}” (open ones too)? The settings stay. This cannot be undone.`)) reset.mutate(id);
@@ -595,7 +608,7 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
 
   return (
     <div className="flex flex-col gap-4">
-      <FilterBar value={filters} onChange={(v) => (setFilters(v), setLogRows(50))} strategies={strategies.data ?? []} fields={['sides']} shown={sum ? `${sum.overall.trades} closed · ${sum.overall.open} open trade(s)${activeCount(filters, ['sides']) ? ' match' : ''}` : undefined} />
+      <FilterBar value={filters} onChange={setFilters} strategies={strategies.data ?? []} fields={['sides']} shown={sum ? `${sum.overall.trades} closed · ${sum.overall.open} open trade(s)${activeCount(filters, ['sides']) ? ' match' : ''}` : undefined} />
       <div className="flex flex-wrap items-center gap-3">
         <IconButton help={H.paper.refresh} onClick={refresh} className="btn-ghost py-1.5 text-xs">
           <RefreshCw className={clsx('w-3.5 h-3.5', (summary.isFetching || open.isFetching) && 'animate-spin')} /> Refresh
@@ -719,20 +732,20 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
             <Segmented
               label="Show trades"
               value={logView}
-              onChange={(v) => (setLogView(v), setLogRows(50))}
+              onChange={setLogView}
               options={[
-                { value: 'all', label: `All (${log.data?.length ?? 0})`, help: H.paper.logFilter },
-                { value: 'win', label: 'Winners', help: H.paper.logFilter },
-                { value: 'loss', label: 'Losers', help: H.paper.logFilter },
+                { value: 'all', label: `All${count(sum?.overall.trades)}`, help: H.paper.logFilter },
+                { value: 'win', label: `Winners${count(sum?.overall.wins)}`, help: H.paper.logFilter },
+                { value: 'loss', label: `Losers${count(sum?.overall.losses)}`, help: H.paper.logFilter },
               ]}
             />
             <IconButton
               help={H.paper.csv}
-              disabled={!trades.length && !open.data?.length}
-              onClick={() => download(`paper-trades-${new Date().toISOString().slice(0, 10)}.csv`, toCsv([...(open.data ?? []), ...trades], names))}
+              disabled={(!trades.length && !open.data?.length) || csv.isPending}
+              onClick={() => csv.mutate()}
               className="btn-ghost py-1 text-xs"
             >
-              <Download className="w-3.5 h-3.5" /> CSV
+              {csv.isPending ? <InlineSpinner className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5" />} CSV
             </IconButton>
           </>
         }
@@ -740,7 +753,11 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
         {log.isLoading ? (
           <SkeletonRows rows={4} dense />
         ) : trades.length ? (
-          <TradeTable trades={trades} names={names} rows={logRows} onMore={() => setLogRows((n) => n + 50)} />
+          <TradeTable
+            trades={trades}
+            names={names}
+            footer={<LoadMore hasMore={!!log.hasNextPage} loading={log.isFetchingNextPage} onMore={() => void log.fetchNextPage()} shown={trades.length} noun="trades" help={H.paper.more} />}
+          />
         ) : (
           <EmptyState title={logView === 'all' ? 'No closed paper trades in this period' : logView === 'win' ? 'No winning trades in this period' : 'No losing trades in this period'} />
         )}

@@ -283,6 +283,11 @@ export const H = {
     notes: { title: 'How it was tested', body: 'Assumptions and data limits of this backtest.' },
   } satisfies Record<string, TooltipContent>,
 
+  lists: {
+    more: { title: 'Load more', body: 'Load the next page — this also happens by itself when you scroll to the end of the list. Every filter above still applies.' },
+    end: { title: 'End of the list', body: 'Everything that matches the filters is shown.' },
+  } satisfies Record<string, TooltipContent>,
+
   filters: {
     strategy: { title: 'Strategy', body: 'Only this strategy’s records (all its connected products).' },
     period: { title: 'Period', body: 'When the alert / signal was recorded, or the paper trade opened (IST calendar days). Custom: pick the first and last day.' },
@@ -303,8 +308,7 @@ export const H = {
     sides: { title: 'Side', body: 'Paper trades that bought or sold the contract.' },
     more: { title: 'More filters', body: 'Show or hide type, market, timeframe, group and the other filters.' },
     clear: { title: 'Clear filters', body: 'Back to everything (the strategy and period too).' },
-    count: { title: 'Shown', body: 'How many records match the filters.' },
-    capped: { title: 'Latest only', body: 'Only the newest records are listed — narrow the period or filters to see older ones.' },
+    count: { title: 'Shown', body: 'How many records match the filters (more load as you scroll down).' },
   } satisfies Record<string, TooltipContent>,
 
   paper: {
@@ -365,7 +369,7 @@ export const H = {
     view: { title: 'Show', body: 'Rank connections (each strategy + product) or whole strategies.' },
     range: { title: 'Stop → target', body: 'Where the latest price sits between the stop-loss (left) and the target (right); the tick marks the entry.' },
     logFilter: { title: 'Show', body: 'All closed trades, only winners, or only losers.' },
-    more: { title: 'Show more', body: 'Show the next 50 trades.' },
+    more: { title: 'Load more', body: 'Load the next trades — this also happens by itself when you scroll to the end of the list.' },
 
     // Paper tab
     strategy: { title: 'Strategy', body: 'Show results for one strategy, or all of them.' },

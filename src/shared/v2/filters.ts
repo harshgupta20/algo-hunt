@@ -19,7 +19,10 @@ export interface RecordFilters {
   from?: string;
   to?: string;
   groups?: string[];
+  /** Page size. */
   limit?: number;
+  /** The next page: rows older than this cursor (see pageCursor). */
+  before?: string;
 }
 
 export interface AlertQuery extends RecordFilters {
@@ -35,6 +38,35 @@ export interface SignalQuery extends RecordFilters {
 export interface PaperQuery extends RecordFilters {
   status?: 'OPEN' | 'CLOSED';
   sides?: PaperSide[];
+  /** Closed trades that made money (net > 0) / lost money (net < 0). */
+  result?: 'win' | 'loss';
+}
+
+/**
+ * Paging for long lists (newest first): a page ends at some row; the next page is everything older than it.
+ * The cursor is that row's time (alerts / signals: recorded; paper trades: entered) and id — "time|id".
+ */
+export function pageCursor(at: string, id: string): string {
+  return `${at}|${id}`;
+}
+
+export function parseCursor(v: string | null | undefined): { at: string; id: string } | undefined {
+  if (!v) return undefined;
+  const i = v.lastIndexOf('|');
+  const at = v.slice(0, i);
+  const id = v.slice(i + 1);
+  if (i < 1 || Number.isNaN(Date.parse(at)) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new Error('Invalid page cursor');
+  return { at: new Date(at).toISOString(), id };
+}
+
+/** Newest first, ties by id (the order pages follow). */
+export function newestFirst<T extends { id: string }>(time: (r: T) => string): (a: T, b: T) => number {
+  return (a, b) => time(b).localeCompare(time(a)) || b.id.localeCompare(a.id);
+}
+
+/** Is the row older than the cursor (on the next page)? */
+export function olderThan(at: string, id: string, c: { at: string; id: string }): boolean {
+  return at < c.at || (at === c.at && id < c.id);
 }
 
 export const PRODUCT_KINDS: ProductKind[] = ['INDEX', 'STOCK', 'COMMODITY'];

@@ -233,6 +233,41 @@ describe.each(makers)('store behaviour — %s', (name, make) => {
     expect((await store.maintenance.size()).engine).toBe('memory');
   });
 
+  it('pages: newest first, then older than the last row (ties by id) — nothing twice, nothing missed, filters on every page', async () => {
+    const { clock, store } = setup();
+    await store.instruments.replaceAll(INST, productsOf(INST));
+    const s = await store.strategies.create(DEF);
+    const conns = { nifty: await store.connections.create(s.id, 'NSE:NIFTY', config()), gold: await store.connections.create(s.id, 'MCX:GOLD', config()) };
+    for (let i = 0; i < 7; i++) {
+      if (i !== 3) clock.now += 60_000; // #2 and #3 in the same instant
+      const productId = i % 2 ? 'MCX:GOLD' : 'NSE:NIFTY';
+      const c = i % 2 ? conns.gold : conns.nifty;
+      const sig = await store.signals.insert({ identity: `p${i}`, connectionId: c.id, strategyId: s.id, version: 1, unitKey: 'k', triggerTimeframe: '15m', candleTime: i, outcome: 'ALERTED', evaluation: evaluation(productId, 'g1') });
+      await store.alerts.insert({ signalId: sig!.id, connectionId: c.id, strategyId: s.id, strategyName: 'Spec', version: 1, productId, status: 'SENT', unit: sig!.evaluation.unit, triggerTimeframe: '15m', candleTime: i, evaluation: sig!.evaluation });
+    }
+    async function pages<T extends { id: string; createdAt: string }>(get: (before?: { at: string; id: string }) => Promise<T[]>): Promise<string[]> {
+      const out: string[] = [];
+      let before: { at: string; id: string } | undefined;
+      for (;;) {
+        const page = await get(before);
+        out.push(...page.map((x) => x.id));
+        if (page.length < 3) return out;
+        before = { at: page.at(-1)!.createdAt, id: page.at(-1)!.id };
+      }
+    }
+    const all = await store.alerts.list({ limit: 100 });
+    expect(all).toHaveLength(7);
+    expect(await pages((before) => store.alerts.list({ limit: 3, before }))).toEqual(all.map((a) => a.id));
+    const gold = await store.alerts.list({ markets: ['MCX'], limit: 100 });
+    expect(gold).toHaveLength(3);
+    expect(await pages((before) => store.alerts.list({ markets: ['MCX'], limit: 3, before }))).toEqual(gold.map((a) => a.id));
+    const signals = await store.signals.list({ limit: 100 });
+    expect(await pages((before) => store.signals.list({ limit: 3, before }))).toEqual(signals.map((x) => x.id));
+    // The product catalogue in pages too.
+    const products = await store.products.list();
+    expect(await store.products.list({ limit: 2, offset: 1 })).toEqual(products.slice(1, 3));
+  });
+
   it('the context stamp changes when connections change', async () => {
     const { clock, store } = setup();
     const s = await store.strategies.create(DEF);

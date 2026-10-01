@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import type { LegDef, LegId, V2AlertItem, V2Unit } from '@/shared/v2';
+import { pageCursor } from '@/shared/v2';
 import { Tooltip } from '../components/Tooltip';
 import { Badge, Card, EmptyState, IconButton, Tabs } from '../components/ui';
 import { v2Api } from './api';
@@ -14,6 +15,7 @@ import { H } from './help';
 import { InlineSpinner, SkeletonRows } from '../components/loaders';
 import { stopAlarm } from '../lib/notify';
 import { FilterBar, activeCount, toQuery, useFilters } from './FilterBar';
+import { LoadMore, flatPages } from './LoadMore';
 
 const STATUS_TONE: Record<V2AlertItem['status'], 'bull' | 'warn' | 'bear' | 'accent'> = { SENT: 'bull', PARTIAL: 'warn', FAILED: 'bear', ACKNOWLEDGED: 'accent' };
 
@@ -85,7 +87,9 @@ export function AlertRow({ alert: a }: { alert: V2AlertItem }) {
 
 type View = 'active' | 'history' | 'signals';
 
-const LIMIT = 500;
+/** Rows per page; the next page loads as you scroll. */
+const PAGE = 50;
+const nextCursor = (page: Array<{ id: string; createdAt: string }>) => (page.length < PAGE ? undefined : pageCursor(page[page.length - 1]!.createdAt, page[page.length - 1]!.id));
 
 export function AlertsTab() {
   const [view, setView] = useState<View>('active');
@@ -96,22 +100,35 @@ export function AlertsTab() {
   const q = toQuery(filters, strategies.data ?? []);
   const { outcomes, sources, statuses, sides: _sides, ...base } = q;
   const ready = !filters.groups.length || !!strategies.data; // group labels resolve through the strategies
-  const alerts = useQuery({
+  // Every filter goes to the server, so each page is already filtered; pages continue from the last row shown.
+  const alerts = useInfiniteQuery({
     queryKey: ['v2-alerts', view, q],
-    queryFn: () => v2Api.alerts({ ...base, sources, statuses, active: view === 'active', limit: LIMIT }),
+    queryFn: ({ pageParam }) => v2Api.alerts({ ...base, sources, statuses, active: view === 'active', limit: PAGE, before: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: nextCursor,
     enabled: view !== 'signals' && ready,
     refetchInterval: 300_000, // new alerts refresh it at once (the alarm's feed)
     placeholderData: keepPreviousData,
   });
-  const signals = useQuery({
+  const signals = useInfiniteQuery({
     queryKey: ['v2-signals', q],
-    queryFn: () => v2Api.signals({ ...base, outcomes, limit: LIMIT }),
+    queryFn: ({ pageParam }) => v2Api.signals({ ...base, outcomes, limit: PAGE, before: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: nextCursor,
     enabled: view === 'signals' && ready,
     placeholderData: keepPreviousData,
   });
-  const rows = view === 'signals' ? signals.data : alerts.data;
+  const alertRows = flatPages(alerts.data?.pages);
+  const signalRows = flatPages(signals.data?.pages);
+  const list = view === 'signals' ? signals : alerts;
+  const rows = view === 'signals' ? (signals.data ? signalRows : undefined) : alerts.data ? alertRows : undefined;
   const noun = view === 'signals' ? 'signal' : view === 'active' ? 'active alert' : 'alert';
-  const shown = rows ? `${rows.length === LIMIT ? `latest ${LIMIT}` : rows.length} ${noun}${rows.length === 1 ? '' : 's'}${activeCount(filters, view === 'signals' ? ['outcomes'] : ['sources', 'statuses']) ? ' match' : ''}` : undefined;
+  const shown = rows
+    ? `${rows.length.toLocaleString('en-IN')}${list.hasNextPage ? '+' : ''} ${noun}${rows.length === 1 && !list.hasNextPage ? '' : 's'}${activeCount(filters, view === 'signals' ? ['outcomes'] : ['sources', 'statuses']) ? ' match' : ''}`
+    : undefined;
+  const more = rows?.length ? (
+    <LoadMore hasMore={!!list.hasNextPage} loading={list.isFetchingNextPage} onMore={() => void list.fetchNextPage()} shown={rows.length} noun={`${noun}s`} />
+  ) : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -127,21 +144,21 @@ export function AlertsTab() {
         />
       </div>
       <FilterBar value={filters} onChange={setFilters} strategies={strategies.data ?? []} fields={view === 'signals' ? ['outcomes'] : ['sources', 'statuses']} shown={shown} />
-      {rows?.length === LIMIT && (
-        <Tooltip content={H.filters.capped}>
-          <p className="-mt-2 text-[11px] text-warn">Showing the newest {LIMIT} — narrow the period or filters to see older ones.</p>
-        </Tooltip>
-      )}
       {view !== 'signals' && (
         <Card className="p-0 overflow-hidden">
           {alerts.isLoading ? (
             <SkeletonRows rows={5} />
-          ) : alerts.data?.length ? (
-            <div className="divide-y divide-ink-700/50">
-              {alerts.data.map((a) => (
-                <AlertRow key={a.id} alert={a} />
-              ))}
-            </div>
+          ) : alertRows.length ? (
+            <>
+              <div className="divide-y divide-ink-700/50">
+                {alertRows.map((a) => (
+                  <AlertRow key={a.id} alert={a} />
+                ))}
+              </div>
+              {more}
+            </>
+          ) : alerts.error ? (
+            <p className="p-4 text-xs text-bear">{(alerts.error as Error).message}</p>
           ) : (
             <EmptyState title={activeCount(filters, ['sources', 'statuses']) ? 'No alerts match these filters' : view === 'active' ? 'No active alerts' : 'No alerts yet'} hint={activeCount(filters, ['sources', 'statuses']) ? 'Change or clear the filters above.' : undefined} />
           )}
@@ -151,39 +168,44 @@ export function AlertsTab() {
         <Card className="p-0 overflow-hidden">
           {signals.isLoading ? (
             <SkeletonRows rows={5} />
-          ) : signals.data?.length ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500 bg-ink-850">
-                  <tr>
-                    <th className="px-4 py-2">Recorded</th>
-                    <th className="px-4 py-2">Product / unit</th>
-                    <th className="px-4 py-2">Candle</th>
-                    <th className="px-4 py-2">Result</th>
-                    <th className="px-4 py-2">Outcome</th>
-                    <th className="px-4 py-2">Version</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-ink-700/50">
-                  {signals.data.map((s) => (
-                    <tr key={s.id} className={clsx(s.outcome !== 'ALERTED' && 'text-slate-400')}>
-                      <td className="px-4 py-2 whitespace-nowrap">{istStampIso(s.createdAt)}</td>
-                      <td className="px-4 py-2">
-                        <UnitTag unit={s.evaluation.unit} symbol={symbolOf(s.evaluation.productId)} />
-                      </td>
-                      <td className="px-4 py-2 whitespace-nowrap">{candleRange(s.candleTime, s.triggerTimeframe)}</td>
-                      <td className="px-4 py-2">
-                        <TriBadge value={s.evaluation.result} />
-                      </td>
-                      <td className="px-4 py-2">
-                        <OutcomeBadge outcome={s.outcome} />
-                      </td>
-                      <td className="px-4 py-2">v{s.version}</td>
+          ) : signalRows.length ? (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500 bg-ink-850">
+                    <tr>
+                      <th className="px-4 py-2">Recorded</th>
+                      <th className="px-4 py-2">Product / unit</th>
+                      <th className="px-4 py-2">Candle</th>
+                      <th className="px-4 py-2">Result</th>
+                      <th className="px-4 py-2">Outcome</th>
+                      <th className="px-4 py-2">Version</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-ink-700/50">
+                    {signalRows.map((s) => (
+                      <tr key={s.id} className={clsx(s.outcome !== 'ALERTED' && 'text-slate-400')}>
+                        <td className="px-4 py-2 whitespace-nowrap">{istStampIso(s.createdAt)}</td>
+                        <td className="px-4 py-2">
+                          <UnitTag unit={s.evaluation.unit} symbol={symbolOf(s.evaluation.productId)} />
+                        </td>
+                        <td className="px-4 py-2 whitespace-nowrap">{candleRange(s.candleTime, s.triggerTimeframe)}</td>
+                        <td className="px-4 py-2">
+                          <TriBadge value={s.evaluation.result} />
+                        </td>
+                        <td className="px-4 py-2">
+                          <OutcomeBadge outcome={s.outcome} />
+                        </td>
+                        <td className="px-4 py-2">v{s.version}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {more}
+            </>
+          ) : signals.error ? (
+            <p className="p-4 text-xs text-bear">{(signals.error as Error).message}</p>
           ) : (
             <EmptyState title={activeCount(filters, ['outcomes']) ? 'No signals match these filters' : 'No signals yet'} hint={activeCount(filters, ['outcomes']) ? 'Change or clear the filters above.' : undefined} />
           )}
