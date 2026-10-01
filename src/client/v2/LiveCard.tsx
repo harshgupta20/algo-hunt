@@ -73,7 +73,7 @@ export function LiveCard() {
       ) : !s ? (
         <Tooltip content={H.live.notRunning}>
           <p className="text-xs text-slate-400 inline-flex items-center gap-2">
-            <Radio className="w-4 h-4 text-slate-500" /> Not running — start it with <code className="text-slate-200">npm run live</code> for instant, verified alerts. The per-minute scanner covers your connections meanwhile.
+            <Radio className="w-4 h-4 text-slate-500" /> Not running — it starts with the app (<code className="text-slate-200">npm start</code>) for instant, verified alerts. The per-minute scanner covers your connections meanwhile.
           </p>
         </Tooltip>
       ) : (

@@ -45,6 +45,8 @@ export function Topbar({ collapsed, onToggleSidebar }: { collapsed: boolean; onT
   const needsKiteLogin = kite.data?.enabled && kite.data.needsLogin;
   const s = status.data;
   const worker = live.data?.health.covering;
+  // Records the app is holding because the database can't be reached (a moment of catching up isn't shown).
+  const waiting = !!s?.database && s.database.count > 0 && (s.database.failingSince !== null || (s.database.oldestAt !== null && s.now - Date.parse(s.database.oldestAt) > 30_000));
 
   const signOut = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -82,6 +84,22 @@ export function Topbar({ collapsed, onToggleSidebar }: { collapsed: boolean; onT
           </Tooltip>
         ) : (
           <>
+            {waiting && s.database && (
+              <>
+                <Tooltip
+                  content={{
+                    ...HELP.topbar.savesWaiting,
+                    note: `${s.database.count} record(s) waiting${s.database.failingSince ? ` since ${new Date(s.database.failingSince).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })} IST` : ''}${s.database.lastError ? ` — ${s.database.lastError}` : ''}. Settings → Database shows the details.`,
+                  }}
+                  side="bottom"
+                >
+                  <span className="flex items-center gap-1.5 rounded-full bg-white/15 border border-white/25 px-2 py-0.5 font-medium text-white cursor-help" tabIndex={0}>
+                    <span className="w-2 h-2 rounded-full bg-warn ring-2 ring-white/70" /> {s.database.count} not saved yet
+                  </span>
+                </Tooltip>
+                <span aria-hidden className="h-4 w-px bg-white/30" />
+              </>
+            )}
             {!s.kiteConnected && (
               <>
                 <Tooltip content={HELP.topbar.kiteOffline} side="bottom">

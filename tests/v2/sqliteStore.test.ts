@@ -222,6 +222,34 @@ describe.each(makers)('store behaviour — %s', (name, make) => {
     expect(await store.paper.listTrades({})).toEqual([]);
   });
 
+  it('history clean-up: older alerts, signals and closed paper trades go; open trades and newer records stay', async () => {
+    const { clock, store } = setup();
+    const s = await store.strategies.create(DEF);
+    const c = await store.connections.create(s.id, 'NSE:NIFTY', config());
+    const alertFor = async (identity: string) => {
+      const sig = await store.signals.insert({ identity, connectionId: c.id, strategyId: s.id, version: 1, unitKey: 'k', triggerTimeframe: '15m', candleTime: 1, outcome: 'ALERTED', evaluation: evaluation('NSE:NIFTY', 'g1') });
+      return store.alerts.insert({ signalId: sig!.id, connectionId: c.id, strategyId: s.id, strategyName: 'Spec', version: 1, productId: 'NSE:NIFTY', status: 'SENT', unit: sig!.evaluation.unit, triggerTimeframe: '15m', candleTime: 1, evaluation: sig!.evaluation });
+    };
+    const iso = () => new Date(clock.now).toISOString();
+    const old = await alertFor('old');
+    await store.alerts.addDelivery(old.id, { channel: 'telegram', status: 'sent', sentAt: iso() });
+    const draft = { strategyId: s.id, connectionId: c.id, productId: 'NSE:NIFTY', slot: 'shift:0', unitKey: 'k', alertId: old.id, status: 'OPEN', entryAt: iso(), capitalUsed: 7_500, lastPrice: 100, lastPriceAt: null } as unknown as Omit<PaperTrade, 'id'>;
+    const closed = await store.paper.insertTrade(draft);
+    await store.paper.closeTrade(closed!.id, { exitAt: iso(), exitPrice: 105, exitReason: 'TARGET', grossPnl: 375, charges: 40, netPnl: 335, lastPrice: 105, lastPriceAt: iso() });
+    await store.paper.insertTrade({ ...draft, slot: 'shift:1', alertId: null }); // still open
+    clock.now += 40 * 86_400_000;
+    const fresh = await alertFor('fresh');
+    const out = await store.maintenance.prune(new Date(clock.now - 30 * 86_400_000).toISOString());
+    expect(out).toMatchObject({ alerts: 1, signals: 1, paperTrades: 1 });
+    expect((await store.alerts.list({})).map((a) => a.id)).toEqual([fresh.id]);
+    expect((await store.alerts.feed(null, 10)).map((a) => a.id)).toEqual([fresh.id]);
+    expect((await store.signals.list({})).map((x) => x.identity)).toEqual(['fresh']);
+    expect((await store.paper.listTrades({})).map((t) => [t.slot, t.status])).toEqual([['shift:1', 'OPEN']]);
+    const size = await store.maintenance.size();
+    expect(size.engine).toBe(name === 'in-memory' ? 'memory' : 'sqlite');
+    if (real) expect(size.bytes).toBeGreaterThan(0);
+  });
+
   it('the context stamp changes when connections change', async () => {
     const { clock, store } = setup();
     const s = await store.strategies.create(DEF);

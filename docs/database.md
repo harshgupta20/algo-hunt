@@ -120,15 +120,42 @@ The state lives on `globalThis`, so every module copy in the process shares it.
 | --- | --- |
 | Strategies, connections, settings, paper plans / overrides, calendar, Kite session, preferences | Read once, cached, written through on change (a strategy's version history is read on demand) |
 | Instruments / products | Cached; Postgres sync is a diff (deletes gone or changed tokens, inserts new ones) once a day, with its time and count kept in `v2_settings` key `instruments_sync` |
-| Alerts, deliveries | Written; the alarm feed is served from memory (the last 200 loaded once) |
-| Signals | ALERTED / NO_CHANNEL written with a shallow trace (top-level ids, labels, results); others kept in memory (last 1 000) |
-| Unit state | Written only when the alert decision changes (state, last signal candle, last alert, cooldown) |
-| Paper trades | Written on open and on close; open trades and their marks (live P&L) in memory; closed trades read once per change |
+| Alerts, deliveries | Written in the background (below); the alarm feed is served from memory (the last 200 loaded once); alert lists are read once per filter and reused until an alert changes |
+| Signals | ALERTED / NO_CHANNEL written (in the background) with a shallow trace (top-level ids, labels, results); others kept in memory (last 1 000); deduped in memory by identity |
+| Unit state | Written (in the background) only when the alert decision changes (state, last signal candle, last alert, cooldown) |
+| Paper trades | Written (in the background) on open and on close; open trades and their marks (live P&L) in memory, one per slot checked there; closed trades read once per change |
 | Scanner runs, locks, live-worker status, the change stamp screens poll | Memory only |
 
 [tests/v2/memoryLayer.test.ts](../tests/v2/memoryLayer.test.ts) checks this on a simulated session: after warm-up an
 hour of minute scans and screen polls makes no database calls; an alert costs five writes (signal, alert, delivery,
 unit state, paper trade); a paper exit one; the Paper tab then reads the closed trades once.
+
+### Saving in the background
+
+Event writes — signal, alert, delivery, alert status, unit state, paper trade open / close — never hold an alert up.
+The record exists in memory at once (with its id), and the write goes to a queue
+([writeQueue.ts](../src/server/v2/persistence/writeQueue.ts)) that one writer saves in order:
+
+- While the database can't be reached (no connection, timeout, Neon's quota error) it retries, 1 s → 30 s, and the
+  top bar shows "N not saved yet" (`/api/v2/status` → `database`). The waiting writes are kept in
+  `data/pending-writes.json` (next to the local database; git-ignored) and saved on the next start; on Ctrl+C the app
+  saves what it can within 2 s first.
+- A write the database refuses (Postgres classes 22 / 23, SQLite constraints — a duplicate, a deleted connection) is
+  tried 3 times and dropped, with the writes that depend on it (an alert whose signal wasn't saved, its deliveries);
+  a paper trade is still saved, without the link. Settings → Database shows the count.
+- Every read that goes to the database first waits for the queue (so it sees the new records) — unless the
+  database is failing, then the alarm feed, alert details, lists read before and the Paper tab answer from memory.
+- The pool gives up on a connection after 10 s and on a query after 60 s, and a connection closed by the server
+  (Neon going to sleep) is logged, not fatal.
+
+### Database size and history
+
+Settings → Database (`GET /api/v2/database`) shows the size (Postgres `pg_database_size`, SQLite pages; checked at
+most every 10 minutes) against Neon's free 0.5 GB, and the largest tables. **Keep history** (`v2_settings.historyDays`,
+`PUT /api/v2/database/history`) is `null` — everything — by default; with a period, alerts (+ deliveries), signals not
+tied to a kept alert, closed paper trades and scanner cycles older than it are deleted at once and then daily
+(`maintenance.prune`, run hourly by the app, once per IST day). Strategies, connections, settings and open trades are
+never deleted. At start the app also removes scanner cycles older than 3 days (they were always kept 3 days).
 
 Memory mode is off — every read and write goes to the database — on Vercel, with `LIVE_WORKER=off`, in the separate
 `npm run live` process, and in an app that finds such a worker running (decided at start,

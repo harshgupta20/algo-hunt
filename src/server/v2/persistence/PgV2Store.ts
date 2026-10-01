@@ -26,7 +26,7 @@ import type {
 } from '@/shared/v2';
 import { settingsFromStored } from '@/shared/v2';
 import { getPool } from '../../db/pool';
-import type { AlertFilters, ProductFilters, RecordStoreFilters, SignalFilters, V2Store } from './V2Store';
+import type { AlertFilters, DatabaseSize, NewAlert, NewPaperTrade, NewSignal, ProductFilters, PruneResult, RecordStoreFilters, SignalFilters, V2Store } from './V2Store';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -159,6 +159,9 @@ function mapAlert(r: any, deliveries: Delivery[]): V2Alert {
     createdAt: iso(r.created_at)!,
   };
 }
+
+/** Neon's free plan: 0.5 GB of storage per project. */
+const NEON_FREE_STORAGE = 512 * 1024 * 1024;
 
 const STRATEGY_SELECT = `SELECT s.*, v.definition FROM v2_strategies s
   JOIN v2_strategy_versions v ON v.strategy_id = s.id AND v.version = s.current_version`;
@@ -462,12 +465,12 @@ export class PgV2Store implements V2Store {
   };
 
   signals = {
-    insert: async (s: Omit<V2Signal, 'id' | 'createdAt'>) => {
+    insert: async (s: NewSignal) => {
       const r = (
         await this.pool.query(
-          `INSERT INTO v2_signals (identity, connection_id, strategy_id, version, unit_key, trigger_timeframe, candle_time, outcome, evaluation)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (identity) DO NOTHING RETURNING *`,
-          [s.identity, s.connectionId, s.strategyId, s.version, s.unitKey, s.triggerTimeframe, s.candleTime, s.outcome, JSON.stringify(s.evaluation)],
+          `INSERT INTO v2_signals (id, identity, connection_id, strategy_id, version, unit_key, trigger_timeframe, candle_time, outcome, evaluation, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11::timestamptz, now())) ON CONFLICT (identity) DO NOTHING RETURNING *`,
+          [s.id ?? randomUUID(), s.identity, s.connectionId, s.strategyId, s.version, s.unitKey, s.triggerTimeframe, s.candleTime, s.outcome, JSON.stringify(s.evaluation), s.createdAt ?? null],
         )
       ).rows[0];
       return r ? mapSignal(r) : null;
@@ -500,12 +503,12 @@ export class PgV2Store implements V2Store {
   }
 
   alerts = {
-    insert: async (a: Omit<V2Alert, 'id' | 'createdAt' | 'deliveries' | 'acknowledgedAt'>) => {
+    insert: async (a: NewAlert) => {
       const r = (
         await this.pool.query(
-          `INSERT INTO v2_alerts (signal_id, connection_id, strategy_id, strategy_name, version, product_id, status, unit, trigger_timeframe, candle_time, evaluation)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-          [a.signalId, a.connectionId, a.strategyId, a.strategyName, a.version, a.productId, a.status, JSON.stringify(a.unit), a.triggerTimeframe, a.candleTime, JSON.stringify(a.evaluation)],
+          `INSERT INTO v2_alerts (id, signal_id, connection_id, strategy_id, strategy_name, version, product_id, status, unit, trigger_timeframe, candle_time, evaluation, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,COALESCE($13::timestamptz, now())) RETURNING *`,
+          [a.id ?? randomUUID(), a.signalId, a.connectionId, a.strategyId, a.strategyName, a.version, a.productId, a.status, JSON.stringify(a.unit), a.triggerTimeframe, a.candleTime, JSON.stringify(a.evaluation), a.createdAt ?? null],
         )
       ).rows[0];
       return mapAlert(r, []);
@@ -612,8 +615,8 @@ export class PgV2Store implements V2Store {
       return plan;
     },
     listPlans: async () => (await this.pool.query('SELECT strategy_id, plan FROM v2_paper_plans')).rows.map((r: any) => ({ strategyId: r.strategy_id as string, plan: r.plan as PaperPlan })),
-    insertTrade: async (t: Omit<PaperTrade, 'id'>) => {
-      const id = randomUUID();
+    insertTrade: async (t: NewPaperTrade) => {
+      const id = t.id ?? randomUUID();
       const trade: PaperTrade = { ...t, id };
       const r = await this.pool.query(
         `INSERT INTO v2_paper_trades (id, strategy_id, connection_id, product_id, slot, alert_id, status, entry_at, trade) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -705,6 +708,33 @@ export class PgV2Store implements V2Store {
         ) AS stamp`)
       ).rows[0]?.stamp ?? '',
     );
+
+  maintenance = {
+    size: async (): Promise<DatabaseSize> => {
+      const [db, tables] = await Promise.all([
+        this.pool.query('SELECT pg_database_size(current_database())::bigint AS bytes'),
+        this.pool.query(
+          `SELECT c.relname AS name, pg_total_relation_size(c.oid)::bigint AS bytes FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'public' AND c.relkind = 'r' ORDER BY 2 DESC LIMIT 12`,
+        ),
+      ]);
+      const url = (this.pool as unknown as { options?: { connectionString?: string } }).options?.connectionString ?? '';
+      return {
+        engine: 'postgres',
+        bytes: Number(db.rows[0]?.bytes ?? 0),
+        limitBytes: /neon\.tech/i.test(url) ? NEON_FREE_STORAGE : null,
+        tables: tables.rows.map((r: any) => ({ name: r.name as string, bytes: Number(r.bytes) })),
+      };
+    },
+    prune: async (before: string): Promise<PruneResult> =>
+      this.tx(async (c) => {
+        const paperTrades = (await c.query(`DELETE FROM v2_paper_trades WHERE status = 'CLOSED' AND exit_at < $1`, [before])).rowCount ?? 0;
+        const alerts = (await c.query('DELETE FROM v2_alerts WHERE created_at < $1', [before])).rowCount ?? 0; // deliveries go with them
+        const signals = (await c.query('DELETE FROM v2_signals s WHERE s.created_at < $1 AND NOT EXISTS (SELECT 1 FROM v2_alerts a WHERE a.signal_id = s.id)', [before])).rowCount ?? 0;
+        const scanRuns = (await c.query('DELETE FROM v2_scan_runs WHERE started_at < $1', [before])).rowCount ?? 0;
+        return { alerts, signals, paperTrades, scanRuns };
+      }),
+  };
 
   live = {
     get: async () => {

@@ -1,5 +1,8 @@
 import pg from 'pg';
 import { getConfig } from '../config/index';
+import { childLogger } from '../utils/logger';
+
+const log = childLogger('db');
 
 /**
  * Shared Postgres pool, cached on globalThis so warm serverless invocations
@@ -20,8 +23,14 @@ export function getPool(): pg.Pool {
       connectionString: url.replace(/([?&]sslmode=)(require|prefer|verify-ca)(?=&|$)/, '$1verify-full'),
       ssl: isLocal ? undefined : { rejectUnauthorized: false },
       max: 5,
+      // Idle connections close quickly so Neon can go to sleep (it bills compute while awake).
       idleTimeoutMillis: 10_000,
+      // Give up instead of hanging when the database can't be reached (Neon wakes in well under a second).
+      connectionTimeoutMillis: 10_000,
+      query_timeout: 60_000,
     });
+    // A connection the server closed while idle (Neon going to sleep, a network drop) must not crash the app.
+    globalForPg.__ashPgPool.on('error', (err) => log.warn({ err: err.message }, 'database connection closed'));
   }
   return globalForPg.__ashPgPool;
 }

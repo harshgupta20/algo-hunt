@@ -179,6 +179,8 @@ export function v2Controller(ctx: AppContext) {
     testChannel: (req) => svc().testChannel(parse(z.object({ channel: z.enum(['telegram', 'email']) }), req.body).channel),
     telegramChats: () => svc().telegramRecentChats(),
     telegramBot: () => svc().telegramBot(),
+    database: () => svc().databaseInfo(),
+    setHistory: (req) => svc().setHistoryDays(parse(z.object({ days: z.union([z.null(), z.number().int().min(30).max(3650)]) }), req.body).days),
   } satisfies Record<string, Handler>;
 
   return Object.fromEntries(Object.entries(handlers).map(([k, h]) => [k, wrap(h as Handler)])) as Record<keyof typeof handlers, Handler>;

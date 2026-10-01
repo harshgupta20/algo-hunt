@@ -79,6 +79,7 @@ describe('memory layer — database traffic in a session', () => {
     clock.now = ist(D, '09:45') + 30_000;
     await svc.scan();
     await screens();
+    await store.flushWrites();
     db.reset();
 
     // 10:00–10:59: scanner every minute + the screens every few seconds — nothing to alert yet.
@@ -87,12 +88,14 @@ describe('memory layer — database traffic in a session', () => {
       await svc.scan();
       for (let k = 0; k < 4; k++) await screens();
     }
+    await store.flushWrites();
     expect(Object.fromEntries(db.calls)).toEqual({});
 
     // 11:00 the strategy fires: the alert, its signal, the delivery, the unit's alert state and the paper trade.
     clock.now = ist(D, '11:00') + 30_000;
     const fired = await svc.scan();
     expect(fired.run.alerts).toBe(1);
+    await store.flushWrites(); // the writes are saved in the background, in order
     expect(Object.fromEntries(db.calls)).toEqual({ 'signals.insert': 1, 'alerts.insert': 1, 'alerts.addDelivery': 1, 'units.upsertMany': 1, 'paper.insertTrade': 1 });
 
     // The new alert shows on the alarm feed straight from memory.
@@ -105,6 +108,7 @@ describe('memory layer — database traffic in a session', () => {
     clock.now = ist(D, '11:05');
     provider.ltp.set(atmCe.token, 121);
     await svc.scan();
+    await store.flushWrites();
     expect(Object.fromEntries(db.calls)).toEqual({ 'paper.closeTrade': 1 });
     db.reset();
     await svc.paperSummary();

@@ -98,9 +98,24 @@ The running app reads each kind of data from the database once, then keeps it in
 | Status | — | Live-worker heartbeat, locks, the change stamp the screens poll |
 
 A trading hour of scans and open screens makes **no database calls** once warm; an alert costs about five writes, a
-paper exit one ([tests/v2/memoryLayer.test.ts](tests/v2/memoryLayer.test.ts) counts them). The Signals and Scanner
-tabs therefore show history since the app last started. On Vercel, with `LIVE_WORKER=off`, or next to a separate
+paper exit one ([tests/v2/memoryLayer.test.ts](tests/v2/memoryLayer.test.ts) counts them). Alert and signal lists
+are read once and reused until the next alert, so Neon can sleep whenever nothing fires. The Signals and Scanner
+tabs show history since the app last started. On Vercel, with `LIVE_WORKER=off`, or next to a separate
 `npm run live`, the app reads and writes everything in the database instead (more than one process shares it).
+
+**Alerts never wait for the database.** The alert, its Telegram message, the alarm and the paper trade happen from
+memory; their records are saved right after, in order, by a background queue. While Neon can't be reached (asleep,
+offline, over its monthly allowance) the queue retries every few seconds; the top bar shows **"N not saved yet"**
+and the records are kept in `data/pending-writes.json` across a restart.
+
+**Settings → Database** shows the space used (against Neon's free 0.5 GB) and **Keep history**: everything by
+default, or alerts, signals and closed paper trades for the last 1 / 3 / 6 / 12 / 24 months (older ones deleted
+daily, after a confirmation).
+
+On the Neon free plan (100 compute-hours, 5 GB transfer, 0.5 GB storage a month): set the compute size to a fixed
+0.25 CU in the Neon console, and run only one copy of the app on the database (a Vercel copy with its scheduler,
+or a second laptop, would double alerts and traffic). Develop with `DATABASE_URL` empty (the local file) or a
+separate Neon project.
 
 ### Environment
 

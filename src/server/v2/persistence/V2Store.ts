@@ -32,6 +32,7 @@ import type {
   V2Signal,
   V2Strategy,
   V2StrategyVersion,
+  PendingWrites,
 } from '@/shared/v2';
 
 /** Filters shared by alerts and signals (times as ISO instants; `groups` = ids of the top-level groups that fired). */
@@ -56,6 +57,28 @@ export interface AlertFilters extends RecordStoreFilters {
 
 export interface SignalFilters extends RecordStoreFilters {
   outcomes?: SignalOutcome[];
+}
+
+/** A new signal / alert / paper trade. The memory layer passes its own id and time (the record exists before it's saved). */
+export type NewSignal = Omit<V2Signal, 'id' | 'createdAt'> & { id?: string; createdAt?: string };
+export type NewAlert = Omit<V2Alert, 'id' | 'createdAt' | 'deliveries' | 'acknowledgedAt'> & { id?: string; createdAt?: string };
+export type NewPaperTrade = Omit<PaperTrade, 'id'> & { id?: string };
+
+/** What a history clean-up removed. */
+export interface PruneResult {
+  alerts: number;
+  signals: number;
+  paperTrades: number;
+  scanRuns: number;
+}
+
+/** How big the database is (`limitBytes` = the plan's storage, when known — Neon free: 0.5 GB). */
+export interface DatabaseSize {
+  engine: 'postgres' | 'sqlite' | 'memory';
+  bytes: number | null;
+  limitBytes: number | null;
+  /** Largest tables first. */
+  tables: Array<{ name: string; bytes: number }>;
 }
 
 export interface ProductFilters {
@@ -122,11 +145,11 @@ export interface V2Store {
   };
   signals: {
     /** Returns null when a signal with the same identity already exists (dedupe). */
-    insert(signal: Omit<V2Signal, 'id' | 'createdAt'>): Promise<V2Signal | null>;
+    insert(signal: NewSignal): Promise<V2Signal | null>;
     list(f: SignalFilters): Promise<V2SignalItem[]>;
   };
   alerts: {
-    insert(alert: Omit<V2Alert, 'id' | 'createdAt' | 'deliveries' | 'acknowledgedAt'>): Promise<V2Alert>;
+    insert(alert: NewAlert): Promise<V2Alert>;
     addDelivery(alertId: string, delivery: Delivery): Promise<void>;
     setStatus(alertId: string, status: V2Alert['status']): Promise<void>;
     acknowledge(alertId: string, at: string): Promise<V2Alert | null>;
@@ -155,7 +178,7 @@ export interface V2Store {
     savePlan(strategyId: string, plan: PaperPlan): Promise<PaperPlan>;
     listPlans(): Promise<Array<{ strategyId: string; plan: PaperPlan }>>;
     /** Null when the slot already has an open trade. */
-    insertTrade(t: Omit<PaperTrade, 'id'>): Promise<PaperTrade | null>;
+    insertTrade(t: NewPaperTrade): Promise<PaperTrade | null>;
     openFor(connectionId: string, slot: string): Promise<PaperTrade | null>;
     listOpen(): Promise<PaperTrade[]>;
     /** Close a trade that is still open; null when it was already closed (another process got there first). */
@@ -175,6 +198,16 @@ export interface V2Store {
   };
   /** One short value that changes when connections, strategies, settings, the calendar or products change (to skip reloading them). */
   contextStamp(): Promise<string>;
+
+  /** Housekeeping: database size, and removing history older than the trader chose to keep. */
+  maintenance: {
+    size(): Promise<DatabaseSize>;
+    /** Delete alerts (+ deliveries), signals and closed paper trades created before `before` (ISO), and scanner cycles. Open trades are kept. */
+    prune(before: string): Promise<PruneResult>;
+  };
+
+  /** Records waiting to be saved (memory layer only — the others save before returning). */
+  pendingWrites?(): PendingWrites;
 
   /** Live worker heartbeat / status (single row). */
   live: {

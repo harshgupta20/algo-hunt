@@ -42,6 +42,21 @@ until one closes, and the live worker reloads connections only when a one-value 
 Also make sure nothing else reads the same database: a deployed copy (e.g. on Vercel) called every minute by a
 scheduler reads as much as the local app. Stop the scheduler (or the deployment) if you only run it locally.
 
+## 1c. "N not saved yet" in the top bar
+
+The app can't reach the database, so it holds the new records (alerts, deliveries, paper trades) and saves them when
+it's back — alerts, the alarm and paper trading keep working meanwhile. Settings → Database shows the count, since
+when, and the error.
+
+| Error shown | Cause | Fix |
+| --- | --- | --- |
+| `connect ECONNREFUSED`, `getaddrinfo ENOTFOUND`, `timeout exceeded when trying to connect` | No internet, or the database host is wrong | Check the connection / `DATABASE_URL`; nothing to do once it's back |
+| `… exceeded the compute time quota` / `data transfer quota` | Neon's free monthly allowance ran out | Wait for the reset (Neon console → *Review usage*) or upgrade; records keep waiting meanwhile (also across restarts, in `data/pending-writes.json`) |
+| `relation "v2_…" does not exist` | Migrations not applied | `npm run db:migrate` (or restart `npm run dev`) |
+| "N records were refused by the database" (Settings) | The database rejected them (e.g. their connection was deleted meanwhile) | Nothing to do — the app log has each one (`database refused a write — dropped`) |
+
+Don't delete `data/pending-writes.json` while it exists — it is the only copy of those records.
+
 ## 2. Kite connection
 
 | Symptom / message | Cause | Fix |

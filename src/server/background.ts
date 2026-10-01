@@ -6,6 +6,9 @@
  *                 LIVE_WORKER=off runs without it (then `npm run live` separately). Not started when a
  *                 separate worker is already running on this computer.
  *   backups       the local database: a snapshot a day (keeps 14), checked hourly.
+ *   history       deletes alerts / signals / closed paper trades older than Settings → Database keeps (daily;
+ *                 nothing by default — everything is kept).
+ *   on stop       saves the records still waiting for the database (or keeps them for the next start).
  *
  * Nothing runs on Vercel (serverless).
  */
@@ -73,11 +76,29 @@ export async function startBackground(): Promise<void> {
     }
   }
 
+  // History clean-up — only when Settings → Database keeps a limited period (default: keep everything). Daily.
+  const housekeeping = async () => {
+    try {
+      const { getContext } = await import('./api/context');
+      const out = await getContext().v2.service.dailyHousekeeping();
+      if (out) log.info(out, 'history older than the chosen period removed');
+    } catch (err) {
+      log.warn({ err: err instanceof Error ? err.message : String(err) }, 'history clean-up failed');
+    }
+  };
+  setTimeout(() => void housekeeping(), 2 * 60_000).unref();
+  setInterval(() => void housekeeping(), HOUR).unref();
+
   let stopping = false;
   const stop = async () => {
     if (stopping) return;
     stopping = true;
     await Promise.race([Promise.allSettled(stops.map((s) => s())), new Promise((r) => setTimeout(r, 3_000))]);
+    // Last: save what's waiting (or keep it in data/pending-writes.json for the next start).
+    const { runtimeState } = await import('./v2/persistence/RuntimeV2Store');
+    await runtimeState()
+      .writes?.close(2_000)
+      .catch(() => undefined);
     process.exit(0);
   };
   process.once('SIGINT', () => void stop());

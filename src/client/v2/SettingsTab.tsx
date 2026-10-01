@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarOff, CalendarPlus, Check, Copy, ExternalLink, Plus, Save, Search, Send, Trash2 } from 'lucide-react';
+import { CalendarOff, CalendarPlus, Check, Copy, Database, ExternalLink, Plus, Save, Search, Send, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
-import type { CalendarEntry, Market, TelegramChat, V2Settings } from '@/shared/v2';
-import { DEFAULT_TELEGRAM_BOT } from '@/shared/v2';
+import type { CalendarEntry, DatabaseInfo, Market, TelegramChat, V2Settings } from '@/shared/v2';
+import { DEFAULT_TELEGRAM_BOT, HISTORY_DAY_CHOICES } from '@/shared/v2';
 import { FieldLabel, InfoTip, Tooltip } from '../components/Tooltip';
 import { Card, IconButton } from '../components/ui';
 import { v2Api } from './api';
@@ -315,10 +315,125 @@ function CalendarCard() {
   );
 }
 
+const fmtBytes = (n: number) => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)} GB` : n >= 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(n >= 100 * 1024 ** 2 ? 0 : 1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const historyLabel = (days: number | null) =>
+  days === null ? 'Everything (default)' : days % 365 === 0 ? `${days / 365} year${days === 365 ? '' : 's'}` : days % 30 === 0 ? `${days / 30} month${days === 30 ? '' : 's'}` : `${days} days`;
+const istTime = (iso: string) => new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+/** Database: space used (vs Neon's free 0.5 GB), how long history is kept, records waiting to be saved. */
+function DatabaseCard() {
+  const qc = useQueryClient();
+  const info = useQuery({ queryKey: ['v2-database'], queryFn: v2Api.database, staleTime: 10 * 60_000 });
+  const save = useMutation({
+    mutationFn: (days: number | null) => v2Api.setHistoryDays(days),
+    onSuccess: (d) => {
+      qc.setQueryData(['v2-database'], d);
+      qc.invalidateQueries({ queryKey: ['v2-alerts'] });
+      qc.invalidateQueries({ queryKey: ['v2-signals'] });
+      qc.invalidateQueries({ queryKey: ['v2-paper'] });
+    },
+  });
+  const d: DatabaseInfo | undefined = info.data;
+  const pick = (v: string) => {
+    const days = v === 'all' ? null : Number(v);
+    if (days !== null && !window.confirm(`Delete alerts, signals and closed paper trades older than ${historyLabel(days).toLowerCase()} — now and then every day? This cannot be undone. Strategies, connections, settings and open trades are kept.`)) return;
+    save.mutate(days);
+  };
+  const pct = d?.bytes != null && d.limitBytes ? Math.min(100, (d.bytes / d.limitBytes) * 100) : null;
+  const where = d?.engine === 'postgres' ? (d.limitBytes ? 'Neon (free plan)' : 'Postgres') : d?.engine === 'sqlite' ? 'Local file' : 'Memory';
+
+  return (
+    <Card className="flex flex-col gap-3">
+      <div className="flex items-center gap-2">
+        <Database className="w-4 h-4 text-slate-500" />
+        <h2 className="text-sm font-semibold text-slate-300">Database</h2>
+        <InfoTip content={H.settings.database} />
+        {d && <span className="text-xs text-slate-500">· {where}</span>}
+      </div>
+      {info.isLoading && <SkeletonCards count={1} lines={2} />}
+      {info.error && <p className="text-xs text-bear">{(info.error as Error).message}</p>}
+      {d && (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <FieldLabel help={H.settings.dbSize}>Space used</FieldLabel>
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-semibold tabular-nums text-slate-200">
+                {d.bytes == null ? '—' : fmtBytes(d.bytes)}
+                {d.limitBytes ? <span className="font-normal text-slate-500"> of {fmtBytes(d.limitBytes)}</span> : null}
+              </span>
+              {pct !== null && (
+                <div className="h-2 w-48 max-w-full overflow-hidden rounded-full bg-ink-700" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)} aria-label="Space used">
+                  <div className={clsx('h-full rounded-full', pct >= 80 ? 'bg-warn' : 'bg-accent')} style={{ width: `${Math.max(2, pct)}%` }} />
+                </div>
+              )}
+              {pct !== null && <span className={clsx('text-xs tabular-nums', pct >= 80 ? 'font-semibold text-warn' : 'text-slate-500')}>{pct.toFixed(0)} %</span>}
+            </div>
+            {d.tables.length > 0 && (
+              <details className="text-xs text-slate-400">
+                <summary className="cursor-pointer select-none text-slate-500 hover:text-slate-300">
+                  <Tooltip content={H.settings.dbTables}>
+                    <span>Largest tables</span>
+                  </Tooltip>
+                </summary>
+                <ul className="mt-1.5 grid grid-cols-1 gap-x-6 gap-y-0.5 sm:grid-cols-2">
+                  {d.tables.slice(0, 8).map((t) => (
+                    <li key={t.name} className="flex justify-between gap-3 tabular-nums">
+                      <span className="truncate font-mono text-slate-400">{t.name}</span>
+                      <span className="text-slate-500">{fmtBytes(t.bytes)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <FieldLabel help={H.settings.history}>Keep history</FieldLabel>
+            <Tooltip content={H.settings.history}>
+              <select aria-label="Keep history" className="input py-1 text-xs" value={d.historyDays === null ? 'all' : String(d.historyDays)} disabled={save.isPending} onChange={(e) => pick(e.target.value)}>
+                <option value="all">{historyLabel(null)}</option>
+                {[...new Set([...HISTORY_DAY_CHOICES, ...(d.historyDays ? [d.historyDays] : [])])]
+                  .sort((a, b) => a - b)
+                  .map((n) => (
+                    <option key={n} value={n}>
+                      {historyLabel(n)}
+                    </option>
+                  ))}
+              </select>
+            </Tooltip>
+            {save.isPending && <InlineSpinner />}
+            {save.error && <span className="text-xs text-bear">{(save.error as Error).message}</span>}
+            {d.lastPrune && (
+              <span className="text-xs text-slate-500">
+                Last clean-up {istTime(d.lastPrune.at)}: {d.lastPrune.alerts} alert(s), {d.lastPrune.signals} signal(s), {d.lastPrune.paperTrades} paper trade(s) removed
+              </span>
+            )}
+          </div>
+          {d.pending && (d.pending.count > 0 || d.pending.dropped > 0) && (
+            <div className="flex items-start gap-2 rounded-lg border border-warn/30 bg-warn/5 p-2.5 text-xs text-slate-300">
+              <InfoTip content={H.settings.pending} />
+              <p>
+                {d.pending.count > 0 && (
+                  <>
+                    <b className="text-warn">{d.pending.count} record(s) waiting to be saved</b>
+                    {d.pending.failingSince ? ` — the database can’t be reached since ${istTime(d.pending.failingSince)}` : ' — saving now'}
+                    {d.pending.lastError ? ` (${d.pending.lastError})` : ''}.{' '}
+                  </>
+                )}
+                {d.pending.dropped > 0 && `${d.pending.dropped} record(s) were refused by the database since the app started (see the app’s log).`}
+              </p>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 export function SettingsTab() {
   return (
     <div className="flex flex-col gap-4">
       <ChannelsCard />
+      <DatabaseCard />
       <CalendarCard />
     </div>
   );

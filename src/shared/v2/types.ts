@@ -417,6 +417,8 @@ export interface V2Settings {
   emailFrom: string;
   /** Max candle requests per scanner cycle. */
   requestBudget: number;
+  /** Delete alerts, signals and closed paper trades older than this many days (daily). null = keep everything. */
+  historyDays: number | null;
 }
 
 export const DEFAULT_V2_SETTINGS: V2Settings = {
@@ -424,7 +426,34 @@ export const DEFAULT_V2_SETTINGS: V2Settings = {
   emailRecipients: [],
   emailFrom: 'Algo Hunt <onboarding@resend.dev>',
   requestBudget: 150,
+  historyDays: null,
 };
+
+/** The history lengths offered in Settings (days). */
+export const HISTORY_DAY_CHOICES = [30, 90, 180, 365, 730] as const;
+
+/** Records the app holds until the database saves them (it retries while the database can't be reached). */
+export interface PendingWrites {
+  count: number;
+  oldestAt: string | null;
+  /** The database has been failing since (null = fine; the queue is just catching up). */
+  failingSince: string | null;
+  lastError: string | null;
+  /** Writes the database refused since the app started (given up on). */
+  dropped: number;
+}
+
+/** Settings → Database: size, the plan's limit when known, what's kept and what's waiting. */
+export interface DatabaseInfo {
+  engine: 'postgres' | 'sqlite' | 'memory';
+  bytes: number | null;
+  limitBytes: number | null;
+  tables: Array<{ name: string; bytes: number }>;
+  historyDays: number | null;
+  pending: PendingWrites | null;
+  /** The last history clean-up (this run). */
+  lastPrune: { at: string; alerts: number; signals: number; paperTrades: number; scanRuns: number } | null;
+}
 
 // ---- Live worker (streaming) --------------------------------------------------------------------
 

@@ -33,7 +33,7 @@ export const H = {
     card: {
       title: 'Live feed',
       body: 'The live worker streams Kite ticks for every contract your switched-on connections use and checks each connection the moment its candle closes (seconds, not minutes).',
-      note: 'Run it on your computer with `npm run live`. While it streams, the per-minute scanner only backs it up.',
+      note: 'It runs inside the app (`npm start` / `npm run dev`). While it streams, the per-minute scanner only backs it up.',
     },
     state: {
       title: 'Worker state',
@@ -42,7 +42,7 @@ export const H = {
     offline: {
       title: 'Worker offline',
       body: 'No heartbeat from the live worker. The per-minute backup scanner checks your connections instead (alerts can be a few minutes late).',
-      note: 'Start it with `npm run live` and keep the computer awake during market hours.',
+      note: 'Restart the app (`npm start`) and keep the computer awake during market hours.',
     },
     contracts: {
       title: 'Contracts streamed',
@@ -61,7 +61,7 @@ export const H = {
     errors: { title: 'Recent problems', body: 'The worker keeps going after an error; the latest are listed here.' },
     notRunning: {
       title: 'Live worker not running',
-      body: 'Run `npm run live` in the project folder for instant, verified alerts. Until then the per-minute scanner checks your connections.',
+      body: 'It starts with the app (`npm start` / `npm run dev`) for instant, verified alerts. Until then the per-minute scanner checks your connections.',
     },
   } satisfies Record<string, TooltipContent>,
 
@@ -252,7 +252,7 @@ export const H = {
     deferred: {
       title: 'Carried over',
       body: 'Units that didn’t fit this cycle’s request budget; they’re checked in the next cycles (a minute apart). Not an error.',
-      note: 'The live worker (npm run live) streams prices instead, so it has no such wait.',
+      note: 'The live worker (inside the app) streams prices instead, so it has no such wait.',
     },
     errors: { title: 'Errors', body: 'Problems in this cycle — one failure never stops the rest.' },
   } satisfies Record<string, TooltipContent>,
@@ -430,5 +430,21 @@ export const H = {
     addHoliday: { title: 'Add holiday', body: 'No trading that day in the chosen market.' },
     addSpecial: { title: 'Add special session', body: 'A trading day with custom hours (IST), e.g. Muhurat trading.' },
     save: { title: 'Save', body: 'Save these settings.' },
+    database: {
+      title: 'Database',
+      body: 'Where the app keeps its records (Neon, or the local file). Only core records are saved — strategies, connections, settings, alerts, the signals that alerted and paper trades; live state stays in the app’s memory.',
+      note: 'Neon’s free plan: 0.5 GB of storage — new records are refused (nothing is deleted) when it’s full.',
+    },
+    dbSize: { title: 'Space used', body: 'How big the database is now, against the plan’s storage when known (checked at most every 10 minutes).', note: 'Amber from 80 % — choose a shorter history below to make room.' },
+    dbTables: { title: 'Largest tables', body: 'Which records take the space (indexes included).' },
+    history: {
+      title: 'Keep history',
+      body: 'How long alerts, signals and closed paper trades are kept. Older ones are deleted once a day — for good.',
+      note: 'Default: everything is kept. Strategies, connections, settings and open paper trades are never deleted.',
+    },
+    pending: {
+      title: 'Waiting to be saved',
+      body: 'Records the app holds because the database can’t be reached right now. Alerts and paper trades keep working; these are saved automatically when the database is back (also after a restart).',
+    },
   } satisfies Record<string, TooltipContent>,
 };

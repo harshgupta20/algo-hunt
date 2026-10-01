@@ -5,6 +5,7 @@
 import type {
   CalendarEntry,
   ConnectionConfig,
+  DatabaseInfo,
   AlertQuery,
   BacktestRequest,
   BacktestResult,
@@ -30,7 +31,7 @@ import { calendars, dateStartMs } from './calendar/MarketCalendar';
 import type { Quote, V2DataProvider } from './data/DataProvider';
 import type { ProductService } from './data/ProductService';
 import { V2Tools, type CompareRequest } from './debug/tools';
-import type { ProductFilters, V2Store } from './persistence/V2Store';
+import type { ProductFilters, PruneResult, V2Store } from './persistence/V2Store';
 import { liveHealth } from './live/health';
 import { PaperTrader, unrealizedPnl } from './paper/PaperTrader';
 import { paperSummary } from './paper/summary';
@@ -90,6 +91,9 @@ export class V2Service {
   private readonly paper: PaperTrader;
   /** Closed paper trades already read, reused while none closes (they never change once closed). */
   private closedCache: { version: string; trades: PaperTrade[] } | null = null;
+  /** History clean-up: the IST day it last ran, and what it removed. */
+  private prunedDay: string | null = null;
+  private lastPrune: DatabaseInfo['lastPrune'] = null;
 
   constructor(private readonly deps: V2ServiceDeps) {
     this.channels = deps.channels ?? envChannelFactory;
@@ -136,6 +140,8 @@ export class V2Service {
       connections,
       lastRun: runs[0] ?? null,
       channels: this.channels.status(settings),
+      /** Records waiting to be saved (the database can't be reached) — null when the store saves directly. */
+      database: store.pendingWrites?.() ?? null,
     };
   }
 
@@ -584,8 +590,46 @@ export class V2Service {
     return this.deps.store.settings.get();
   }
 
-  saveSettings(s: V2Settings) {
-    return this.deps.store.settings.save(s);
+  /** Destinations and limits. How long history is kept is changed only with setHistoryDays (it deletes). */
+  async saveSettings(s: Omit<V2Settings, 'historyDays'>) {
+    const current = await this.deps.store.settings.get();
+    return this.deps.store.settings.save({ ...s, historyDays: current.historyDays });
+  }
+
+  // ---- database: size, history kept, records waiting ------------------------------------------
+
+  async databaseInfo(): Promise<DatabaseInfo> {
+    const [size, settings] = await Promise.all([this.deps.store.maintenance.size(), this.deps.store.settings.get()]);
+    return { ...size, historyDays: settings.historyDays, pending: this.deps.store.pendingWrites?.() ?? null, lastPrune: this.lastPrune };
+  }
+
+  /** Keep alerts, signals and closed paper trades for `days` (null = everything). Older ones are deleted now and then daily. */
+  async setHistoryDays(days: number | null): Promise<DatabaseInfo> {
+    const current = await this.deps.store.settings.get();
+    await this.deps.store.settings.save({ ...current, historyDays: days });
+    this.prunedDay = null;
+    if (days !== null) await this.pruneHistory();
+    return this.databaseInfo();
+  }
+
+  /** Once a day (called hourly by the app): delete history older than the chosen period. Nothing when everything is kept. */
+  async dailyHousekeeping(): Promise<PruneResult | null> {
+    const today = istDate(this.now());
+    if (this.prunedDay === today) return null;
+    const { historyDays } = await this.deps.store.settings.get();
+    if (historyDays === null) return null;
+    return this.pruneHistory();
+  }
+
+  private async pruneHistory(): Promise<PruneResult | null> {
+    const { historyDays } = await this.deps.store.settings.get();
+    if (historyDays === null) return null;
+    const now = this.now();
+    const out = await this.deps.store.maintenance.prune(new Date(now - historyDays * 86_400_000).toISOString());
+    this.prunedDay = istDate(now);
+    this.closedCache = null;
+    this.lastPrune = { at: new Date(now).toISOString(), ...out };
+    return out;
   }
 
   calendarEntries() {

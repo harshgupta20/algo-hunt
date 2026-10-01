@@ -26,14 +26,18 @@ export const HELP = {
     },
     liveWorker: {
       title: 'Live feed',
-      body: 'The live worker (`npm run live`) is streaming: switched-on connections are checked seconds after each candle closes, and alerts are verified on Kite’s candles.',
+      body: 'The live worker (inside the app) is streaming: switched-on connections are checked seconds after each candle closes, and alerts are verified on Kite’s candles.',
     },
     scanner: {
       title: 'Scanner',
       body: 'The live worker isn’t running, so switched-on connections are checked by the per-minute scanner (alerts can be a few minutes late).',
-      note: 'Run `npm run live` on your computer for instant, verified alerts — see V2 → Dashboard → Live feed.',
+      note: 'It starts with the app (`npm start`) for instant, verified alerts — see V2 → Dashboard → Live feed.',
     },
     connecting: { title: 'Connecting', body: 'Loading market and Kite status…' },
+    savesWaiting: {
+      title: 'Not saved yet',
+      body: 'The database can’t be reached right now, so the app holds these records (alerts, deliveries, paper trades) and saves them automatically when it’s back — also after a restart. Alerts keep going out meanwhile.',
+    },
     connectKite: {
       title: 'Connect Kite',
       body: 'Log in to Zerodha Kite. You’ll return here automatically and live data resumes.',

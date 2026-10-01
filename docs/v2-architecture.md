@@ -179,8 +179,8 @@ adds `v2_paper_overrides` (a connection's own paper values).
 Stores: `PgV2Store` (Postgres / Neon) or `SqliteV2Store` (local file), chosen by `DATABASE_URL`
 ([createStore.ts](../src/server/v2/persistence/createStore.ts)). When the app is the only process writing — the normal
 one-process run — `RuntimeV2Store` wraps either: core records go to the database, hot data (scan runs, signals that
-didn't alert, evaluations, live status, locks, paper marks) stays in memory
-([database.md § 5](database.md#5-database-traffic)).
+didn't alert, evaluations, live status, locks, paper marks) stays in memory, and event writes are saved by a
+background queue so an alert never waits for the database ([database.md § 5](database.md#5-database-traffic)).
 
 ## 7. Compare — how to read it
 

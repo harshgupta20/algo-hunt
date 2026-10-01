@@ -5,6 +5,8 @@ import type {
   AlertFeedItem,
   CalendarEntry,
   CompareResult,
+  DatabaseInfo,
+  PendingWrites,
   ConnectionConfig,
   LiveStatus,
   PaperOverride,
@@ -87,6 +89,8 @@ export interface V2Status {
   connections: { total: number; enabled: number };
   lastRun: ScanRun | null;
   channels: ChannelStatus;
+  /** Records waiting to be saved (null = saved directly). */
+  database?: PendingWrites | null;
 }
 
 export interface LiveInfo {
@@ -220,4 +224,6 @@ export const v2Api = {
   testChannel: (channel: 'telegram' | 'email') => post<{ ok: boolean; results: Array<{ target?: string; ok: boolean; error?: string }> }>('/channels/test', { channel }),
   telegramChats: () => request<Array<{ id: string; name: string; type: string; username?: string }>>('/channels/telegram/chats'),
   telegramBot: () => request<{ username: string; name: string; verified: boolean }>('/channels/telegram/bot'),
+  database: () => request<DatabaseInfo>('/database'),
+  setHistoryDays: (days: number | null) => put<DatabaseInfo>('/database/history', { days }),
 };

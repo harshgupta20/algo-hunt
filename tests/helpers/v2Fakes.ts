@@ -35,7 +35,7 @@ import type { ChannelFactory, ChannelName, Channel, Message } from '../../src/se
 import type { RawCandle } from '../../src/server/v2/engine/candles';
 import type { CandleQuery, InstrumentDump, Quote, V2DataProvider } from '../../src/server/v2/data/DataProvider';
 import { buildProducts } from '../../src/server/v2/data/ProductService';
-import type { AlertFilters, ProductFilters, RecordStoreFilters, SignalFilters, V2Store } from '../../src/server/v2/persistence/V2Store';
+import type { AlertFilters, DatabaseSize, NewAlert, NewPaperTrade, NewSignal, ProductFilters, PruneResult, RecordStoreFilters, SignalFilters, V2Store } from '../../src/server/v2/persistence/V2Store';
 import { IST_OFFSET_MS } from '../../src/server/utils/marketTime';
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
@@ -189,9 +189,9 @@ export class MemoryV2Store implements V2Store {
   };
 
   signals = {
-    insert: async (s: Omit<V2Signal, 'id' | 'createdAt'>) => {
+    insert: async (s: NewSignal) => {
       if (this.data.signals.some((x) => x.identity === s.identity)) return null;
-      const row: V2Signal = { ...clone(s), id: randomUUID(), createdAt: this.iso() };
+      const row: V2Signal = { ...clone(s), id: s.id ?? randomUUID(), createdAt: s.createdAt ?? this.iso() };
       this.data.signals.push(row);
       return clone(row);
     },
@@ -205,8 +205,8 @@ export class MemoryV2Store implements V2Store {
   };
 
   alerts = {
-    insert: async (a: Omit<V2Alert, 'id' | 'createdAt' | 'deliveries' | 'acknowledgedAt'>) => {
-      const row: V2Alert = { ...clone(a), id: randomUUID(), deliveries: [], acknowledgedAt: null, createdAt: this.iso() };
+    insert: async (a: NewAlert) => {
+      const row: V2Alert = { ...clone(a), id: a.id ?? randomUUID(), deliveries: [], acknowledgedAt: null, createdAt: a.createdAt ?? this.iso() };
       this.data.alerts.push(row);
       return clone(row);
     },
@@ -312,9 +312,9 @@ export class MemoryV2Store implements V2Store {
       return clone(plan);
     },
     listPlans: async () => [...this.data.paperPlans].map(([strategyId, plan]) => ({ strategyId, plan: clone(plan) })),
-    insertTrade: async (t: Omit<PaperTrade, 'id'>) => {
+    insertTrade: async (t: NewPaperTrade) => {
       if (this.data.paperTrades.some((x) => x.connectionId === t.connectionId && x.slot === t.slot && x.status === 'OPEN')) return null;
-      const trade = { ...clone(t), id: randomUUID() };
+      const trade = { ...clone(t), id: t.id ?? randomUUID() };
       this.data.paperTrades.push(trade);
       return clone(trade);
     },
@@ -357,6 +357,20 @@ export class MemoryV2Store implements V2Store {
       const before = this.data.paperTrades.length;
       this.data.paperTrades = this.data.paperTrades.filter((t) => t.strategyId !== id);
       return before - this.data.paperTrades.length;
+    },
+  };
+
+  maintenance = {
+    size: async (): Promise<DatabaseSize> => ({ engine: 'memory', bytes: null, limitBytes: null, tables: [] }),
+    prune: async (before: string): Promise<PruneResult> => {
+      const d = this.data;
+      const n = { alerts: d.alerts.length, signals: d.signals.length, paperTrades: d.paperTrades.length, scanRuns: d.runs.length };
+      d.paperTrades = d.paperTrades.filter((t) => !(t.status === 'CLOSED' && t.exitAt && t.exitAt < before));
+      d.alerts = d.alerts.filter((a) => a.createdAt >= before);
+      const kept = new Set(d.alerts.map((a) => a.signalId));
+      d.signals = d.signals.filter((s) => s.createdAt >= before || kept.has(s.id));
+      d.runs = d.runs.filter((r) => r.startedAt >= before);
+      return { alerts: n.alerts - d.alerts.length, signals: n.signals - d.signals.length, paperTrades: n.paperTrades - d.paperTrades.length, scanRuns: n.scanRuns - d.runs.length };
     },
   };
 

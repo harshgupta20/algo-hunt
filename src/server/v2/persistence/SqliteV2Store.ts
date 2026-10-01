@@ -32,7 +32,7 @@ import type {
 } from '@/shared/v2';
 import { settingsFromStored } from '@/shared/v2';
 import { transaction } from '../../db/sqlite';
-import type { AlertFilters, ProductFilters, RecordStoreFilters, SignalFilters, V2Store } from './V2Store';
+import type { AlertFilters, DatabaseSize, NewAlert, NewPaperTrade, NewSignal, ProductFilters, PruneResult, RecordStoreFilters, SignalFilters, V2Store } from './V2Store';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>;
@@ -402,11 +402,11 @@ export class SqliteV2Store implements V2Store {
   };
 
   signals = {
-    insert: async (s: Omit<V2Signal, 'id' | 'createdAt'>) => {
+    insert: async (s: NewSignal) => {
       const r = this.one(
         `INSERT INTO v2_signals (id, identity, connection_id, strategy_id, version, unit_key, trigger_timeframe, candle_time, outcome, evaluation, created_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (identity) DO NOTHING RETURNING *`,
-        randomUUID(),
+        s.id ?? randomUUID(),
         s.identity,
         s.connectionId,
         s.strategyId,
@@ -416,7 +416,7 @@ export class SqliteV2Store implements V2Store {
         s.candleTime,
         s.outcome,
         json(s.evaluation),
-        this.iso(),
+        s.createdAt ?? this.iso(),
       );
       return r ? mapSignal(r) : null;
     },
@@ -446,11 +446,11 @@ export class SqliteV2Store implements V2Store {
   }
 
   alerts = {
-    insert: async (a: Omit<V2Alert, 'id' | 'createdAt' | 'deliveries' | 'acknowledgedAt'>) => {
+    insert: async (a: NewAlert) => {
       const r = this.one(
         `INSERT INTO v2_alerts (id, signal_id, connection_id, strategy_id, strategy_name, version, product_id, status, unit, trigger_timeframe, candle_time, evaluation, created_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *`,
-        randomUUID(),
+        a.id ?? randomUUID(),
         a.signalId,
         a.connectionId,
         a.strategyId,
@@ -462,7 +462,7 @@ export class SqliteV2Store implements V2Store {
         a.triggerTimeframe,
         a.candleTime,
         json(a.evaluation),
-        this.iso(),
+        a.createdAt ?? this.iso(),
       );
       return mapAlert(r!, []);
     },
@@ -560,8 +560,8 @@ export class SqliteV2Store implements V2Store {
       return plan;
     },
     listPlans: async () => this.all('SELECT strategy_id, plan FROM v2_paper_plans').map((r) => ({ strategyId: r.strategy_id as string, plan: parse<PaperPlan>(r.plan) })),
-    insertTrade: async (t: Omit<PaperTrade, 'id'>) => {
-      const id = randomUUID();
+    insertTrade: async (t: NewPaperTrade) => {
+      const id = t.id ?? randomUUID();
       const trade: PaperTrade = { ...t, id };
       const changed = this.run(
         `INSERT INTO v2_paper_trades (id, strategy_id, connection_id, product_id, slot, alert_id, status, entry_at, trade, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)
@@ -651,6 +651,28 @@ export class SqliteV2Store implements V2Store {
         (SELECT group_concat(market || date || kind || coalesce(open_min, '') || coalesce(close_min, ''), ',') FROM (SELECT * FROM v2_calendar ORDER BY market, date))
       ) AS stamp`)?.stamp ?? '',
     );
+
+  maintenance = {
+    size: async (): Promise<DatabaseSize> => {
+      const page = Number((this.one('PRAGMA page_size') as { page_size: number }).page_size);
+      const pages = Number((this.one('PRAGMA page_count') as { page_count: number }).page_count);
+      let tables: DatabaseSize['tables'] = [];
+      try {
+        tables = this.all("SELECT name, sum(pgsize) AS bytes FROM dbstat WHERE name LIKE 'v2\\_%' ESCAPE '\\' OR name IN ('kite_session', 'user_preferences') GROUP BY name ORDER BY 2 DESC LIMIT 12").map((r) => ({ name: String(r.name), bytes: Number(r.bytes) }));
+      } catch {
+        /* this SQLite has no dbstat table — the total is enough */
+      }
+      return { engine: 'sqlite', bytes: page * pages, limitBytes: null, tables };
+    },
+    prune: async (before: string): Promise<PruneResult> =>
+      transaction(this.db, () => {
+        const paperTrades = this.run(`DELETE FROM v2_paper_trades WHERE status = 'CLOSED' AND exit_at < ?`, before);
+        const alerts = this.run('DELETE FROM v2_alerts WHERE created_at < ?', before); // deliveries go with them
+        const signals = this.run('DELETE FROM v2_signals WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM v2_alerts a WHERE a.signal_id = v2_signals.id)', before);
+        const scanRuns = this.run('DELETE FROM v2_scan_runs WHERE started_at < ?', before);
+        return { alerts, signals, paperTrades, scanRuns };
+      }),
+  };
 
   live = {
     get: async () => {
