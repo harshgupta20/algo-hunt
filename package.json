@@ -2,7 +2,7 @@
   "name": "ash-alert-platform",
   "private": true,
   "version": "0.2.0",
-  "description": "Personal trading alert platform for Indian markets \u2014 strategies + products = alerts, paper trading, backtests (Next.js + Zerodha Kite; local SQLite database or Postgres)",
+  "description": "Personal trading alert platform for Indian markets \u2014 strategies + products = alerts, paper trading, backtests (Next.js + Zerodha Kite + Postgres on Neon)",
   "type": "module",
   "engines": {
     "node": ">=22.13"
@@ -14,9 +14,6 @@
     "build": "node scripts/migrate.mjs --if-configured && next build",
     "start": "next start",
     "update": "git pull --ff-only && npm install && npm run build",
-    "backup": "tsx scripts/backup.ts",
-    "restore": "tsx scripts/restore.ts",
-    "db:import": "tsx scripts/import-postgres.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

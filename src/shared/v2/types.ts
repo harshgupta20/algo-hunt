@@ -445,7 +445,7 @@ export interface PendingWrites {
 
 /** Settings → Database: size, the plan's limit when known, what's kept and what's waiting. */
 export interface DatabaseInfo {
-  engine: 'postgres' | 'sqlite' | 'memory';
+  engine: 'postgres' | 'memory';
   bytes: number | null;
   limitBytes: number | null;
   tables: Array<{ name: string; bytes: number }>;

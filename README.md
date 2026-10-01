@@ -9,7 +9,7 @@ connection) turns every alert into a simulated trade so the Paper tab shows what
 candles. Everything runs on real Zerodha Kite data.
 
 Built with **Next.js 16** (App Router), **Zerodha Kite Connect** and **Postgres on Neon** — only core records are
-stored; live state stays in the app's memory (a local SQLite file works too, without `DATABASE_URL`).
+stored; live state stays in the app's memory.
 
 > 📚 Documentation lives in [docs/](docs/README.md) — the trader guide ([v2-user-guide.md](docs/v2-user-guide.md)),
 > architecture, setup, API, database, testing, deployment, troubleshooting and the current
@@ -69,9 +69,6 @@ again.
 For Kite login, add `http://localhost:3000/zerodhaRedirection` as the Redirect URL in your Kite Connect app.
 `npm start` needs `APP_PASSWORD` (the login password); `npm run dev` is open without it.
 
-Without `DATABASE_URL` the app falls back to a local file, `data/algo-hunt.db` (SQLite built into Node.js, a
-snapshot a day in `backups/`; both git-ignored) — same features, no server.
-
 | Command | Description |
 | --- | --- |
 | `npm run setup` | Install and build |
@@ -79,8 +76,6 @@ snapshot a day in `backups/`; both git-ignored) — same features, no server.
 | `npm run update` | `git pull` + install + build (then `npm start`) |
 | `npm run dev` | Development server — also runs the live worker inside it |
 | `npm run live` | Live worker as its own process (`-- --check` tests the Kite stream). Only with `LIVE_WORKER=off` on the app, which then reads everything from the database |
-| `npm run backup` / `npm run restore -- <file>` | Local-file mode only: snapshot the local database / put a snapshot back (app stopped) |
-| `npm run db:import -- "<postgres url>"` | Local-file mode only: one-time copy of all data from Postgres into the local file |
 | `npm test` / `npm run typecheck` | vitest suite / TypeScript check |
 
 Run the app on **one computer at a time**: each running copy has its own scanner and live worker, so two copies on
@@ -114,8 +109,8 @@ daily, after a confirmation).
 
 On the Neon free plan (100 compute-hours, 5 GB transfer, 0.5 GB storage a month): set the compute size to a fixed
 0.25 CU in the Neon console, and run only one copy of the app on the database (a Vercel copy with its scheduler,
-or a second laptop, would double alerts and traffic). Develop with `DATABASE_URL` empty (the local file) or a
-separate Neon project.
+or a second laptop, would double alerts and traffic). Develop on a separate free Neon project (a branch of the same
+project shares its compute-hours).
 
 ### Environment
 
@@ -125,9 +120,9 @@ separate Neon project.
 | `APP_PASSWORD` | for `npm start` | Login password |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | no | Telegram alerts via our bot [@algohuntbot](https://t.me/algohuntbot). Recipients (several people / groups) are managed in V2 → Settings; `TELEGRAM_CHAT_ID` (comma-separated) is the fallback |
 | `RESEND_API_KEY` | no | Email alerts (recipients and sender in V2 → Settings) |
-| `DATABASE_URL` | yes (Neon) | Postgres connection string. Unset → the local file below |
+| `DATABASE_URL` | yes | Postgres connection string (Neon) |
 | `LIVE_WORKER` | no | `on` (default, `npm start` and `npm run dev`) / `off` — the live worker inside the app; `off` also turns the memory layer off |
-| `DATABASE_FILE`, `BACKUP_DIR` | no | Local-file mode only: where the database / its snapshots live (default `data/algo-hunt.db`, `backups/`) |
+| `PENDING_WRITES_FILE` | no | Where records waiting for the database are kept across restarts (default `data/pending-writes.json`, git-ignored) |
 | `CRON_SECRET` | Vercel | Protects `/api/cron/tick` (`openssl rand -hex 32`) |
 
 ### Deploying (optional)

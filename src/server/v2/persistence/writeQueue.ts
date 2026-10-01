@@ -50,14 +50,12 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
 
 /**
  * True when retrying can't help: the database answered and refused the write (Postgres classes 22 data and
- * 23 constraint; SQLite constraint errors). Everything else — no connection, timeouts, Neon's "quota
- * exceeded", a restarting server, a missing table until migrations run — is worth retrying.
+ * 23 constraint). Everything else — no connection, timeouts, Neon's "quota exceeded", a restarting server,
+ * a missing table until migrations run — is worth retrying.
  */
 export function isPermanentWriteError(err: unknown): boolean {
-  const e = err as { code?: unknown; errcode?: unknown };
-  if (typeof e?.code === 'string' && /^(22|23)[0-9A-Z]{3}$/.test(e.code)) return true;
-  if (typeof e?.errcode === 'number' && (e.errcode & 0xff) === 19) return true; // SQLITE_CONSTRAINT*
-  return false;
+  const code = (err as { code?: unknown })?.code;
+  return typeof code === 'string' && /^(22|23)[0-9A-Z]{3}$/.test(code);
 }
 
 async function run(db: V2Store, w: QueuedWrite): Promise<unknown> {

@@ -340,7 +340,7 @@ function DatabaseCard() {
     save.mutate(days);
   };
   const pct = d?.bytes != null && d.limitBytes ? Math.min(100, (d.bytes / d.limitBytes) * 100) : null;
-  const where = d?.engine === 'postgres' ? (d.limitBytes ? 'Neon (free plan)' : 'Postgres') : d?.engine === 'sqlite' ? 'Local file' : 'Memory';
+  const where = d?.engine === 'postgres' ? (d.limitBytes ? 'Neon (free plan)' : 'Postgres') : 'Memory';
 
   return (
     <Card className="flex flex-col gap-3">

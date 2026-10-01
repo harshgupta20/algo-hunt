@@ -29,11 +29,14 @@ const soft = process.argv.includes('--soft');
 // pg treats sslmode=require as verify-full and prints a warning; state it explicitly (same behavior).
 const url = process.env.DATABASE_URL?.replace(/([?&]sslmode=)(require|prefer|verify-ca)(?=&|$)/, '$1verify-full');
 
-// No Postgres: the app uses its local SQLite database, which migrates itself when the app starts.
 if (!url) {
-  if (ifConfigured) process.exit(0);
-  console.log('[migrate] DATABASE_URL not set — the app uses the local database (data/algo-hunt.db), which updates itself on start.');
-  process.exit(0);
+  const text = '[migrate] DATABASE_URL is not set — add your Neon connection string to .env.local (see .env.example).';
+  if (ifConfigured) {
+    if (soft) console.warn(text); // npm run dev / live: say why the app can't reach its data
+    process.exit(0); // npm run build: nothing to migrate
+  }
+  console.error(text);
+  process.exit(1);
 }
 
 const isLocal = /@(localhost|127\.0\.0\.1)/.test(url);

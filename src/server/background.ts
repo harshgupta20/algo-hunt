@@ -5,16 +5,12 @@
  *                 `npm start` (or `npm run dev`) is the only command, and hot data stays in memory (runtime.ts).
  *                 LIVE_WORKER=off runs without it (then `npm run live` separately). Not started when a
  *                 separate worker is already running on this computer.
- *   backups       the local database: a snapshot a day (keeps 14), checked hourly.
  *   history       deletes alerts / signals / closed paper trades older than Settings → Database keeps (daily;
  *                 nothing by default — everything is kept).
  *   on stop       saves the records still waiting for the database (or keeps them for the next start).
  *
  * Nothing runs on Vercel (serverless).
  */
-import { writeFileSync, rmSync } from 'node:fs';
-import path from 'node:path';
-import { databaseFile } from './db/sqlite';
 import { childLogger } from './utils/logger';
 import { claimWorkerLock, liveWorkerWanted, memoryMode, otherWorkerPid } from './runtime';
 
@@ -22,40 +18,11 @@ const log = childLogger('background');
 const HOUR = 3_600_000;
 const g = globalThis as unknown as { __ashBackground?: boolean };
 
-/** Marks the app as running, next to the database file (`npm run restore` needs the app stopped). */
-export function pidFile(): string {
-  return path.join(path.dirname(databaseFile()), 'app.pid');
-}
-
 export async function startBackground(): Promise<void> {
   if (g.__ashBackground || process.env.VERCEL) return;
   g.__ashBackground = true;
   log.info({ memory: memoryMode() }, memoryMode() ? 'one-process app: hot data in memory, the database for core records' : 'database for everything (a separate live worker may be writing)');
-  const { getSqlite, usesPostgres } = await import('./db/sqlite');
   const stops: Array<() => Promise<void> | void> = [];
-
-  if (!usesPostgres()) {
-    const { backedUpToday, backupNow, pruneBackups } = await import('./db/backup');
-    getSqlite(); // create / migrate the local database now, not on the first request
-    try {
-      writeFileSync(pidFile(), String(process.pid));
-      stops.push(() => rmSync(pidFile(), { force: true }));
-    } catch {
-      /* the data folder is created with the database; not critical */
-    }
-    const daily = () => {
-      try {
-        if (backedUpToday()) return;
-        const file = backupNow();
-        const dropped = pruneBackups();
-        log.info({ file, dropped: dropped.length }, 'daily database backup');
-      } catch (err) {
-        log.warn({ err: err instanceof Error ? err.message : String(err) }, 'daily backup failed');
-      }
-    };
-    setTimeout(daily, 60_000).unref();
-    setInterval(daily, HOUR).unref();
-  }
 
   const other = otherWorkerPid();
   if (liveWorkerWanted() && other !== null) {

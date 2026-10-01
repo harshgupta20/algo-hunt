@@ -432,7 +432,7 @@ export const H = {
     save: { title: 'Save', body: 'Save these settings.' },
     database: {
       title: 'Database',
-      body: 'Where the app keeps its records (Neon, or the local file). Only core records are saved — strategies, connections, settings, alerts, the signals that alerted and paper trades; live state stays in the app’s memory.',
+      body: 'Where the app keeps its records (Postgres on Neon). Only core records are saved — strategies, connections, settings, alerts, the signals that alerted and paper trades; live state stays in the app’s memory.',
       note: 'Neon’s free plan: 0.5 GB of storage — new records are refused (nothing is deleted) when it’s full.',
     },
     dbSize: { title: 'Space used', body: 'How big the database is now, against the plan’s storage when known (checked at most every 10 minutes).', note: 'Amber from 80 % — choose a shorter history below to make room.' },

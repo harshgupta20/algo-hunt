@@ -5,7 +5,7 @@
  *   npm run live -- --check  connect to the Kite stream, print a few NIFTY 50 ticks, exit (no database writes)
  *   npm run live -- --force  take over from another worker that still looks alive
  *
- * Uses the same .env (KITE_*, TELEGRAM_*, RESEND_*; DATABASE_URL only for Postgres) and database as the app:
+ * Uses the same .env (DATABASE_URL, KITE_*, TELEGRAM_*, RESEND_*) and database as the app:
  * log in once each morning in the app (Settings → Broker Connection) and the worker picks it up.
  */
 import { existsSync, readFileSync } from 'node:fs';

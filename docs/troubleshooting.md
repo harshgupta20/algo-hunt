@@ -17,15 +17,12 @@ the exact strings the application produces.
 | `/api/cron/tick` returns `401 Unauthorized` | Missing or wrong `CRON_SECRET` header/query | Send `Authorization: Bearer <CRON_SECRET>` |
 | `next dev` prints "Another next dev server is already running" | Next.js 16 allows one dev server per project folder | Use the running one or stop it |
 
-## 1a. Local database (no `DATABASE_URL`)
+## 1a. Database setting
 
 | Symptom / message | Cause | Fix |
 | --- | --- | --- |
-| `This Node.js has no built-in SQLite — install Node.js 22.13 or newer (24 LTS recommended).` | Old Node.js | Install Node.js 24 LTS |
-| `✗ The app is running (process …) — stop it …` from `npm run restore` | The app holds the database open | Ctrl+C in the app's window, then restore |
-| `✗ Can't restore …: The file is damaged` | Not a complete snapshot (e.g. copied mid-write) | Use another snapshot from `backups/` |
-| `✗ … already has data — add --force` from `npm run db:import` | The local database isn't empty | `--force` (a `before-import` snapshot is saved first) |
-| The app uses the local file, not Neon | `DATABASE_URL` is unset — or set to empty in the shell, which wins over `.env.local` | Set it in `.env.local`; `unset DATABASE_URL`; restart |
+| `[migrate] DATABASE_URL is not set — add your Neon connection string to .env.local` / `DATABASE_URL is not set` errors | No database configured | Put the Neon connection string in `.env.local` (see `.env.example`); restart |
+| The app still reports `DATABASE_URL is not set` although `.env.local` has it | It's set to empty in the shell — an existing (even empty) variable wins over `.env.local` | `unset DATABASE_URL`; restart |
 
 ## 1b. Neon: "Limit reached" / "Connection Restricted"
 

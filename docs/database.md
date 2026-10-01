@@ -4,24 +4,8 @@
 
 ## 1. Technology and access
 
-Two interchangeable engines behind the same store interfaces (`V2Store`, `AppStore`); the choice is made at start:
-
-| | **Postgres — Neon (normal)**, when `DATABASE_URL` is set | **Local SQLite** (fallback), when it isn't |
-| --- | --- | --- |
-| Where | Neon (or any Postgres) | One file, `DATABASE_FILE` (default `data/algo-hunt.db`, git-ignored) |
-| Engine | PostgreSQL via `pg` | SQLite built into Node.js (`node:sqlite`, Node 22.13+) — no server, no install |
-| Code | [PgV2Store](../src/server/v2/persistence/PgV2Store.ts), `PgAppStore`, [pool.ts](../src/server/db/pool.ts) | [sqlite.ts](../src/server/db/sqlite.ts) (open, WAL, foreign keys, busy timeout), [SqliteV2Store](../src/server/v2/persistence/SqliteV2Store.ts), `SqliteAppStore` |
-| Schema | [db/migrations/](../db/migrations) via [scripts/migrate.mjs](../scripts/migrate.mjs) | [sqliteSchema.ts](../src/server/db/sqliteSchema.ts) — applied automatically when the file is opened |
-| Backups | The provider's | A snapshot a day to `BACKUP_DIR` (default `backups/`, newest 14 kept), `npm run backup`, `npm run restore -- <file>` ([backup.ts](../src/server/db/backup.ts)) |
-| Moving data | — | `npm run db:import -- "<postgres url>"` copies every table in use from Postgres, row for row |
-
-Either engine sits under the same memory layer when the app runs as one process (§ 5), so the database sees only
-core records.
-
-The SQLite schema mirrors the Postgres `v2_*` tables used by the app, with SQLite types (ISO-8601 UTC text
-timestamps, 0 / 1 booleans, JSON as text); the same unique / partial indexes give the same guarantees (signal
-dedupe, one open paper trade per slot). The app and a separate `npm run live` can share the file (WAL mode).
-The rest of this page describes the Postgres side; table names and meanings are the same in both.
+Postgres on **Neon**, reached through `DATABASE_URL` (required). The running app keeps hot data in memory in front
+of it (§ 5), so the database sees only core records.
 
 | Item | Value |
 | --- | --- |
@@ -138,9 +122,9 @@ The record exists in memory at once (with its id), and the write goes to a queue
 
 - While the database can't be reached (no connection, timeout, Neon's quota error) it retries, 1 s → 30 s, and the
   top bar shows "N not saved yet" (`/api/v2/status` → `database`). The waiting writes are kept in
-  `data/pending-writes.json` (next to the local database; git-ignored) and saved on the next start; on Ctrl+C the app
+  `data/pending-writes.json` (`PENDING_WRITES_FILE`; git-ignored) and saved on the next start; on Ctrl+C the app
   saves what it can within 2 s first.
-- A write the database refuses (Postgres classes 22 / 23, SQLite constraints — a duplicate, a deleted connection) is
+- A write the database refuses (Postgres classes 22 / 23 — a duplicate, a deleted connection) is
   tried 3 times and dropped, with the writes that depend on it (an alert whose signal wasn't saved, its deliveries);
   a paper trade is still saved, without the link. Settings → Database shows the count.
 - Every read that goes to the database first waits for the queue (so it sees the new records) — unless the
@@ -150,7 +134,7 @@ The record exists in memory at once (with its id), and the write goes to a queue
 
 ### Database size and history
 
-Settings → Database (`GET /api/v2/database`) shows the size (Postgres `pg_database_size`, SQLite pages; checked at
+Settings → Database (`GET /api/v2/database`) shows the size (Postgres `pg_database_size`; checked at
 most every 10 minutes) against Neon's free 0.5 GB, and the largest tables. **Keep history** (`v2_settings.historyDays`,
 `PUT /api/v2/database/history`) is `null` — everything — by default; with a period, alerts (+ deliveries), signals not
 tied to a kept alert, closed paper trades and scanner cycles older than it are deleted at once and then daily

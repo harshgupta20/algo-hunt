@@ -1,46 +1,31 @@
 /**
- * The local database (SQLite built into Node) and the app's memory layer (RuntimeV2Store) behave exactly like
- * the in-memory store every other test uses: one behaviour spec runs against all three. Then end to end on SQLite: sync, strategy, connection, a
- * scan that alerts (deduped), a paper trade opened and closed, filters, the alarm feed.
+ * The app's memory layer (RuntimeV2Store, in front of Postgres in the running app) behaves exactly like the
+ * in-memory store every other test uses: one behaviour spec runs against both.
  */
 import { describe, expect, it } from 'vitest';
 import type { PaperTrade, StrategyDefinition, UnitEvaluation, V2Signal } from '../../src/shared/v2';
 import { defaultPaperPlan } from '../../src/shared/v2';
-import { openSqlite } from '../../src/server/db/sqlite';
-import { SqliteV2Store } from '../../src/server/v2/persistence/SqliteV2Store';
 import { RuntimeV2Store, createRuntimeState } from '../../src/server/v2/persistence/RuntimeV2Store';
 import type { V2Store as Store } from '../../src/server/v2/persistence/V2Store';
-import { ProductService } from '../../src/server/v2/data/ProductService';
-import { V2Service } from '../../src/server/v2/V2Service';
 import {
-  FixtureV2Provider,
   MemoryV2Store,
-  NSE_SESSION,
-  RecordingChannels,
-  and,
-  candlesAt,
   cond,
   config,
   field,
   fut,
-  ind,
   ist,
-  ladder,
   legSeries,
-  momentumCloses,
   num,
   productsOf,
   spot,
   strategy,
-  timesEndingAt,
 } from '../helpers/v2Fakes';
 
 type Maker = (clock: () => number) => Store;
 const makers: Array<[string, Maker]> = [
   ['in-memory', (clock) => new MemoryV2Store(clock)],
-  ['SQLite', (clock) => new SqliteV2Store(openSqlite(':memory:'), clock)],
-  // The one-process app: memory in front of the database (here over SQLite, as over Neon).
-  ['memory layer over SQLite', (clock) => new RuntimeV2Store(new SqliteV2Store(openSqlite(':memory:'), clock), clock, createRuntimeState())],
+  // The one-process app: memory in front of the database (here over the in-memory store, as over Neon).
+  ['memory layer', (clock) => new RuntimeV2Store(new MemoryV2Store(clock), clock, createRuntimeState())],
 ];
 
 const DEF: StrategyDefinition = { ...strategy([{ id: 'A', kind: 'FUT' }], cond(field(legSeries('A')), 'GT', num(1))), name: 'Spec' };
@@ -62,7 +47,7 @@ const evaluation = (productId: string, fired: 'g1' | 'g2', source?: UnitEvaluati
   }) as UnitEvaluation;
 
 describe.each(makers)('store behaviour — %s', (name, make) => {
-  /** Postgres-like details the simple in-memory fake doesn't model (product order, the lock's minimum interval). */
+  /** Details the memory layer models like Postgres and the simple in-memory fake doesn't (product order, the lock's minimum interval). */
   const real = name !== 'in-memory';
   const setup = () => {
     const clock = { now: ist('2026-10-07', '10:00') };
@@ -245,9 +230,7 @@ describe.each(makers)('store behaviour — %s', (name, make) => {
     expect((await store.alerts.feed(null, 10)).map((a) => a.id)).toEqual([fresh.id]);
     expect((await store.signals.list({})).map((x) => x.identity)).toEqual(['fresh']);
     expect((await store.paper.listTrades({})).map((t) => [t.slot, t.status])).toEqual([['shift:1', 'OPEN']]);
-    const size = await store.maintenance.size();
-    expect(size.engine).toBe(name === 'in-memory' ? 'memory' : 'sqlite');
-    if (real) expect(size.bytes).toBeGreaterThan(0);
+    expect((await store.maintenance.size()).engine).toBe('memory');
   });
 
   it('the context stamp changes when connections change', async () => {
@@ -258,68 +241,5 @@ describe.each(makers)('store behaviour — %s', (name, make) => {
     clock.now += 1000;
     await store.connections.create(s.id, 'NSE:NIFTY', config());
     expect(await store.contextStamp()).not.toBe(before);
-  });
-});
-
-describe('SQLite end to end', () => {
-  it('sync → strategy → connection → scan alerts once → paper trade opens and closes at the target', async () => {
-    const D = '2026-10-07';
-    const clock = { now: ist(D, '09:30') };
-    const store: Store = new SqliteV2Store(openSqlite(':memory:'), () => clock.now);
-    const niftySpot = spot('NSE:NIFTY', 'NIFTY 50');
-    const niftyFut = { ...fut('NSE:NIFTY', '2026-10-27'), lotSize: 75 };
-    const opts = ladder('NSE:NIFTY', '2026-10-13', 24_800, 25_200, 50).map((o) => ({ ...o, lotSize: 75 }));
-    const atmCe = opts.find((o) => o.kind === 'CE' && o.strike === 25_000)!;
-    const provider = new FixtureV2Provider([niftySpot, niftyFut, ...opts]);
-    const nse15 = timesEndingAt(ist(D, '10:45'), 15, 65, NSE_SESSION);
-    provider.set(niftySpot, '15m', candlesAt(nse15, Array.from({ length: 65 }, (_, i) => 25_000 + i * 0.1)));
-    provider.set(niftyFut, '15m', candlesAt(nse15, Array.from({ length: 65 }, (_, i) => 25_100 + i * 0.5)));
-    provider.set(atmCe, '15m', candlesAt(nse15, momentumCloses(14), { spread: 0.5 }));
-    provider.ltp.set(niftySpot.token, 25_010);
-    provider.ltp.set(atmCe.token, 100);
-    const channels = new RecordingChannels();
-    const svc = new V2Service({ store, provider, products: new ProductService(store, provider), channels, clock: () => clock.now });
-    await svc.syncProducts();
-    const S = {
-      ...strategy(
-        [
-          { id: 'A', kind: 'FUT' },
-          { id: 'B', kind: 'CE', strikeOffset: 0 },
-        ],
-        and(cond(ind(legSeries('A'), 'RSI', { period: 14 }), 'GT', ind(legSeries('B'), 'RSI', { period: 14 })), cond(ind(legSeries('B'), 'RSI', { period: 14 }), 'CROSSED_ABOVE', num(60))),
-      ),
-      name: 'Future leads the call',
-    } as StrategyDefinition;
-    const s = await svc.createStrategy(S);
-    const [c] = await svc.createConnections(s.id, ['NSE:NIFTY'], config());
-    await svc.enableConnection(c!.id);
-
-    clock.now = ist(D, '11:00') + 30_000;
-    const first = await svc.scan();
-    expect(first.run.errors).toEqual([]);
-    expect(first.run.alerts).toBe(1);
-    expect(channels.sent[0]!.message.text).toMatch(/Future leads the call[\s\S]*📄 Paper: BUY 1 lot \(75\)/);
-    const [alert] = await svc.alerts({});
-    expect(alert).toMatchObject({ productId: 'NSE:NIFTY', strategyName: 'Future leads the call' });
-    expect('trace' in alert!.evaluation).toBe(false); // lists leave the trace out
-    expect((await svc.alert(alert!.id)).evaluation.trace).toBeTruthy();
-    expect((await svc.alertFeed(null, 1))[0]!.id).toBe(alert!.id);
-
-    // Rescanning the same candle never alerts twice.
-    await store.locks.release('v2-scan');
-    clock.now += 50_000;
-    expect((await svc.scan({ force: true })).run.alerts).toBe(0);
-
-    // The option trades above the target: the next scan closes the paper trade.
-    await store.locks.release('v2-scan');
-    clock.now = ist(D, '11:05');
-    provider.ltp.set(atmCe.token, 121);
-    await svc.scan();
-    const [t] = await svc.paperTrades({});
-    expect(t).toMatchObject({ status: 'CLOSED', exitReason: 'TARGET', exitPrice: 120.6, grossPnl: 1507.5 });
-    const sum = await svc.paperSummary({ markets: ['NSE'] });
-    expect(sum.overall).toMatchObject({ trades: 1, wins: 1 });
-    expect(sum.connections[0]).toMatchObject({ connectionId: c!.id, switchedOn: true });
-    expect((await svc.alerts({ kinds: ['COMMODITY'] })).length).toBe(0);
   });
 });

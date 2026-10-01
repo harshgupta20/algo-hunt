@@ -148,14 +148,14 @@ src/server/v2/
 ├── paper/            PaperTrader (open on alerts, exits) · charges (Zerodha charges, margin estimate) · summary
 │                     · backtest (Compare's alerts traded with money on 1-minute candles)
 ├── debug/            tools (explain now, compare across products)
-├── persistence/      V2Store · SqliteV2Store (local file, default) · PgV2Store (v2_* tables, migrations 007–011)
-│                     · createStore (Postgres when DATABASE_URL is set)
+├── persistence/      V2Store · PgV2Store (v2_* tables, migrations 007–011) · RuntimeV2Store (memory layer)
+│                     · writeQueue (background saves) · createStore
 ├── V2Service.ts      operations behind /api/v2/*
 └── index.ts          createV2Module() — wired into the API context · createV2LiveWorker()
 src/server/workers/v2Live.ts   the `npm run live` process (also `--check`, `--force`)
 src/server/background.ts       started by src/instrumentation.ts with the app: the live worker inside `npm start`,
-                               daily backups of the local database
-src/server/db/                 sqlite (open + schema) · appStore (Kite session, preferences) · backup
+                               the daily history clean-up, saving waiting records on stop
+src/server/db/                 pool (Postgres) · appStore (Kite session, preferences)
 src/client/v2/        V2Hub (tabs) · strategies/ (editor, legs, conditions) · connections/ · compare/ · alerts, products,
                       paper/ (Paper tab, charts, paper settings fields + connection editor) · backtest/ (Backtest tab)
                       · FilterBar · scanner, settings, dashboard · ProductPicker · ExplainView · help.ts (tooltips)
@@ -176,9 +176,9 @@ Migration `008_v2_live.sql` adds `v2_live_status` (one heartbeat / status row wr
 Migration `010_v2_paper.sql` adds `v2_paper_plans` and `v2_paper_trades` (paper trading); `011_v2_paper_connections.sql`
 adds `v2_paper_overrides` (a connection's own paper values).
 
-Stores: `PgV2Store` (Postgres / Neon) or `SqliteV2Store` (local file), chosen by `DATABASE_URL`
+Store: `PgV2Store` (Postgres / Neon, `DATABASE_URL`)
 ([createStore.ts](../src/server/v2/persistence/createStore.ts)). When the app is the only process writing — the normal
-one-process run — `RuntimeV2Store` wraps either: core records go to the database, hot data (scan runs, signals that
+one-process run — `RuntimeV2Store` wraps it: core records go to the database, hot data (scan runs, signals that
 didn't alert, evaluations, live status, locks, paper marks) stays in memory, and event writes are saved by a
 background queue so an alert never waits for the database ([database.md § 5](database.md#5-database-traffic)).
 

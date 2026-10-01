@@ -74,7 +74,7 @@ export interface PruneResult {
 
 /** How big the database is (`limitBytes` = the plan's storage, when known — Neon free: 0.5 GB). */
 export interface DatabaseSize {
-  engine: 'postgres' | 'sqlite' | 'memory';
+  engine: 'postgres' | 'memory';
   bytes: number | null;
   limitBytes: number | null;
   /** Largest tables first. */

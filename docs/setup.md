@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | Node.js | `>= 22.13` (24 LTS recommended) | `engines` in [package.json](../package.json) |
 | npm | Any version that reads `package-lock.json` v3 | [package-lock.json](../package-lock.json) is committed |
-| PostgreSQL | A Postgres database reachable by URL — normally **Neon** (free plan). The schema needs the `pgcrypto` extension and `gen_random_uuid()`; the exact minimum Postgres version is *not stated in the repository*. Optional: without it the app uses a local SQLite file | [db/migrations/](../db/migrations) |
+| PostgreSQL | A Postgres database reachable by URL — normally **Neon** (free plan). The schema needs the `pgcrypto` extension and `gen_random_uuid()`; the exact minimum Postgres version is *not stated in the repository* | [db/migrations/](../db/migrations) |
 | Zerodha Kite Connect app | API key + secret; the historical-data add-on is needed for candles (per the root README) | [.env.example](../.env.example) |
 | Telegram bot | Optional | [.env.example](../.env.example) |
 
@@ -39,7 +39,7 @@ noted otherwise.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `DATABASE_URL` | **Yes** (Neon) | Postgres connection string; unset → local SQLite file (`DATABASE_FILE`, default `data/algo-hunt.db`). On Vercel use Neon's **pooled** string (host contains `-pooler`). `sslmode=require` is rewritten to `verify-full` internally (same behaviour, no warning) |
+| `DATABASE_URL` | **Yes** | Postgres connection string (Neon). On Vercel use Neon's **pooled** string (host contains `-pooler`). `sslmode=require` is rewritten to `verify-full` internally (same behaviour, no warning) |
 | `KITE_API_KEY` | **Yes** for market data | Kite Connect app key |
 | `KITE_API_SECRET` | **Yes** for market data | Kite Connect app secret; also derives the key that encrypts the stored access token. Rotating it invalidates the stored session |
 | `APP_PASSWORD` | **Yes in production** | Dashboard password. Unset → open in development, 503 in production |
@@ -58,9 +58,9 @@ noted otherwise.
 - `.env`, `.env.local` and `.env.*.local` are git-ignored ([.gitignore](../.gitignore)).
 
 > ⚠ **Use a separate development database.** The dev server talks to whatever `DATABASE_URL` points at, runs its
-> migrations on start, and its live worker writes alerts and paper trades. Point development at a Neon branch (or
-> leave `DATABASE_URL` unset for the local file) if you don't want to touch the trader's data. Two running copies on
-> one database would also alert twice.
+> migrations on start, and its live worker writes alerts and paper trades. Point development at a separate free
+> Neon project if you don't want to touch the trader's data (a branch of the same project shares its compute-hours).
+> Two running copies on one database would also alert twice.
 
 ---
 
@@ -68,11 +68,8 @@ noted otherwise.
 
 **Neon:** create a free project, copy its connection string into `DATABASE_URL`. `npm run setup` (or `npm run dev`
 / `npm run build` / `npm run db:migrate`) applies the migrations. The running app keeps live state in memory and
-sends Neon only core records — [database.md § 5](database.md#5-database-traffic).
-
-**Local file:** with `DATABASE_URL` unset the app keeps its data in `data/algo-hunt.db` (SQLite built into Node.js),
-creating and updating the file itself on start; `backups/` gets a snapshot a day. Both are git-ignored. To bring
-Postgres data over once: `npm run db:import -- "<postgres url>"`. See [database.md § 1](database.md#1-technology-and-access).
+sends Neon only core records — [database.md § 5](database.md#5-database-traffic). `DATABASE_URL` is required: the app
+has no other database.
 
 ---
 
@@ -86,15 +83,13 @@ npm start                     # http://localhost:3000 — app + live worker, one
 | Command | What it does |
 | --- | --- |
 | `npm run setup` | `npm install` + build |
-| `npm start` | `next start`: the UI, the API, the live worker inside the app (and daily backups in local-file mode); needs `APP_PASSWORD` |
+| `npm start` | `next start`: the UI, the API and the live worker inside the app; needs `APP_PASSWORD` |
 | `npm run update` | `git pull --ff-only` + install + build (Postgres migrations included) |
 | `npm run dev` | `predev` (Postgres migrations if `DATABASE_URL`), then `next dev` — with the live worker inside |
 | `npm run live` | The live worker as its own process (only with `LIVE_WORKER=off` on the app): `-- --check` tests the stream, `-- --force` starts even if another worker holds the lock |
-| `npm run backup` / `npm run restore -- <file>` | Snapshot the local database now / put a snapshot back (app stopped) |
-| `npm run db:import -- "<url>"` | Copy all data from Postgres into the local database |
 | `npm test` / `npm run test:watch` | vitest once / watch mode |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm run db:migrate` | Postgres migrations (the local database migrates itself) |
+| `npm run db:migrate` | Postgres migrations (also run by `setup`, `build`, `dev` and `live`) |
 
 The live worker starts inside the app with `npm start` and `npm run dev` (`LIVE_WORKER=off` to run it separately
 with `npm run live`). Only one worker runs per project folder: a lock file in the system temp folder marks it, a
@@ -127,8 +122,7 @@ second one stands aside, and an app that finds a separate worker running reads e
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | API responds `503 Database tables are missing — run npm run db:migrate` | Postgres schema not migrated | `npm run db:migrate` |
-| `This Node.js has no built-in SQLite — install Node.js 22.13 or newer` | Node.js too old for the local database | Install Node.js 24 LTS |
-| The app uses the local file instead of Neon | `DATABASE_URL` is unset (or set to empty in the shell — an existing empty variable wins over `.env.local`) | Set it in `.env.local`; `unset DATABASE_URL` in the shell; restart |
+| `[migrate] DATABASE_URL is not set …` / API errors `DATABASE_URL is not set` | No database configured (or set to empty in the shell — an existing empty variable wins over `.env.local`) | Set it in `.env.local`; `unset DATABASE_URL` in the shell; restart |
 | Log says "a live worker is already running on this computer" | A separate `npm run live` holds the worker lock | Stop it (Ctrl+C) and restart the app, or keep it and start the app with `LIVE_WORKER=off` |
 | Settings shows "Kite Connect credentials are missing" | `KITE_API_KEY` / `KITE_API_SECRET` unset | Set both; restart |
 | V2 product lists are empty | Products not synced yet | Connect Kite, then **V2 → Products → Sync from Kite** |
