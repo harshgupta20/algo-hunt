@@ -75,6 +75,12 @@ has no other database.
 
 ## 5. Run
 
+On the trader's computer, use [start-algo-hunt.bat](../start-algo-hunt.bat) instead: kept in its own folder with the
+`.env`, it clones / updates the app into an `algo-hunt` folder next to it (with the GitHub token written in the
+`.bat`), copies the `.env` in, then `npm install`, `npm run build`, `npm run start` and opens the browser — see the
+root README, *For the trader*.
+
+
 ```bash
 npm run setup                 # install + build
 npm start                     # http://localhost:3000 — app + live worker, one process

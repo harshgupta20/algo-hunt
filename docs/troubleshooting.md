@@ -39,6 +39,17 @@ until one closes, and the live worker reloads connections only when a one-value 
 Also make sure nothing else reads the same database: a deployed copy (e.g. on Vercel) called every minute by a
 scheduler reads as much as the local app. Stop the scheduler (or the deployment) if you only run it locally.
 
+## 1b-2. The start window (start-algo-hunt.bat)
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `The app could not be downloaded from GitHub` | First start without internet, or the token in the `.bat` is missing / expired | Check the internet; make a new fine-grained token (only this repository, Contents: Read-only) and put it in the `.bat` |
+| `Could not reach GitHub … Starting the version already on this computer` | Offline, or the token expired | Nothing today; renew the token if it keeps happening |
+| `The settings file ".env" is missing` | No `.env` next to the `.bat` | Put the `.env` in that folder |
+| `Git is not installed` / `Node.js is not installed` | Missing software | Install Git (git-scm.com) / Node.js 24 LTS (nodejs.org) |
+| `Preparing the app failed` | `npm run build` failed (often: the database couldn't be reached for its updates) | Check the internet and start again; otherwise send the window to the admin |
+| `This file is meant to be copied into its own folder` | The `.bat` was started inside the project | Copy it into the trader's folder next to the `.env` |
+
 ## 1c. "N not saved yet" in the top bar
 
 The app can't reach the database, so it holds the new records (alerts, deliveries, paper trades) and saves them when

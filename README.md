@@ -48,6 +48,31 @@ db/migrations/         SQL migrations (applied automatically)
 
 ---
 
+## For the trader: one file to double-click
+
+[start-algo-hunt.bat](start-algo-hunt.bat) (Windows) starts everything. Setup on the trader's computer, once:
+
+1. Install **Git** (git-scm.com, default options) and **Node.js 24 LTS** (nodejs.org).
+2. Make a folder, e.g. **Algo Hunt** on the Desktop, and put two files in it: `start-algo-hunt.bat` (from this
+   repository) and the `.env` settings file.
+3. Edit the `.bat` once: `GITHUB_TOKEN=` a fine-grained token from the repository owner's GitHub account (only this
+   repository, *Contents: Read-only*) — needed because the repository is private and the trader's GitHub account
+   (if any) is different. `REPO`, `BRANCH` and `PORT` are there too.
+
+Then the trader double-clicks `start-algo-hunt.bat` (a desktop shortcut to it works too). The window shows each step:
+
+| Step | What it does |
+| --- | --- |
+| 1 | First time: clones the app into an `algo-hunt` folder next to the `.bat`. After that: gets the latest version from GitHub (the folder always matches GitHub; no internet → starts the version it has) |
+| 2 | Copies the `.env` into the app, `npm install` |
+| 3 | `npm run build` (database updates + build, 1–3 minutes) |
+| 4 | `npm run start` and opens **http://localhost:3000** in the browser |
+
+Keep the window open while trading; close it to stop (waiting records are saved first). Opened while already running,
+it just opens the browser. Missing Git / Node.js / `.env`, a failed download (token expired) or a failed build: it
+says so and waits for a key press. To ship an update, push to `main`. If the `.bat` itself changes, copy the new one
+into the trader's folder.
+
 ## Setup — clone, set up, start
 
 Needs **Node.js 24 LTS** (or 22.13+), git and a database URL — **Neon** (free Postgres) is the normal choice. The
