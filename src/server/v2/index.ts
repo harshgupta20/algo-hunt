@@ -13,6 +13,7 @@ import { KiteStream } from './live/KiteStream';
 import { LiveWorker, type LiveSession } from './live/LiveWorker';
 import { ProductService } from './data/ProductService';
 import { createV2Store } from './persistence/createStore';
+import { memoryMode } from '../runtime';
 import { V2Service } from './V2Service';
 
 export { V2Service, V2ServiceError } from './V2Service';
@@ -45,5 +46,7 @@ export function createV2LiveWorker(deps: { kiteAuth: KiteAuthService; historical
   const store = createV2Store();
   const provider = new KiteDataProvider(deps.kiteAuth, deps.historical);
   const products = new ProductService(store, provider);
-  return new LiveWorker({ store, provider, products, channels: envChannelFactory, stream: new KiteStream(), session: kiteLiveSession(deps.kiteAuth) });
+  // Inside the app the status is memory (every 5 s is free); a separate worker writes it to the database — every 20 s.
+  const statusEveryMs = memoryMode() ? 5_000 : 20_000;
+  return new LiveWorker({ store, provider, products, channels: envChannelFactory, stream: new KiteStream(), session: kiteLiveSession(deps.kiteAuth), statusEveryMs });
 }

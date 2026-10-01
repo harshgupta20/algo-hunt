@@ -22,6 +22,9 @@ for (const file of ['.env.local', '.env']) {
 }
 
 const args = new Set(process.argv.slice(2));
+// This process is the separate worker: the database stays the source of truth (no memory mode here).
+process.env.ALGO_HUNT_STANDALONE_WORKER = '1';
+const { claimWorkerLock, otherWorkerPid } = await import('../runtime');
 const { createAppStore } = await import('../db/appStore');
 const { KiteAuthService } = await import('../services/kite/kiteAuth');
 const { KiteHistoricalProvider } = await import('../services/kite/KiteHistoricalProvider');
@@ -61,6 +64,13 @@ if (args.has('--check')) {
     else finish(1, `✗ No ticks in 20 s — socket ${s?.state ?? 'not opened'}${s?.error ? `: ${s.error}` : ''}.`);
   }, 20_000);
 } else {
+  const other = otherWorkerPid();
+  if (other !== null && !args.has('--force')) {
+    console.error(`✗ A live worker is already running on this computer (process ${other}) — usually inside the app (npm start / npm run dev). Run the app with LIVE_WORKER=off to use this one, or add --force.`);
+    process.exit(1);
+  }
+  const releaseLock = claimWorkerLock();
+  process.on('exit', releaseLock);
   const worker = createV2LiveWorker({ kiteAuth, historical: new KiteHistoricalProvider(kiteAuth) });
   try {
     await worker.start({ force: args.has('--force') });

@@ -1,6 +1,6 @@
 /**
- * The local database (SQLite built into Node) behaves exactly like the in-memory store every other test
- * uses: one behaviour spec runs against both. Then end to end on SQLite: sync, strategy, connection, a
+ * The local database (SQLite built into Node) and the app's memory layer (RuntimeV2Store) behave exactly like
+ * the in-memory store every other test uses: one behaviour spec runs against all three. Then end to end on SQLite: sync, strategy, connection, a
  * scan that alerts (deduped), a paper trade opened and closed, filters, the alarm feed.
  */
 import { describe, expect, it } from 'vitest';
@@ -8,6 +8,7 @@ import type { PaperTrade, StrategyDefinition, UnitEvaluation, V2Signal } from '.
 import { defaultPaperPlan } from '../../src/shared/v2';
 import { openSqlite } from '../../src/server/db/sqlite';
 import { SqliteV2Store } from '../../src/server/v2/persistence/SqliteV2Store';
+import { RuntimeV2Store, createRuntimeState } from '../../src/server/v2/persistence/RuntimeV2Store';
 import type { V2Store as Store } from '../../src/server/v2/persistence/V2Store';
 import { ProductService } from '../../src/server/v2/data/ProductService';
 import { V2Service } from '../../src/server/v2/V2Service';
@@ -38,6 +39,8 @@ type Maker = (clock: () => number) => Store;
 const makers: Array<[string, Maker]> = [
   ['in-memory', (clock) => new MemoryV2Store(clock)],
   ['SQLite', (clock) => new SqliteV2Store(openSqlite(':memory:'), clock)],
+  // The one-process app: memory in front of the database (here over SQLite, as over Neon).
+  ['memory layer over SQLite', (clock) => new RuntimeV2Store(new SqliteV2Store(openSqlite(':memory:'), clock), clock, createRuntimeState())],
 ];
 
 const DEF: StrategyDefinition = { ...strategy([{ id: 'A', kind: 'FUT' }], cond(field(legSeries('A')), 'GT', num(1))), name: 'Spec' };
@@ -60,7 +63,7 @@ const evaluation = (productId: string, fired: 'g1' | 'g2', source?: UnitEvaluati
 
 describe.each(makers)('store behaviour — %s', (name, make) => {
   /** Postgres-like details the simple in-memory fake doesn't model (product order, the lock's minimum interval). */
-  const real = name === 'SQLite';
+  const real = name !== 'in-memory';
   const setup = () => {
     const clock = { now: ist('2026-10-07', '10:00') };
     return { clock, store: make(() => clock.now) };

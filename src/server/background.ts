@@ -2,9 +2,9 @@
  * Work the app does by itself while it runs (started once from src/instrumentation.ts):
  *
  *   live worker   streams Kite and alerts seconds after each candle close — in the app's own process, so
- *                 `npm start` is the only command. On with `next start`, off with `next dev` (the developer
- *                 can run `npm run live`); LIVE_WORKER=on / off overrides. Skipped when another worker is
- *                 already running (e.g. a separate `npm run live`).
+ *                 `npm start` (or `npm run dev`) is the only command, and hot data stays in memory (runtime.ts).
+ *                 LIVE_WORKER=off runs without it (then `npm run live` separately). Not started when a
+ *                 separate worker is already running on this computer.
  *   backups       the local database: a snapshot a day (keeps 14), checked hourly.
  *
  * Nothing runs on Vercel (serverless).
@@ -13,17 +13,11 @@ import { writeFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { databaseFile } from './db/sqlite';
 import { childLogger } from './utils/logger';
+import { claimWorkerLock, liveWorkerWanted, memoryMode, otherWorkerPid } from './runtime';
 
 const log = childLogger('background');
 const HOUR = 3_600_000;
 const g = globalThis as unknown as { __ashBackground?: boolean };
-
-function liveWorkerWanted(): boolean {
-  const v = process.env.LIVE_WORKER?.trim().toLowerCase();
-  if (v === 'off' || v === 'false' || v === '0') return false;
-  if (v === 'on' || v === 'true' || v === '1') return true;
-  return process.env.NODE_ENV === 'production';
-}
 
 /** Marks the app as running, next to the database file (`npm run restore` needs the app stopped). */
 export function pidFile(): string {
@@ -33,6 +27,7 @@ export function pidFile(): string {
 export async function startBackground(): Promise<void> {
   if (g.__ashBackground || process.env.VERCEL) return;
   g.__ashBackground = true;
+  log.info({ memory: memoryMode() }, memoryMode() ? 'one-process app: hot data in memory, the database for core records' : 'database for everything (a separate live worker may be writing)');
   const { getSqlite, usesPostgres } = await import('./db/sqlite');
   const stops: Array<() => Promise<void> | void> = [];
 
@@ -59,8 +54,12 @@ export async function startBackground(): Promise<void> {
     setInterval(daily, HOUR).unref();
   }
 
-  if (liveWorkerWanted()) {
+  const other = otherWorkerPid();
+  if (liveWorkerWanted() && other !== null) {
+    log.warn({ pid: other }, 'a live worker is already running on this computer (npm run live) — not starting one in the app');
+  } else if (liveWorkerWanted()) {
     try {
+      stops.push(claimWorkerLock());
       const { getContext } = await import('./api/context');
       const { createV2LiveWorker } = await import('./v2');
       const ctx = getContext();
@@ -69,7 +68,7 @@ export async function startBackground(): Promise<void> {
       stops.push(() => worker.stop());
       log.info({ worker: worker.id.slice(0, 8) }, 'live worker started in the app');
     } catch (err) {
-      // Most often: another worker is already running (npm run live) — it keeps working.
+      // E.g. Kite keys missing. The lock stays held so a separate `npm run live` can't write next to this app's memory.
       log.warn({ err: err instanceof Error ? err.message : String(err) }, 'live worker not started in the app');
     }
   }

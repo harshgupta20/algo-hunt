@@ -186,11 +186,25 @@ export class PgV2Store implements V2Store {
   }
 
   instruments = {
+    /**
+     * Daily sync as a difference: only contracts that are new, expired or changed (Kite can reuse a token)
+     * are written — not the whole list (tens of thousands of rows) every morning. Products are small: rewritten.
+     */
     replaceAll: (list: V2Instrument[], products: V2Product[]) =>
       this.tx(async (c) => {
-        await c.query('DELETE FROM v2_instruments');
-        for (let i = 0; i < list.length; i += 5000) {
-          const rows = list.slice(i, i + 5000);
+        const have = new Map(
+          (await c.query('SELECT token, symbol, lot_size, tick_size FROM v2_instruments')).rows.map((r: any) => [Number(r.token), `${r.symbol}|${Number(r.lot_size)}|${Number(r.tick_size)}`]),
+        );
+        const want = new Map(list.map((i) => [i.token, i]));
+        const drop = [...have.keys()].filter((t) => {
+          const i = want.get(t);
+          return !i || have.get(t) !== `${i.symbol}|${i.lotSize}|${i.tickSize}`;
+        });
+        for (let i = 0; i < drop.length; i += 10_000) await c.query('DELETE FROM v2_instruments WHERE token = ANY($1::bigint[])', [drop.slice(i, i + 10_000)]);
+        const dropped = new Set(drop);
+        const fresh = list.filter((i) => !have.has(i.token) || dropped.has(i.token));
+        for (let i = 0; i < fresh.length; i += 5000) {
+          const rows = fresh.slice(i, i + 5000);
           await c.query(
             `INSERT INTO v2_instruments (token, exchange, product_id, kind, symbol, expiry, strike, lot_size, tick_size)
              SELECT * FROM unnest($1::bigint[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::float8[], $8::int[], $9::float8[])
@@ -232,10 +246,21 @@ export class PgV2Store implements V2Store {
             ],
           );
         }
+        // When and how many — read instead of scanning the table.
+        await c.query(
+          `INSERT INTO v2_settings (key, value, updated_at) VALUES ('instruments_sync', $1, now()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+          [JSON.stringify({ at: new Date().toISOString(), count: list.length })],
+        );
       }),
     forProduct: async (productId: string) => (await this.pool.query('SELECT * FROM v2_instruments WHERE product_id = $1', [productId])).rows.map(mapInstrument),
-    count: async () => Number((await this.pool.query('SELECT count(*)::int AS n FROM v2_instruments')).rows[0]?.n ?? 0),
-    syncedAt: async () => iso((await this.pool.query('SELECT max(synced_at) AS at FROM v2_instruments')).rows[0]?.at),
+    count: async () => {
+      const sync = (await this.pool.query(`SELECT value FROM v2_settings WHERE key = 'instruments_sync'`)).rows[0]?.value as { count?: number } | undefined;
+      return sync?.count ?? Number((await this.pool.query('SELECT count(*)::int AS n FROM v2_instruments')).rows[0]?.n ?? 0);
+    },
+    syncedAt: async () => {
+      const sync = (await this.pool.query(`SELECT value FROM v2_settings WHERE key = 'instruments_sync'`)).rows[0]?.value as { at?: string } | undefined;
+      return sync?.at ?? iso((await this.pool.query('SELECT max(synced_at) AS at FROM v2_instruments')).rows[0]?.at);
+    },
   };
 
   /** WHERE clause for product filters (shared by list and counts). */

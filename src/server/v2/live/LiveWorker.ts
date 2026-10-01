@@ -64,6 +64,7 @@ const CONTEXT_EVERY_MS = 15_000;
 /** Reload connections etc. at least this often even when nothing seems changed. */
 const CONTEXT_FULL_EVERY_MS = 10 * 60_000;
 const PLAN_EVERY_MS = 60_000;
+/** Heartbeat / status save interval (memory in the one-process app; the database for a separate worker). */
 const STATUS_EVERY_MS = 5_000;
 const PAPER_EVERY_MS = 10_000;
 const DOWN_WARN_MS = 60_000;
@@ -89,6 +90,8 @@ export interface LiveWorkerDeps {
   workerId?: string;
   bufferStrikes?: number;
   capacity?: number;
+  /** How often the status is saved (default 5 s). */
+  statusEveryMs?: number;
 }
 
 interface Ctx {
@@ -837,7 +840,7 @@ export class LiveWorker {
   }
 
   private async maybeSaveStatus(now: number): Promise<void> {
-    if (now - this.statusAt >= STATUS_EVERY_MS || this.state !== this.lastState) await this.saveStatus(false);
+    if (now - this.statusAt >= (this.deps.statusEveryMs ?? STATUS_EVERY_MS) || this.state !== this.lastState) await this.saveStatus(false);
   }
 
   status(): LiveStatus {

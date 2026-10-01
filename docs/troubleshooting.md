@@ -17,7 +17,7 @@ the exact strings the application produces.
 | `/api/cron/tick` returns `401 Unauthorized` | Missing or wrong `CRON_SECRET` header/query | Send `Authorization: Bearer <CRON_SECRET>` |
 | `next dev` prints "Another next dev server is already running" | Next.js 16 allows one dev server per project folder | Use the running one or stop it |
 
-## 1a. Local database
+## 1a. Local database (no `DATABASE_URL`)
 
 | Symptom / message | Cause | Fix |
 | --- | --- | --- |
@@ -25,8 +25,7 @@ the exact strings the application produces.
 | `✗ The app is running (process …) — stop it …` from `npm run restore` | The app holds the database open | Ctrl+C in the app's window, then restore |
 | `✗ Can't restore …: The file is damaged` | Not a complete snapshot (e.g. copied mid-write) | Use another snapshot from `backups/` |
 | `✗ … already has data — add --force` from `npm run db:import` | The local database isn't empty | `--force` (a `before-import` snapshot is saved first) |
-| Log: `live worker not started in the app` | Another worker is running (e.g. `npm run live`), or Kite env vars are missing | Keep one worker; check `KITE_API_KEY` / `KITE_API_SECRET` |
-| The app still uses Neon | `DATABASE_URL` is set in `.env.local` | Remove it to use the local file |
+| The app uses the local file, not Neon | `DATABASE_URL` is unset — or set to empty in the shell, which wins over `.env.local` | Set it in `.env.local`; `unset DATABASE_URL`; restart |
 
 ## 1b. Neon: "Limit reached" / "Connection Restricted"
 
@@ -34,7 +33,8 @@ Neon limits the **data sent out of the database** per month (network transfer). 
 connections — **nothing is deleted**; access returns when the allowance resets (see *Review usage* in the Neon console
 for the date) or right away on a paid plan.
 
-The app keeps its reads small (since 2026-09-29): contracts are read once per instrument sync (not every minute), the
+Since 2026-10-01 the running app keeps hot data in memory and sends Neon only core records — an hour of scans and
+open screens makes no database calls ([database.md § 5](database.md#5-database-traffic)). Before that (2026-09-29) reads were cut: contracts are read once per instrument sync (not every minute), the
 alarm polls a feed of alerts newer than the last one it saw (nothing when there's nothing new), alert / signal lists
 leave the condition trace in the database (opened on demand), status uses counts, closed paper trades are reused
 until one closes, and the live worker reloads connections only when a one-value check says they changed.
@@ -64,14 +64,17 @@ scheduler reads as much as the local app. Stop the scheduler (or the deployment)
 | `Strike position +N is outside the listed strikes — skipped` | That strike isn't listed for the chosen expiry | Choose fewer strike positions or another expiry |
 | "Unknown" results | Indicator warm-up, or a contract with no trades / history | Expected: Unknown never alerts |
 
-## 4. Live worker (`npm run live`)
+## 4. Live worker
 
 | Symptom / message | Cause | Fix |
 | --- | --- | --- |
+| Log: `a live worker is already running on this computer (npm run live) — not starting one in the app` | A separate `npm run live` holds the worker lock; the app then reads everything from the database | Stop it (Ctrl+C) and restart the app — the app runs the worker itself |
+| Log: `live worker not started in the app` | Kite env vars missing, or the worker failed to start | Check `KITE_API_KEY` / `KITE_API_SECRET`; the log line has the error |
 | `✗ Kite is not logged in — log in from the app …` (`--check`) / state **Waiting for Kite login** | No valid Kite session | Log in (Settings → Broker Connection); the worker picks it up within 30 s |
+| `✗ A live worker is already running on this computer (process N) — usually inside the app …` from `npm run live` | The app already runs the worker | Nothing to do — or start the app with `LIVE_WORKER=off` to use the separate one |
 | `Another live worker is running (heartbeat N s ago)` | A second worker was started | Stop the first one (Ctrl+C), or start with `-- --force` |
 | Live feed **Degraded** / Telegram "live feed disconnected" | Internet drop or Kite closed the socket | It reconnects by itself; the backup scanner covers meanwhile |
-| Telegram "live worker is offline" | The worker stopped without Ctrl+C (crash, sleep, closed terminal) | Restart `npm run live`; keep the computer awake in market hours |
+| Telegram "live worker is offline" | The worker stopped without Ctrl+C (crash, sleep, closed terminal) | Restart the app (or `npm run live`); keep the computer awake in market hours |
 | `This computer's clock is N s off the exchange` | System clock drift | Enable automatic time sync |
 | Alerts marked **Unverified** | Kite's official candles didn't arrive within 2 minutes | Usually identical to Kite's chart; check it if it matters |
 | "N connection(s) don't fit Kite's contract limit" | More than 9,000 streamed contracts | Those connections are checked by the scanner; reduce products or strike positions |

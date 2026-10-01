@@ -9,6 +9,7 @@ import type { UserPreferences } from '@ash/shared';
 import { DEFAULT_USER_PREFERENCES } from '@ash/shared';
 import { getPool } from './pool';
 import { getSqlite, usesPostgres, type DatabaseSync } from './sqlite';
+import { memoryMode } from '../runtime';
 
 /** Fixed single user of this deployment. */
 const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
@@ -191,7 +192,55 @@ export class SqliteAppStore implements AppStore {
   }
 }
 
-/** The app store on the configured database. */
+// ---- in memory (one-process app, see runtime.ts) -----------------------------------------------------
+
+const g = globalThis as unknown as { __ashAppState?: { kite?: KiteSessionRecord | null; prefs?: UserPreferences } };
+
+/**
+ * The Kite session and preferences read once and kept in memory, written through on change: the Kite status
+ * is checked many times a minute (scanner, live worker, status bar) and would otherwise read the database each time.
+ */
+export class RuntimeAppStore implements AppStore {
+  readonly kite: KiteSessionRepository;
+  readonly preferences: PreferencesRepository;
+
+  constructor(db: AppStore) {
+    const st = (g.__ashAppState ??= {});
+    const copy = <T>(v: T): T => (v == null ? v : structuredClone(v));
+    this.kite = {
+      get: async () => {
+        if (st.kite === undefined) st.kite = await db.kite.get();
+        return copy(st.kite);
+      },
+      save: async (r) => {
+        await db.kite.save(r);
+        st.kite = { ...copy(r), updatedAt: new Date().toISOString() };
+      },
+      markState: async (state, lastError) => {
+        await db.kite.markState(state, lastError);
+        const cur = st.kite === undefined ? await db.kite.get() : st.kite;
+        st.kite = { ...(cur ?? {}), state, lastError, updatedAt: new Date().toISOString() };
+      },
+      clear: async () => {
+        await db.kite.clear();
+        st.kite = null;
+      },
+    };
+    this.preferences = {
+      get: async () => {
+        st.prefs ??= await db.preferences.get();
+        return copy(st.prefs);
+      },
+      save: async (prefs) => {
+        st.prefs = copy(await db.preferences.save(prefs));
+        return copy(st.prefs);
+      },
+    };
+  }
+}
+
+/** The app store on the configured database (kept in memory when the app runs in one process). */
 export function createAppStore(): AppStore {
-  return usesPostgres() ? new PgAppStore() : new SqliteAppStore();
+  const db: AppStore = usesPostgres() ? new PgAppStore() : new SqliteAppStore();
+  return memoryMode() ? new RuntimeAppStore(db) : db;
 }

@@ -8,8 +8,8 @@ connection) turns every alert into a simulated trade so the Paper tab shows what
 **Backtest** answers the same question for the past: a strategy on the products you pick, with your capital, over past
 candles. Everything runs on real Zerodha Kite data.
 
-Built with **Next.js 16** (App Router), **Zerodha Kite Connect** and a local **SQLite** database built into Node.js
-(Postgres, e.g. Neon, optional).
+Built with **Next.js 16** (App Router), **Zerodha Kite Connect** and **Postgres on Neon** — only core records are
+stored; live state stays in the app's memory (a local SQLite file works too, without `DATABASE_URL`).
 
 > 📚 Documentation lives in [docs/](docs/README.md) — the trader guide ([v2-user-guide.md](docs/v2-user-guide.md)),
 > architecture, setup, API, database, testing, deployment, troubleshooting and the current
@@ -50,38 +50,57 @@ db/migrations/         SQL migrations (applied automatically)
 
 ## Setup — clone, set up, start
 
-Needs only **Node.js 24 LTS** (or 22.13+) and git — no database server, nothing else to install. The data lives in
-one local file, `data/algo-hunt.db` (SQLite, built into Node.js), created and updated by the app itself; a snapshot
-is saved to `backups/` once a day (the newest 14 are kept). Both folders are git-ignored, so `git pull` never touches
-data.
+Needs **Node.js 24 LTS** (or 22.13+), git and a database URL — **Neon** (free Postgres) is the normal choice. The
+app runs as one process (UI, API, scanner and live worker together), so everything that changes every few seconds
+stays in its memory and Neon receives only the core records: strategies, connections, settings, alerts and their
+deliveries, alerting signals, paper trades (opening and closing) and the Kite session — see
+[Database traffic](#database-traffic).
 
 ```bash
 git clone <repo> algo-hunt && cd algo-hunt
-cp .env.example .env.local     # Kite keys, APP_PASSWORD, Telegram — leave DATABASE_URL unset for the local database
-npm run setup                  # install + build (once, and after each update)
-npm start                      # http://localhost:3000 — the app, the live worker and the database in one process
+cp .env.example .env.local     # DATABASE_URL (Neon), Kite keys, APP_PASSWORD, Telegram
+npm run setup                  # install + migrate + build (once, and after each update)
+npm start                      # http://localhost:3000 — the app and the live worker in one process
 ```
 
-Later, to update: stop the app (Ctrl+C), `npm run update` (git pull + install + build), then `npm start` again.
+Later, to update: stop the app (Ctrl+C), `npm run update` (git pull + install + migrate + build), then `npm start`
+again.
 
 For Kite login, add `http://localhost:3000/zerodhaRedirection` as the Redirect URL in your Kite Connect app.
 `npm start` needs `APP_PASSWORD` (the login password); `npm run dev` is open without it.
 
+Without `DATABASE_URL` the app falls back to a local file, `data/algo-hunt.db` (SQLite built into Node.js, a
+snapshot a day in `backups/`; both git-ignored) — same features, no server.
+
 | Command | Description |
 | --- | --- |
 | `npm run setup` | Install and build |
-| `npm start` | Serve the build: UI, API, **live worker** (streams Kite, alerts seconds after each candle close) and daily backups — one process. `LIVE_WORKER=off` to run the worker separately |
+| `npm start` | Serve the build: UI, API, scanner and **live worker** (streams Kite, alerts seconds after each candle close) — one process. `LIVE_WORKER=off` to run the worker separately |
 | `npm run update` | `git pull` + install + build (then `npm start`) |
-| `npm run backup` | Save a snapshot of the local database now (`-- --list` lists them) — safe while the app runs |
-| `npm run restore -- <file>` | Put a snapshot back (stop the app first; the current data is saved as a `before-restore` snapshot) |
-| `npm run db:import -- "<postgres url>"` | One-time copy of all your data from Postgres (e.g. Neon) into the local database |
-| `npm run dev` | Development server (no in-app live worker — run `npm run live` alongside) |
-| `npm run live` | Live worker as its own process (`-- --check` tests the Kite stream) |
+| `npm run dev` | Development server — also runs the live worker inside it |
+| `npm run live` | Live worker as its own process (`-- --check` tests the Kite stream). Only with `LIVE_WORKER=off` on the app, which then reads everything from the database |
+| `npm run backup` / `npm run restore -- <file>` | Local-file mode only: snapshot the local database / put a snapshot back (app stopped) |
+| `npm run db:import -- "<postgres url>"` | Local-file mode only: one-time copy of all data from Postgres into the local file |
 | `npm test` / `npm run typecheck` | vitest suite / TypeScript check |
 
-To keep copies off the laptop, point `BACKUP_DIR` at a cloud-synced folder (Google Drive, OneDrive). To move to
-another computer, copy a snapshot there and `npm run restore -- <file>`. Run the app on one computer at a time —
-the data is a local file.
+Run the app on **one computer at a time**: each running copy has its own scanner and live worker, so two copies on
+the same database would alert twice.
+
+### Database traffic
+
+The running app reads each kind of data from the database once, then keeps it in memory and writes changes through
+(implementation: [RuntimeV2Store](src/server/v2/persistence/RuntimeV2Store.ts), [runtime.ts](src/server/runtime.ts)).
+
+| | In the database (Neon) | In memory only (since the app started) |
+| --- | --- | --- |
+| Core | Strategies, connections, settings, paper plans / overrides, Kite session, preferences, instruments (re-synced as a daily diff) | — |
+| Events | Alerts + deliveries; signals that alerted (with a short trace); paper trades on open and close; a unit's alert state when it changes | Signals that didn't alert, scanner runs, evaluation details, paper marks (live P&L) |
+| Status | — | Live-worker heartbeat, locks, the change stamp the screens poll |
+
+A trading hour of scans and open screens makes **no database calls** once warm; an alert costs about five writes, a
+paper exit one ([tests/v2/memoryLayer.test.ts](tests/v2/memoryLayer.test.ts) counts them). The Signals and Scanner
+tabs therefore show history since the app last started. On Vercel, with `LIVE_WORKER=off`, or next to a separate
+`npm run live`, the app reads and writes everything in the database instead (more than one process shares it).
 
 ### Environment
 
@@ -91,9 +110,9 @@ the data is a local file.
 | `APP_PASSWORD` | for `npm start` | Login password |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | no | Telegram alerts via our bot [@algohuntbot](https://t.me/algohuntbot). Recipients (several people / groups) are managed in V2 → Settings; `TELEGRAM_CHAT_ID` (comma-separated) is the fallback |
 | `RESEND_API_KEY` | no | Email alerts (recipients and sender in V2 → Settings) |
-| `DATABASE_FILE`, `BACKUP_DIR` | no | Where the local database / its snapshots live (default `data/algo-hunt.db`, `backups/`) |
-| `LIVE_WORKER` | no | `on` / `off` — the live worker inside the app (default: on with `npm start`, off with `npm run dev`) |
-| `DATABASE_URL` | no | Use **Postgres** instead of the local file (e.g. Neon, the Vercel copy) |
+| `DATABASE_URL` | yes (Neon) | Postgres connection string. Unset → the local file below |
+| `LIVE_WORKER` | no | `on` (default, `npm start` and `npm run dev`) / `off` — the live worker inside the app; `off` also turns the memory layer off |
+| `DATABASE_FILE`, `BACKUP_DIR` | no | Local-file mode only: where the database / its snapshots live (default `data/algo-hunt.db`, `backups/`) |
 | `CRON_SECRET` | Vercel | Protects `/api/cron/tick` (`openssl rand -hex 32`) |
 
 ### Deploying (optional)

@@ -1,6 +1,6 @@
 # Project status — known issues, limitations and pending work
 
-Snapshot as of **2026-09-28**. Use this page as the working list of what still needs verifying or doing.
+Snapshot as of **2026-10-01**. Use this page as the working list of what still needs verifying or doing.
 
 > Related: [v2-architecture.md](v2-architecture.md) · [code-notes.md](code-notes.md) · [troubleshooting.md](troubleshooting.md)
 
@@ -11,7 +11,7 @@ Snapshot as of **2026-09-28**. Use this page as the working list of what still n
 | Area | Status |
 | --- | --- |
 | **V2** at `/v2` (the whole app): product-agnostic strategies (1–4 legs: Spot / Future / Call / Put, conditions between any legs, named AND/OR groups, Bollinger / RSI / ADX / MACD / Supertrend / patterns…) connected to NSE indices, NSE stocks or MCX commodities; compare a strategy across products; explain now; Telegram + email + desktop notifications ([v2-architecture.md](v2-architecture.md), [trader guide](v2-user-guide.md)) | Built and tested (fixtures + local UI checks) — **not yet verified against live Kite (product sync, candles) or real Telegram / Resend sends** |
-| **Local database** (default): SQLite file, app + live worker + backups in one `npm start`; `npm run db:import` copies Postgres data over | Built and tested (store spec on both stores, end-to-end scan on SQLite, import compared table by table against Postgres, local production run) — **your Neon data not imported yet** (needs Neon access back) |
+| **Database: Neon + memory layer** — one process (`npm start` / `npm run dev`: app + live worker); hot data in memory, Neon only for core records ([database.md § 5](database.md#5-database-traffic)); local SQLite file as fallback without `DATABASE_URL` | Built and tested (store spec three ways incl. the memory layer, call counts over a simulated session) — **not yet run against Neon**, and no `next build` against Postgres since the change |
 | **Live worker** (`npm run live`): Kite WebSocket streaming, candles built from ticks, evaluation seconds after each close, results re-checked on Kite's candles before alerting, cron scanner as backup | Built and tested (fixtures + local boot) — **not yet run against the real Kite stream** (needs market hours) |
 | **Paper trading** (on for every connection by default): alerts open simulated trades (₹10,000 each), closed by target / stop-loss / square-off / the other group / expiry, net of charges; values per strategy and per connection; Paper tab with headline figures, P&L charts, how trades closed, P&L by entry time, a sortable connection ranking, open positions and the trade log | Built and tested (fixtures + local UI checks) — **not yet run on live alerts** |
 | Settings: Kite login, theme, desktop notifications | Done |
@@ -29,6 +29,7 @@ Snapshot as of **2026-09-28**. Use this page as the working list of what still n
 | 4 | **Scheduler window** | The backup scanner must run 09:00–00:05 IST on weekdays (see [deployment.md § 5](deployment.md#5-scheduler-every-minute)); the old V1 window stopped at the NSE close |
 | 5 | **Chartink discrepancy** | A strategy alerted twice on Chartink and not in Compare; needs a candle-by-candle comparison (scan, product, timeframe, range, alert times) |
 | 6 | Local development writes to the configured database | The local `.env` points at the production Neon database; use a Neon branch for experiments |
+| 7 | **Back on Neon** | Check Neon → *Review usage* that the transfer allowance has reset; set `DATABASE_URL` in `.env.local`; restart (migrations up to 011 apply); watch Neon's usage for a trading day. Stop any deployed copy / scheduler reading the same database |
 
 ---
 
@@ -49,6 +50,10 @@ Snapshot as of **2026-09-28**. Use this page as the working list of what still n
   (update `src/server/v2/paper/charges.ts` when they change); a late square-off (worker and scanner both off) uses the
   last price seen.
 - **Single user**: one default user; one Telegram chat (env or V2 settings override).
+- **Signals and Scanner history since the app started** (memory mode): signals that didn't alert and scanner runs
+  aren't saved; alerts, alerting signals and paper trades are.
+- **One running copy per database**: two copies (e.g. this laptop and a Vercel deployment with its scheduler) each
+  scan and alert.
 - **No automated tests** for Postgres SQL, the Kite integration or the UI.
 
 ---
@@ -57,6 +62,7 @@ Snapshot as of **2026-09-28**. Use this page as the working list of what still n
 
 | Date | Decision |
 | --- | --- |
+| 2026-10-01 | **Back to Neon, with far fewer database calls.** The app runs as one process (the live worker inside `npm start` and now `npm run dev`), so hot data stays in memory (`RuntimeV2Store`, `RuntimeAppStore`) and Neon gets only core records: config (cached, written through), alerts + deliveries, alerting signals with a shallow trace, paper trades on open / close, unit state when the alert decision changes. Memory only: scan runs, non-alerting signals, evaluations, live status, locks, paper marks. Off on Vercel, with `LIVE_WORKER=off` and next to a separate `npm run live` (lock file in the temp folder). Postgres instrument sync is a daily diff. The SQLite file stays as the fallback without `DATABASE_URL` |
 | 2026-09-29 | **Local database by default**: SQLite built into Node.js in `data/algo-hunt.db` (git-ignored), schema applied on start; Postgres only when `DATABASE_URL` is set. `npm start` runs the app, the live worker and daily backups (newest 14) in one process; `npm run setup` / `update` / `backup` / `restore` / `db:import`. Chosen for the trader's laptop (i5, 8 GB, Chrome + other software): no database server or extra install; measured ~140 MB for the whole app process. Data never goes into git (snapshots instead) |
 | 2026-09-29 | Neon's monthly network-transfer allowance ran out (connections blocked, data kept). Database reads cut: contracts cached until the next sync (were re-read every minute per connection — ~48 MB/h for a NIFTY-sized chain), the alarm polls a feed of new alerts (was ~97 MB/h with the app open), lists without condition traces, status by counts, closed paper trades reused, live-worker context reloaded only on change |
 | 2026-09-28 | **Backtest tab**: a strategy on up to 20 products over a past period with a starting capital and paper settings — alerts found as in Compare, each traded like a paper trade with exits walked on the contract's 1-minute Kite candles (stop wins a same-minute tie, gaps fill at the open); trades the money can't cover are skipped and listed; final capital, return, the paper figures and charts, by product, every trade |
@@ -84,7 +90,7 @@ Snapshot as of **2026-09-28**. Use this page as the working list of what still n
 
 | Claim | How verified |
 | --- | --- |
-| V2 engine, legs, catalogue, validation, compare, scanner, alert policy, live worker logic, boundaries; indicator maths; market-time helpers | Automated tests (101 passing: 59 V2, 42 indicators / market time) |
+| V2 engine, legs, catalogue, validation, compare, scanner, alert policy, live worker logic, boundaries; indicator maths; market-time helpers | Automated tests (163 passing: 121 V2, 42 indicators / market time) |
 | App after the V1 / MCX V2 removal: redirects, V2 tabs, Settings (Kite card, notifications), top bar, Kite / preference / V2 APIs, removed APIs → 404, cron → V2 scan, live worker boot and clean stop | Local production build against a throwaway database (Kite and Telegram disabled) |
 | V2 live worker against the real Kite stream | **Not verified** — needs market hours |
 | V2 against live Kite data and real Telegram / Resend sends | **Not verified** |

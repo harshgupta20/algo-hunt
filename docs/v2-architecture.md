@@ -65,10 +65,11 @@ clock → one batched LTP call for every ATM reference → units → due units �
 evaluate → policy → signal → alert → Telegram / Email. It is the job behind `/api/cron/tick` (lease `v2-scan`,
 table `app_locks`) and also runs while `/v2` is open; while the live worker streams it only backs it up (§ 4b).
 
-## 4b. Live worker (streaming) — `npm run live`
+## 4b. Live worker (streaming)
 
-A long-running process on your computer (same `.env`, database and Kite login as the app) that makes alerts
-**seconds** after a candle closes instead of minutes, for as many products as Kite's stream allows.
+A long-running worker on your computer — normally inside the app's own process (`npm start` / `npm run dev`), or as
+`npm run live` next to an app started with `LIVE_WORKER=off` — that makes alerts **seconds** after a candle closes
+instead of minutes, for as many products as Kite's stream allows.
 
 - **Stream:** Kite WebSocket, full mode (last-trade time, day volume, OI, exchange time), up to 3 sockets × 3,000
   contracts. Each socket reconnects by itself (1 s → 30 s backoff, forever), resubscribes, and reports which contracts
@@ -97,9 +98,10 @@ A long-running process on your computer (same `.env`, database and Kite login as
   first, then history for contracts in use, then nearby strikes, then gap repairs; identical requests are shared.
 - **Daily routine:** new trading day → fresh candles and history; at 08:15 IST the contract list is re-synced; a new Kite
   token (morning login) restarts the stream within 30 s.
-- **Health (`v2_live_status`):** heartbeat every 5 s with state (LIVE / WARMING_UP / DEGRADED / WAITING_LOGIN / STOPPED),
-  sockets, contracts vs capacity, accuracy counters and the last candle closes (Dashboard → Live feed). Only one worker
-  runs at a time (a second refuses to start unless `--force`).
+- **Health (`v2_live_status`):** heartbeat with state (LIVE / WARMING_UP / DEGRADED / WAITING_LOGIN / STOPPED),
+  sockets, contracts vs capacity, accuracy counters and the last candle closes (Dashboard → Live feed) — every 5 s in
+  memory inside the app, every 20 s to the database from a separate `npm run live`. Only one worker runs per project
+  folder (a lock file in the system temp folder; a second refuses to start unless `--force`, the app stands aside).
 - **Backup:** while the worker is LIVE or WARMING_UP the cron scanner skips the connections it covers and scans only
   uncovered ones. When the heartbeat stops without a clean stop, the scanner takes over and sends **one** Telegram
   warning; the worker itself warns when its stream has been down for 60 s during market hours (and when it's back), and
@@ -173,6 +175,12 @@ Deleting a strategy cascades to its connections, their unit states, signals and 
 Migration `008_v2_live.sql` adds `v2_live_status` (one heartbeat / status row written by the live worker).
 Migration `010_v2_paper.sql` adds `v2_paper_plans` and `v2_paper_trades` (paper trading); `011_v2_paper_connections.sql`
 adds `v2_paper_overrides` (a connection's own paper values).
+
+Stores: `PgV2Store` (Postgres / Neon) or `SqliteV2Store` (local file), chosen by `DATABASE_URL`
+([createStore.ts](../src/server/v2/persistence/createStore.ts)). When the app is the only process writing — the normal
+one-process run — `RuntimeV2Store` wraps either: core records go to the database, hot data (scan runs, signals that
+didn't alert, evaluations, live status, locks, paper marks) stays in memory
+([database.md § 5](database.md#5-database-traffic)).
 
 ## 7. Compare — how to read it
 
