@@ -13,7 +13,12 @@ export const dynamic = 'force-dynamic';
 let router: Router | undefined;
 
 async function handle(request: Request, ctx: { params: Promise<{ path: string[] }> }): Promise<Response> {
-  router ??= createRouter(getContext());
+  try {
+    router ??= createRouter(getContext());
+  } catch (err) {
+    // The app can't be set up (most often: no DATABASE_URL) — say so instead of an empty 500.
+    return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 503 });
+  }
   const { path } = await ctx.params;
   return dispatch(router, request, path);
 }

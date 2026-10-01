@@ -14,7 +14,7 @@ const globalForPg = globalThis as unknown as { __ashPgPool?: pg.Pool };
 export function getPool(): pg.Pool {
   const url = getConfig().databaseUrl;
   if (!url) {
-    throw new Error('DATABASE_URL is not set. Add your Neon Postgres connection string to the environment.');
+    throw new Error('DATABASE_URL is not set — add your Neon connection string to .env.local (or .env) and restart the app.');
   }
   if (!globalForPg.__ashPgPool) {
     const isLocal = /@(localhost|127\.0\.0\.1)/.test(url);

@@ -21,6 +21,10 @@ const g = globalThis as unknown as { __ashBackground?: boolean };
 export async function startBackground(): Promise<void> {
   if (g.__ashBackground || process.env.VERCEL) return;
   g.__ashBackground = true;
+  if (!process.env.DATABASE_URL?.trim()) {
+    log.error('DATABASE_URL is not set — add your Neon connection string to .env.local (or .env) and restart. Nothing works without it.');
+    return;
+  }
   log.info({ memory: memoryMode() }, memoryMode() ? 'one-process app: hot data in memory, the database for core records' : 'database for everything (a separate live worker may be writing)');
   const stops: Array<() => Promise<void> | void> = [];
 
