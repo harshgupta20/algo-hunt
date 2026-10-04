@@ -48,6 +48,13 @@ db/migrations/         SQL migrations (applied automatically)
 
 ---
 
+## For the trader: the Windows app
+
+**Algo-Hunt-Setup.exe** is the `.bat` below as a program. It installs like any software and asks for the settings in
+a setup wizard (instead of a `.env` file). Every time it opens, it gets the latest version, installs, builds and
+starts (install and build only when something changed), then shows Algo Hunt in its own window. Like the `.bat`, it
+needs Git and Node.js. Make the `.exe` with **Actions → Desktop app → Run workflow**: [docs/desktop.md](docs/desktop.md).
+
 ## For the trader: one file to double-click
 
 [start-algo-hunt.bat](start-algo-hunt.bat) (Windows) starts everything. Setup on the trader's computer, once:

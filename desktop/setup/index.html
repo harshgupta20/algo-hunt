@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <title>Set up Algo Hunt</title>
+    <link rel="stylesheet" href="setup.css" />
+  </head>
+  <body>
+    <aside class="rail">
+      <div class="brand">
+        <span class="brand-tile"><img src="../assets/logo.png" alt="" /></span>
+        <div>
+          <div class="brand-name">Algo Hunt</div>
+          <div class="brand-sub" id="rail-sub">Setup</div>
+        </div>
+      </div>
+      <ol class="steps" id="steps"></ol>
+      <div class="rail-foot">
+        <div class="rail-progress"><span id="rail-bar"></span></div>
+        <div class="rail-meta"><span id="rail-count"></span><span id="rail-version"></span></div>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <!-- 1 · Welcome -->
+      <section class="page" data-step="welcome">
+        <div class="hero hero-welcome" aria-hidden="true">
+          <svg viewBox="0 0 360 150">
+            <defs>
+              <linearGradient id="g-line" x1="0" x2="1"><stop offset="0" stop-color="#7aa7ff" /><stop offset="1" stop-color="#ffffff" /></linearGradient>
+            </defs>
+            <g class="candles">
+              <g class="c" style="--i: 0"><line x1="40" y1="70" x2="40" y2="126" /><rect x="33" y="84" width="14" height="30" class="up" /></g>
+              <g class="c" style="--i: 1"><line x1="78" y1="60" x2="78" y2="118" /><rect x="71" y="70" width="14" height="34" class="down" /></g>
+              <g class="c" style="--i: 2"><line x1="116" y1="52" x2="116" y2="112" /><rect x="109" y="62" width="14" height="36" class="up" /></g>
+              <g class="c" style="--i: 3"><line x1="154" y1="40" x2="154" y2="100" /><rect x="147" y="50" width="14" height="34" class="up" /></g>
+              <g class="c" style="--i: 4"><line x1="192" y1="46" x2="192" y2="98" /><rect x="185" y="56" width="14" height="26" class="down" /></g>
+              <g class="c" style="--i: 5"><line x1="230" y1="28" x2="230" y2="86" /><rect x="223" y="36" width="14" height="38" class="up" /></g>
+              <g class="c" style="--i: 6"><line x1="268" y1="18" x2="268" y2="74" /><rect x="261" y="26" width="14" height="36" class="up" /></g>
+            </g>
+            <path class="trend" d="M20 120 C 70 112, 90 96, 120 88 S 180 70, 210 62 S 270 34, 330 22" fill="none" stroke="url(#g-line)" stroke-width="3" stroke-linecap="round" />
+            <g transform="translate(312 52)">
+              <circle r="20" class="bell-bg" />
+              <g class="bell"><path d="M-7 4 V-2 a7 7 0 0 1 14 0 V4 l3 3 H-10 Z M-3 9 a3 3 0 0 0 6 0" class="bell-ic" /></g>
+            </g>
+          </svg>
+        </div>
+        <h1>Welcome to Algo Hunt</h1>
+        <p class="lead">Strategy alerts for NSE, BSE and MCX on live Kite data — with paper trading and backtests. Setup takes about 10 minutes; you can change everything later.</p>
+        <div class="cards">
+          <div class="card feature"><span class="f-ic">⚡</span><b>Alerts in seconds</b><span>Kite's live stream is checked the moment a candle closes — Telegram, email and desktop alerts.</span></div>
+          <div class="card feature"><span class="f-ic">📄</span><b>Paper trading</b><span>Every alert is traded on paper with your cash per trade, target and stop-loss — see what it would make.</span></div>
+          <div class="card feature"><span class="f-ic">🧪</span><b>Backtests with money</b><span>Run a strategy over past candles on any product with your capital before using it.</span></div>
+        </div>
+        <div class="card checklist">
+          <b>Have these ready</b>
+          <ul>
+            <li class="need">A free <b>Neon</b> database (we show how)</li>
+            <li class="need">Your <b>Kite Connect</b> API key and secret</li>
+            <li class="need">A <b>password</b> for Algo Hunt</li>
+            <li class="need"><b>Git</b> and <b>Node.js</b> (checked below)</li>
+            <li class="opt">Optional: <b>Telegram</b> bot, <b>Resend</b> email key</li>
+          </ul>
+        </div>
+        <div class="syscheck" id="syscheck"></div>
+      </section>
+
+      <!-- 2 · Disclaimer -->
+      <section class="page" data-step="terms">
+        <div class="hero hero-shield" aria-hidden="true">
+          <svg viewBox="0 0 360 150">
+            <circle cx="180" cy="75" r="62" class="halo" />
+            <path d="M180 22 L224 38 V74 C224 102 205 121 180 130 C155 121 136 102 136 74 V38 Z" class="shield" />
+            <path d="M160 76 L175 91 L203 61" class="tick" />
+          </svg>
+        </div>
+        <h1>Before you start — please read</h1>
+        <p class="lead">Algo Hunt is a tool for alerts and analysis on financial markets. Read this risk disclaimer carefully.</p>
+        <div class="terms" id="terms" tabindex="0">
+          <h3>1. Not investment advice</h3>
+          <p>Algo Hunt only does what your strategies tell it to. Its alerts, signals, paper trades, backtests, charts and figures are information produced by rules you set — not recommendations to buy or sell, and not investment, financial, tax or legal advice. Algo Hunt and its makers are not registered with SEBI as investment advisers or research analysts.</p>
+          <h3>2. No orders are placed</h3>
+          <p>Algo Hunt reads market data from your own Kite Connect app. It never places, changes or cancels orders. Every trading decision, and its outcome, is yours.</p>
+          <h3>3. Paper trading and backtests are simulations</h3>
+          <p>Paper trades and backtests use estimated prices, slippage, charges and margins. Real fills, liquidity, costs and outcomes differ. Past or simulated results do not guarantee future results. Trading in equities, futures, options and commodities involves substantial risk of loss — you can lose more than you invest in derivatives.</p>
+          <h3>4. Data can be late, incomplete or wrong</h3>
+          <p>Prices and candles come from Zerodha Kite and the exchanges. They can be delayed, missing or wrong; the internet, your computer, Kite, Telegram or email can fail; an alert can be late or not arrive. Do not rely on Algo Hunt as your only source of information.</p>
+          <h3>5. Your keys and data</h3>
+          <p>Your Kite key and secret, database link and other settings are stored on this computer only, encrypted for your Windows account. Your strategies, alerts and paper trades are kept in your own database. You are responsible for keeping your computer, accounts and keys secure, and for following Zerodha's Kite Connect terms and exchange rules.</p>
+          <h3>6. Provided “as is”</h3>
+          <p>Algo Hunt is provided “as is”, without warranties of any kind. To the extent the law allows, its makers are not liable for any loss or damage — including trading losses, missed opportunities or data loss — arising from using or being unable to use it.</p>
+          <p class="end">By continuing you confirm you have read, understood and accept this disclaimer.</p>
+        </div>
+        <p class="hint" id="terms-hint">Scroll to the end of the disclaimer to continue.</p>
+        <label class="check"><input type="checkbox" id="t-read" /> <span>I have read and understood this risk disclaimer.</span></label>
+        <label class="check"><input type="checkbox" id="t-own" /> <span>I understand Algo Hunt gives no advice and places no orders, and that my trading decisions and their results are my own.</span></label>
+      </section>
+
+      <!-- 3 · Database -->
+      <section class="page" data-step="database">
+        <div class="hero hero-db" aria-hidden="true">
+          <svg viewBox="0 0 360 150">
+            <g class="flow"><circle cx="60" cy="75" r="4" style="--i: 0" /><circle cx="60" cy="75" r="4" style="--i: 1" /><circle cx="60" cy="75" r="4" style="--i: 2" /><circle cx="60" cy="75" r="4" style="--i: 3" /></g>
+            <g class="cyl" transform="translate(200 30)">
+              <path d="M0 14 V86 C0 100 80 100 80 86 V14" class="cyl-body" />
+              <ellipse cx="40" cy="14" rx="40" ry="14" class="cyl-top" />
+              <path d="M0 40 C0 54 80 54 80 40 M0 64 C0 78 80 78 80 64" class="cyl-ring" />
+            </g>
+            <g class="pulse" transform="translate(240 75)"><circle r="56" /></g>
+          </svg>
+        </div>
+        <h1>Your database <span class="tag">Neon · free</span></h1>
+        <p class="lead">Algo Hunt keeps your strategies, alerts and paper trades in your own database on Neon. Live data stays in the app, so the free plan is plenty.</p>
+        <details class="guide" open>
+          <summary>How to get it</summary>
+          <ol>
+            <li>Open <a href="#" data-open="https://neon.tech/signup">neon.tech</a> and sign up — it's free.</li>
+            <li>Create a project. Region: <b>AWS Asia Pacific (Singapore)</b> — the closest to India.</li>
+            <li>On the project's dashboard press <b>Connect</b>, keep <b>Connection pooling</b> on, and copy the connection string (it starts with <code>postgresql://</code>).</li>
+            <li>Paste it below and press <b>Test connection</b>.</li>
+          </ol>
+        </details>
+        <label class="field">
+          <span>Connection string</span>
+          <textarea id="f-db" rows="3" spellcheck="false" placeholder="postgresql://user:password@ep-…-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"></textarea>
+        </label>
+        <div class="actions"><button class="btn" id="b-db">Test connection</button><span class="status" id="s-db"></span></div>
+      </section>
+
+      <!-- 4 · Kite -->
+      <section class="page" data-step="kite">
+        <div class="hero hero-key" aria-hidden="true">
+          <svg viewBox="0 0 360 150">
+            <g class="key" transform="translate(120 75)">
+              <circle r="26" class="key-bow" /><circle r="9" class="key-hole" />
+              <path d="M26 -5 H110 V5 H100 V18 H88 V5 H74 V14 H62 V5 H26 Z" class="key-blade" />
+            </g>
+            <g class="spark"><circle cx="268" cy="44" r="3" /><circle cx="286" cy="70" r="2" /><circle cx="262" cy="100" r="2.5" /></g>
+          </svg>
+        </div>
+        <h1>Zerodha Kite Connect</h1>
+        <p class="lead">Live prices and candles come from your own Kite Connect app — Algo Hunt only reads data.</p>
+        <details class="guide" open>
+          <summary>How to get it</summary>
+          <ol>
+            <li>Open <a href="#" data-open="https://developers.kite.trade/apps">developers.kite.trade</a> and log in with your Zerodha account.</li>
+            <li>Press <b>Create new app</b> → type <b>Connect</b>. App name: <b>Algo Hunt</b>.</li>
+            <li>Redirect URL: <code id="redirect">http://localhost:3000/zerodhaRedirection</code> <button class="mini" data-copy="#redirect">Copy</button> — Postback URL: leave empty.</li>
+            <li>Save. Copy the <b>API key</b>, then press <b>Show API secret</b> and copy it.</li>
+          </ol>
+        </details>
+        <div class="row2">
+          <label class="field"><span>API key</span><input id="f-key" spellcheck="false" autocomplete="off" placeholder="e.g. abcd1234efgh5678" /></label>
+          <label class="field">
+            <span>API secret</span>
+            <span class="pw"><input id="f-secret" type="password" spellcheck="false" autocomplete="off" placeholder="the long secret code" /><button class="mini eye" data-eye="#f-secret">Show</button></span>
+          </label>
+        </div>
+        <div class="actions"><button class="btn" id="b-kite">Check</button><span class="status" id="s-kite"></span></div>
+        <p class="note">Each trading morning you log in to Kite inside Algo Hunt (Kite resets access around 6 AM) — one click from the top bar.</p>
+      </section>
+
+      <!-- 5 · Password -->
+      <section class="page" data-step="password">
+        <div class="hero hero-lock" aria-hidden="true">
+          <svg viewBox="0 0 360 150">
+            <path d="M156 66 V50 a24 24 0 0 1 48 0 V66" class="shackle" />
+            <rect x="140" y="64" width="80" height="62" rx="12" class="lock-body" />
+            <circle cx="180" cy="90" r="7" class="lock-hole" /><rect x="177" y="94" width="6" height="16" rx="3" class="lock-hole" />
+            <g class="dots"><circle cx="96" cy="96" r="4" style="--i: 0" /><circle cx="112" cy="96" r="4" style="--i: 1" /><circle cx="248" cy="96" r="4" style="--i: 2" /><circle cx="264" cy="96" r="4" style="--i: 3" /></g>
+          </svg>
+        </div>
+        <h1>A password for Algo Hunt</h1>
+        <p class="lead">On this computer Algo Hunt signs you in by itself. The password protects your data if it's ever opened another way — keep it somewhere safe.</p>
+        <div class="row2">
+          <label class="field">
+            <span>Password</span>
+            <span class="pw"><input id="f-pw" type="password" autocomplete="new-password" /><button class="mini eye" data-eye="#f-pw">Show</button></span>
+          </label>
+          <label class="field"><span>Repeat it</span><input id="f-pw2" type="password" autocomplete="new-password" /></label>
+        </div>
+        <div class="meter"><span id="pw-bar"></span></div>
+        <div class="actions"><button class="btn ghost" id="b-gen">Make a strong one for me</button><span class="status" id="s-pw"></span></div>
+      </section>
+
+      <!-- 6 · Telegram -->
+      <section class="page" data-step="telegram">
+        <div class="hero hero-plane" aria-hidden="true">
+          <svg viewBox="0 0 360 150">
+            <path d="M30 120 C 110 120, 150 60, 240 52" class="trail" />
+            <g class="plane" transform="translate(250 48) rotate(-12)"><path d="M-30 -2 L30 -20 L12 22 L2 6 Z" class="plane-body" /><path d="M2 6 L30 -20" class="plane-fold" /></g>
+          </svg>
+        </div>
+        <h1>Telegram alerts <span class="tag soft">optional</span></h1>
+        <p class="lead">Get every alert on your phone, even when Algo Hunt isn't on screen.</p>
+        <details class="guide">
+          <summary>How to get it</summary>
+          <ol>
+            <li>Use your admin's bot token, or make your own bot: open <a href="#" data-open="https://t.me/BotFather">@BotFather</a> in Telegram, send <code>/newbot</code> and follow the steps.</li>
+            <li>Paste the bot token below.</li>
+            <li>Optional: your chat ID to get a test message now. People and groups who receive alerts are added later in the app — <b>Settings → Telegram chats → Find chat IDs</b> (each person opens the bot and presses <b>Start</b> first).</li>
+          </ol>
+        </details>
+        <div class="row2">
+          <label class="field"><span>Bot token</span><input id="f-tg" spellcheck="false" autocomplete="off" placeholder="123456789:AA…" /></label>
+          <label class="field"><span>Chat ID (optional)</span><input id="f-chat" spellcheck="false" autocomplete="off" placeholder="e.g. 123456789" /></label>
+        </div>
+        <div class="actions"><button class="btn" id="b-tg">Check and send a test</button><span class="status" id="s-tg"></span></div>
+      </section>
+
+      <!-- 7 · Email -->
+      <section class="page" data-step="email">
+        <div class="hero hero-mail" aria-hidden="true">
+          <svg viewBox="0 0 360 150">
+            <rect x="120" y="44" width="120" height="80" rx="10" class="env" />
+            <path d="M124 50 L180 92 L236 50" class="env-flap" />
+            <g class="letter"><rect x="140" y="30" width="80" height="50" rx="6" /><path d="M152 46 H208 M152 58 H196" /></g>
+          </svg>
+        </div>
+        <h1>Email alerts <span class="tag soft">optional</span></h1>
+        <p class="lead">Send alerts by email too, through Resend. Who receives them is set later in the app (Settings).</p>
+        <details class="guide">
+          <summary>How to get it</summary>
+          <ol>
+            <li>Open <a href="#" data-open="https://resend.com/api-keys">resend.com</a> and sign up.</li>
+            <li><b>API Keys → Create API key</b>, copy it (it starts with <code>re_</code>) and paste it below.</li>
+          </ol>
+        </details>
+        <label class="field"><span>Resend API key</span><input id="f-resend" spellcheck="false" autocomplete="off" placeholder="re_…" /></label>
+        <div class="actions"><button class="btn" id="b-resend">Check</button><span class="status" id="s-resend"></span></div>
+      </section>
+
+      <!-- 8 · Finish -->
+      <section class="page" data-step="finish">
+        <div class="hero hero-rocket" aria-hidden="true">
+          <svg viewBox="0 0 360 150">
+            <g class="rocket" transform="translate(180 80)">
+              <path d="M0 -50 C16 -36 20 -12 16 14 H-16 C-20 -12 -16 -36 0 -50 Z" class="r-body" />
+              <circle cy="-16" r="7" class="r-window" />
+              <path d="M-16 0 L-30 20 L-16 16 Z M16 0 L30 20 L16 16 Z" class="r-fin" />
+              <path d="M-9 16 Q0 44 9 16 Z" class="r-flame" />
+            </g>
+            <g class="stars"><circle cx="70" cy="40" r="2" /><circle cx="300" cy="30" r="2.5" /><circle cx="270" cy="110" r="1.8" /><circle cx="90" cy="110" r="2.2" /></g>
+          </svg>
+        </div>
+        <h1 id="finish-title">Ready to start</h1>
+        <p class="lead" id="finish-lead">Check your settings — then Algo Hunt saves them (encrypted on this computer), downloads the latest version and opens. The first time takes a few minutes.</p>
+        <div class="review" id="review"></div>
+        <div class="progress hidden" id="progress">
+          <div class="p-row" data-p="save"><span class="p-ic"></span><span>Saving your settings (encrypted)</span><em></em></div>
+          <div class="p-row" data-p="latest"><span class="p-ic"></span><span>Getting the latest version</span><em></em></div>
+          <div class="p-row" data-p="install"><span class="p-ic"></span><span>Installing packages</span><em></em></div>
+          <div class="p-row" data-p="build"><span class="p-ic"></span><span>Preparing the app</span><em></em></div>
+          <div class="p-row" data-p="start"><span class="p-ic"></span><span>Starting Algo Hunt</span><em></em></div>
+          <pre class="p-detail hidden" id="p-detail"></pre>
+          <div class="p-actions hidden" id="p-actions"><button class="btn hidden" id="b-link"></button><button class="btn" id="b-retry">Try again</button><button class="btn ghost" id="b-back">Back to the settings</button><button class="btn ghost" id="b-logs">Open logs</button></div>
+          <div class="p-done hidden" id="done"><span class="burst"></span>All set — opening Algo Hunt…</div>
+        </div>
+        <p class="note" id="next-steps">Next, inside Algo Hunt: <b>Connect Kite</b> (top bar) → <b>Products → Sync from Kite</b> → create your first strategy.</p>
+      </section>
+
+      <footer class="nav">
+        <button class="btn ghost" id="nav-back">Back</button>
+        <span class="spacer"></span>
+        <button class="btn link" id="nav-skip">Skip for now</button>
+        <button class="btn primary" id="nav-next">Next</button>
+      </footer>
+    </main>
+    <script src="setup.js"></script>
+  </body>
+</html>

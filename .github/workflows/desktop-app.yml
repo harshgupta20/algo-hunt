@@ -1,0 +1,41 @@
+# Builds Algo-Hunt-Setup.exe (desktop/) on a Windows machine. Run it by hand: Actions → Desktop app → Run workflow;
+# the installer is under the run's Artifacts. Only needed when desktop/ changes — the installed app gets the web
+# app's latest code from GitHub every time it starts.
+# A private repository needs the secret ALGO_HUNT_GITHUB_TOKEN (read-only token for this repository, as in the .bat).
+name: Desktop app
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Build the installer
+        env:
+          ALGO_HUNT_GITHUB_TOKEN: ${{ secrets.ALGO_HUNT_GITHUB_TOKEN }}
+        run: npm run dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Algo-Hunt-Setup
+          path: desktop/release/*.exe
+          if-no-files-found: error
+          retention-days: 30

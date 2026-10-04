@@ -13,6 +13,7 @@ Kite's own candles.
 | [v2-architecture.md](v2-architecture.md) | The strategy system: legs, units, evaluation, scanner, **live worker** (streaming + verification), module map, persistence |
 | [architecture.md](architecture.md) | The whole app: components, how alerts are produced, request flow, integrations, authentication, decisions |
 | [setup.md](setup.md) | Prerequisites, installation, environment variables, local run, Kite login, common setup problems |
+| [desktop.md](desktop.md) | **Windows `.exe`:** the `.bat` as a program (setup wizard, start-up screen, tray); making the `.exe` with GitHub Actions |
 | [development.md](development.md) | Repository structure, conventions, UI rules, how-to recipes |
 | [api.md](api.md) | Every REST endpoint with parameters, responses and status codes |
 | [database.md](database.md) | Tables in use, retired tables (kept), migrations |

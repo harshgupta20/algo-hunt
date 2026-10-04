@@ -1,0 +1,24 @@
+{
+  "name": "algo-hunt-desktop",
+  "productName": "Algo Hunt",
+  "version": "1.0.0",
+  "description": "Algo Hunt for Windows — gets the latest version from GitHub, builds and runs it (start-algo-hunt.bat as a program)",
+  "author": "Algo Hunt",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --win --publish never",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "@types/pg": "^8.15.6",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.10",
+    "pg": "^8.23.1",
+    "typescript": "^5.9.3"
+  }
+}

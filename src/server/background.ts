@@ -75,4 +75,6 @@ export async function startBackground(): Promise<void> {
   process.once('SIGINT', () => void stop());
   process.once('SIGTERM', () => void stop());
   process.once('SIGHUP', () => void stop()); // Windows: the app's window was closed (a few seconds to save)
+  // The desktop app (desktop/) asks over its IPC channel instead: Windows has no SIGTERM.
+  process.on('message', (m) => m === 'shutdown' && void stop());
 }

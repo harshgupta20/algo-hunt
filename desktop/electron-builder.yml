@@ -1,0 +1,37 @@
+# Algo Hunt desktop app — Windows installer (NSIS). The app itself gets the latest code from GitHub at each start.
+appId: com.algohunt.desktop
+productName: Algo Hunt
+copyright: Algo Hunt
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - setup/**
+  - assets/**
+  - package.json
+asar: true
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+  artifactName: Algo-Hunt-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Algo Hunt
+  license: build/license.txt
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  installerSidebar: build/installerSidebar.bmp
+  uninstallerSidebar: build/installerSidebar.bmp
+  installerHeader: build/installerHeader.bmp
+  include: build/installer.nsh
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false

@@ -1,0 +1,26 @@
+ALGO HUNT - RISK DISCLAIMER AND TERMS OF USE
+
+Please read this carefully. You must accept it to install Algo Hunt.
+
+1. NOT INVESTMENT ADVICE
+Algo Hunt only does what your strategies tell it to. Its alerts, signals, paper trades, backtests, charts and figures are information produced by rules that you set. They are not recommendations to buy or sell, and they are not investment, financial, tax or legal advice. Algo Hunt and its makers are not registered with SEBI as investment advisers or research analysts.
+
+2. NO ORDERS ARE PLACED
+Algo Hunt reads market data from your own Zerodha Kite Connect app. It never places, changes or cancels orders. Every trading decision, and its outcome, is yours.
+
+3. PAPER TRADING AND BACKTESTS ARE SIMULATIONS
+Paper trades and backtests use estimated prices, slippage, charges and margins. Real fills, liquidity, costs and outcomes differ. Past or simulated results do not guarantee future results. Trading in equities, futures, options and commodities involves substantial risk of loss. In derivatives you can lose more than you invest.
+
+4. DATA CAN BE LATE, INCOMPLETE OR WRONG
+Prices and candles come from Zerodha Kite and the exchanges. They can be delayed, missing or wrong. The internet, your computer, Kite, Telegram or email can fail, and an alert can be late or not arrive. Do not rely on Algo Hunt as your only source of information.
+
+5. YOUR KEYS AND DATA
+Your Kite API key and secret, database link and other settings are stored on this computer only, encrypted for your Windows account. Your strategies, alerts and paper trades are kept in your own database. You are responsible for keeping your computer, accounts and keys secure, and for following Zerodha's Kite Connect terms and the exchanges' rules.
+
+6. AUTOMATIC UPDATES
+Algo Hunt checks for new versions in the background, downloads them and installs them when you restart it.
+
+7. PROVIDED "AS IS"
+Algo Hunt is provided "as is", without warranties of any kind. To the extent the law allows, its makers are not liable for any loss or damage arising from using it or being unable to use it. This includes trading losses, missed opportunities and data loss.
+
+By clicking "I Agree" you confirm that you have read, understood and accept this disclaimer.

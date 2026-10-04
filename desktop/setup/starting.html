@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <title>Algo Hunt</title>
+    <style>
+      :root { --brand: #1157f1; --ok: #2ecc71; --bad: #ff6b6b; --ease: cubic-bezier(0.2, 0.8, 0.2, 1); }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        font: 14px/1.5 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; color: #fff; overflow: hidden; user-select: none;
+        background: radial-gradient(90% 70% at 100% 0%, #2a5fe0 0%, transparent 60%), radial-gradient(70% 60% at 0% 100%, #0f3bb0 0%, transparent 60%), #0b1d4d;
+        -webkit-app-region: drag; display: flex; flex-direction: column; align-items: center; padding: 34px 40px 24px;
+      }
+      body::before { content: ''; position: fixed; inset: 0; background-image: linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px); background-size: 28px 28px; mask-image: radial-gradient(circle at 50% 30%, #000 0%, transparent 75%); }
+      button { -webkit-app-region: no-drag; font: inherit; }
+      .tile { width: 84px; height: 84px; border-radius: 22px; background: #fff; display: grid; place-items: center; box-shadow: 0 14px 34px rgba(0,0,0,.35); position: relative; animation: in .6s var(--ease) both; }
+      .tile img { width: 64px; }
+      .tile { flex: none; }
+      .failed .tile { width: 58px; height: 58px; border-radius: 16px; } .failed .tile img { width: 44px; } .failed .tile::after { display: none; } .failed h1 { margin-top: 10px; } .failed .sub { margin-bottom: 8px; }
+      .tile::after { content: ''; position: absolute; inset: -8px; border-radius: 28px; border: 2px solid rgba(255,255,255,.35); animation: halo 2.2s ease-out infinite; }
+      @keyframes halo { from { transform: scale(.9); opacity: 1; } to { transform: scale(1.25); opacity: 0; } }
+      @keyframes in { from { opacity: 0; transform: translateY(10px) scale(.96); } }
+      h1 { margin: 16px 0 2px; font-size: 22px; letter-spacing: .2px; animation: in .6s .08s var(--ease) both; }
+      .sub { color: #b4c4ef; font-size: 13px; margin-bottom: 16px; animation: in .6s .16s var(--ease) both; min-height: 20px; }
+      .bars { display: flex; gap: 6px; align-items: flex-end; height: 34px; margin-bottom: 18px; }
+      .bars i { width: 8px; border-radius: 3px; background: #fff; opacity: .9; animation: bar 1.1s ease-in-out infinite; }
+      .bars i:nth-child(2n) { background: #9dbcff; }
+      .bars i:nth-child(1) { animation-delay: 0s; } .bars i:nth-child(2) { animation-delay: .1s; } .bars i:nth-child(3) { animation-delay: .2s; }
+      .bars i:nth-child(4) { animation-delay: .3s; } .bars i:nth-child(5) { animation-delay: .4s; } .bars i:nth-child(6) { animation-delay: .5s; } .bars i:nth-child(7) { animation-delay: .6s; }
+      @keyframes bar { 0%, 100% { height: 8px; } 50% { height: 34px; } }
+      .failed .bars { display: none; }
+      .rows { width: 100%; max-width: 420px; animation: in .6s .24s var(--ease) both; }
+      .row { display: flex; align-items: center; gap: 10px; padding: 5px 0; color: #8fa2d6; transition: color .3s; }
+      .ic { width: 20px; height: 20px; border-radius: 50%; border: 2px solid rgba(255,255,255,.25); display: grid; place-items: center; font-size: 11px; font-weight: 700; flex: none; }
+      .row em { margin-left: auto; font-style: normal; font-size: 12px; color: #9fb2e6; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .row.done em { color: #8fd6a8; }
+      .problem .link { margin-top: 10px; }
+      .line { width: 100%; max-width: 420px; min-height: 18px; margin-top: 6px; font: 11.5px/1.5 'Cascadia Mono', Consolas, monospace; color: #8496c9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+      .failed .line { display: none; }
+      .problem pre { margin: 8px 0 0; max-height: 96px; overflow: auto; font: 11px/1.45 'Cascadia Mono', Consolas, monospace; color: #cfd8ee; white-space: pre-wrap; word-break: break-all; }
+      .row.run { color: #fff; } .row.run .ic { border-color: #fff; border-right-color: transparent; animation: spin .8s linear infinite; }
+      .row.done { color: #dfe7ff; } .row.done .ic { background: var(--ok); border-color: var(--ok); } .row.done .ic::before { content: '✓'; }
+      .row.fail { color: #fff; } .row.fail .ic { background: var(--bad); border-color: var(--bad); } .row.fail .ic::before { content: '!'; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .problem { display: none; width: 100%; margin-top: 12px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16); border-radius: 12px; padding: 10px 14px; font-size: 13px; color: #fff; user-select: text; -webkit-app-region: no-drag; animation: in .4s var(--ease) both; }
+      .failed .problem { display: block; }
+      .buttons { display: none; gap: 8px; margin-top: auto; padding-top: 12px; flex-wrap: wrap; justify-content: center; }
+      .failed .buttons { display: flex; }
+      .btn { border: 0; border-radius: 9px; padding: 8px 14px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,.12); color: #fff; transition: background .2s, transform .1s; }
+      .btn:hover { background: rgba(255,255,255,.2); } .btn:active { transform: scale(.97); }
+      .btn.primary { background: #fff; color: var(--brand); } .btn.primary:hover { background: #e8efff; }
+      .foot { margin-top: auto; font-size: 11.5px; color: #7f93c9; padding-top: 10px; }
+      .failed .foot { display: none; }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
+    </style>
+  </head>
+  <body>
+    <div class="tile"><img src="../assets/logo.png" alt="" /></div>
+    <h1>Algo Hunt</h1>
+    <div class="sub" id="sub">Starting…</div>
+    <div class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="rows">
+      <div class="row" data-p="latest"><span class="ic"></span><span>Getting the latest version</span><em></em></div>
+      <div class="row" data-p="install"><span class="ic"></span><span>Installing packages</span><em></em></div>
+      <div class="row" data-p="build"><span class="ic"></span><span>Preparing the app</span><em></em></div>
+      <div class="row" data-p="start"><span class="ic"></span><span>Starting Algo Hunt</span><em></em></div>
+    </div>
+    <div class="line" id="line"></div>
+    <div class="problem" id="problem"><div id="problem-text"></div><pre id="detail" hidden></pre><button class="btn primary link" id="link" hidden></button></div>
+    <div class="buttons">
+      <button class="btn primary" id="retry">Try again</button>
+      <button class="btn" id="settings">Change settings</button>
+      <button class="btn" id="logs">Open logs</button>
+      <button class="btn" id="quit">Quit</button>
+    </div>
+    <div class="foot" id="foot">Gets the latest version every time it starts · keeps running in the tray when you close the window</div>
+    <script src="starting.js"></script>
+  </body>
+</html>

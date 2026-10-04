@@ -15,3 +15,12 @@ next-env.d.ts
 # Local database and its snapshots — data never goes into git (git pull must not touch it)
 data/
 backups/
+
+# The desktop app build (desktop/)
+/desktop/dist/
+/desktop/release/
+/desktop/node_modules/
+# The GitHub token built into the app (scripts/build.mjs)
+/desktop/github-token.txt
+# …but desktop/build/ is the installer's resources (icon, pictures, disclaimer, installer.nsh), not build output
+!/desktop/build/
