@@ -568,12 +568,15 @@ const count = (n: number | undefined) => (n === undefined ? '' : ` (${n.toLocale
 
 export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrategyId?: string; onEditStrategy: (strategyId?: string) => void }) {
   const qc = useQueryClient();
-  const [filters, setFilters] = useFilters('paper', { strategyId: initialStrategyId });
+  const [filters, setFilters] = useFilters('paper', { strategyIds: initialStrategyId ? [initialStrategyId] : undefined });
   const [logView, setLogView] = useState<'all' | 'win' | 'loss'>('all');
   const strategies = useQuery({ queryKey: ['v2-strategies'], queryFn: v2Api.strategies });
   const { sources: _s, statuses: _st, outcomes: _o, ...q } = toQuery(filters, strategies.data ?? []);
   const { from: _from, to: _to, ...qOpen } = q; // open positions: every period
   const ready = !filters.groups.length || !!strategies.data;
+  // Trades per strategy under the other filters (the strategy chips' numbers).
+  const { strategyIds: _chosen, ...qAll } = q;
+  const counts = useQuery({ queryKey: ['v2-paper', 'counts', qAll], queryFn: () => v2Api.paperCounts(qAll), enabled: ready, placeholderData: keepPreviousData, refetchInterval: 60_000 });
   const summary = useQuery({ queryKey: ['v2-paper', 'summary', q], queryFn: () => v2Api.paperSummary(q), refetchInterval: 60_000, enabled: ready, placeholderData: keepPreviousData });
   const open = useQuery({ queryKey: ['v2-paper', 'open', qOpen], queryFn: () => v2Api.paperTrades({ ...qOpen, status: 'OPEN', limit: 500 }), refetchInterval: 5_000, enabled: ready, placeholderData: keepPreviousData });
   // The trade log a page at a time; every filter (and winners / losers) is applied by the server.
@@ -608,7 +611,7 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
 
   return (
     <div className="flex flex-col gap-4">
-      <FilterBar value={filters} onChange={setFilters} strategies={strategies.data ?? []} fields={['sides']} shown={sum ? `${sum.overall.trades} closed · ${sum.overall.open} open trade(s)${activeCount(filters, ['sides']) ? ' match' : ''}` : undefined} />
+      <FilterBar value={filters} onChange={setFilters} strategies={strategies.data ?? []} counts={counts.data?.counts} countNoun="paper trades" fields={['sides']} shown={sum ? `${sum.overall.trades} closed · ${sum.overall.open} open trade(s)${activeCount(filters, ['sides']) ? ' match' : ''}` : undefined} />
       <div className="flex flex-wrap items-center gap-3">
         <IconButton help={H.paper.refresh} onClick={refresh} className="btn-ghost py-1.5 text-xs">
           <RefreshCw className={clsx('w-3.5 h-3.5', (summary.isFetching || open.isFetching) && 'animate-spin')} /> Refresh

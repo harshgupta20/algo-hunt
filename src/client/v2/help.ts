@@ -299,7 +299,7 @@ export const H = {
   } satisfies Record<string, TooltipContent>,
 
   filters: {
-    strategy: { title: 'Strategy', body: 'Only this strategy’s records (all its connected products).' },
+    strategy: { title: 'Strategy', body: 'The number on each strategy is how many records it has with the other filters (period, type, market …). Click one or several to see only theirs, together; none chosen = every strategy.' },
     period: { title: 'Period', body: 'When the alert / signal was recorded, or the paper trade opened (IST calendar days). Custom: pick the first and last day.' },
     from: { title: 'From', body: 'First day to include (IST).' },
     to: { title: 'To', body: 'Last day to include (IST).' },

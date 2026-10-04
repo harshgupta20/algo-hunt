@@ -54,6 +54,7 @@ export function v2Controller(ctx: AppContext) {
   /** Filters shared by alerts, signals and paper trades. */
   const records = (q: URLSearchParams): RecordFilters => ({
     strategyId: str(q.get('strategyId')),
+    strategyIds: q.get('strategyIds')?.split(',').filter((x) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 100),
     connectionId: str(q.get('connectionId')),
     kinds: csv(q.get('kinds'), PRODUCT_KINDS),
     markets: csv(q.get('markets'), MARKETS),
@@ -155,6 +156,19 @@ export function v2Controller(ctx: AppContext) {
       return svc().alertFeed(after && !Number.isNaN(Date.parse(after)) ? new Date(after).toISOString() : null, num(req.query.get('limit')));
     },
     signals: (req) => svc().signals({ ...records(req.query), outcomes: csv(req.query.get('outcomes'), SIGNAL_OUTCOMES) }),
+    alertCounts: (req) =>
+      svc().alertCounts({
+        ...records(req.query),
+        active: req.query.get('active') === '1',
+        statuses: csv(req.query.get('statuses'), ALERT_STATUSES),
+        sources: csv(req.query.get('sources'), EVALUATION_SOURCES),
+      }),
+    signalCounts: (req) => svc().signalCounts({ ...records(req.query), outcomes: csv(req.query.get('outcomes'), SIGNAL_OUTCOMES) }),
+    paperCounts: (req) => {
+      const result = req.query.get('result');
+      const status = req.query.get('status');
+      return svc().paperCounts({ ...records(req.query), status: status === 'OPEN' || status === 'CLOSED' ? status : undefined, sides: csv(req.query.get('sides'), SIDES), result: result === 'win' || result === 'loss' ? result : undefined });
+    },
 
     scan: (req) => svc().scan({ force: parse(z.object({ force: z.boolean().optional() }), req.body ?? {}).force }),
     scanRuns: (req) => svc().scanRuns(num(req.query.get('limit'))),

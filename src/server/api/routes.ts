@@ -49,9 +49,11 @@ export function createRouter(ctx: AppContext): Router {
   r.post('/v2/backtest', v2.backtest);
   r.get('/v2/alerts', v2.alerts);
   r.get('/v2/alerts/feed', v2.alertFeed); // before /v2/alerts/:id
+  r.get('/v2/alerts/counts', v2.alertCounts);
   r.get('/v2/alerts/:id', v2.alert);
   r.post('/v2/alerts/:id/acknowledge', v2.acknowledge);
   r.get('/v2/signals', v2.signals);
+  r.get('/v2/signals/counts', v2.signalCounts);
   r.post('/v2/scan', v2.scan);
   r.get('/v2/scan-runs', v2.scanRuns);
   r.get('/v2/paper/plans/:id', v2.paperPlan);
@@ -61,6 +63,7 @@ export function createRouter(ctx: AppContext): Router {
   r.put('/v2/paper/connections/:id', v2.saveConnectionPaper);
   r.delete('/v2/paper/connections/:id', v2.resetConnectionPaper);
   r.get('/v2/paper/trades', v2.paperTrades);
+  r.get('/v2/paper/counts', v2.paperCounts);
   r.post('/v2/paper/trades/:id/close', v2.closePaperTrade);
   r.delete('/v2/paper/strategies/:id/trades', v2.resetPaper);
   r.get('/v2/settings', v2.settings);

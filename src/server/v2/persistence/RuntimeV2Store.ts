@@ -101,10 +101,19 @@ interface RuntimeState {
    * memory; a page is read again only when history changed (`listGen`: acknowledge, deletions) or when a record
    * created after it was read has left memory (`evicted*At`).
    */
-  lists: Map<string, { gen: number; readAt: string; rows: unknown }>;
+  lists: Map<string, { gen: number; readAt: string; seq?: number; rows: unknown }>;
   listGen: number;
   evictedAlertAt: string;
   evictedSignalAt: string;
+  /**
+   * Counting this run's records on top of a stored count needs to know which ones the count already had: each
+   * recorded alert / alerting signal gets the next number; a cached count keeps the number it was read at.
+   */
+  alertSeq: number;
+  signalSeq: number;
+  seqOf: Map<string, number>;
+  evictedAlertSeq: number;
+  evictedSignalSeq: number;
   feedFailedAt: number | null;
   /** Every closed paper trade, read once (null until then); trades closed before that read waited in `closedSince`. */
   closedRead: PaperTrade[] | null;
@@ -132,6 +141,11 @@ export function createRuntimeState(): RuntimeState {
     listGen: 0,
     evictedAlertAt: '',
     evictedSignalAt: '',
+    alertSeq: 0,
+    signalSeq: 0,
+    seqOf: new Map(),
+    evictedAlertSeq: 0,
+    evictedSignalSeq: 0,
     feedFailedAt: null,
     closedRead: null,
     closedSince: [],
@@ -198,26 +212,39 @@ export class RuntimeV2Store implements V2Store {
    * the caller. Not kept while writes wait. Falls back to the last read while the database can't be reached.
    */
   private async cachedList<T>(key: string, evictedAt: string, load: () => Promise<T>): Promise<T> {
+    return (await this.cachedEntry(key, evictedAt, load)).rows;
+  }
+
+  /**
+   * As cachedList, with when it was read. With `seq` (counts): the record number it was read at — records with a
+   * higher number aren't in it; it isn't kept when a record arrived during the read, or when one numbered after
+   * it has left memory (`evictedSeq`).
+   */
+  private async cachedEntry<T>(key: string, evictedAt: string, load: () => Promise<T>, counter?: { seq: () => number; evicted: number }): Promise<{ rows: T; readAt: string; seq: number }> {
     const hit = this.rt.lists.get(key);
-    if (hit && hit.gen === this.rt.listGen && hit.readAt > evictedAt) {
+    if (hit && hit.gen === this.rt.listGen && hit.readAt > evictedAt && (!counter || (hit.seq ?? -1) >= counter.evicted)) {
       this.rt.lists.delete(key);
       this.rt.lists.set(key, hit);
-      return clone(hit.rows as T);
+      return { rows: clone(hit.rows as T), readAt: hit.readAt, seq: hit.seq ?? 0 };
     }
     const readAt = this.iso();
     let rows: T;
+    let seq = 0;
     try {
-      rows = await this.read(load);
+      rows = await this.read(async () => {
+        seq = counter?.seq() ?? 0; // every record up to here is saved (read() waited for the queue)
+        return load();
+      });
     } catch (err) {
-      if (hit) return clone(hit.rows as T);
+      if (hit) return { rows: clone(hit.rows as T), readAt: hit.readAt, seq: hit.seq ?? 0 };
       throw err;
     }
-    if (!this.q.size) {
+    if (!this.q.size && (!counter || counter.seq() === seq)) {
       this.rt.lists.delete(key);
-      this.rt.lists.set(key, { gen: this.rt.listGen, readAt, rows: clone(rows) });
+      this.rt.lists.set(key, { gen: this.rt.listGen, readAt, seq, rows: clone(rows) });
       while (this.rt.lists.size > KEEP_LISTS) this.rt.lists.delete(this.rt.lists.keys().next().value!);
     }
-    return rows;
+    return { rows, readAt, seq };
   }
 
   /** Records changed in a way merging can't show (an acknowledgement): read list pages again. */
@@ -553,6 +580,7 @@ export class RuntimeV2Store implements V2Store {
     return (
       (!f.connectionId || r.connectionId === f.connectionId) &&
       (!f.strategyId || r.strategyId === f.strategyId) &&
+      (!f.strategyIds?.length || f.strategyIds.includes(r.strategyId)) &&
       (!f.kinds?.length || (!!p && f.kinds.includes(p.kind))) &&
       (!f.markets?.length || (!!p && f.markets.includes(p.market))) &&
       (!f.search?.trim() || symbol.toLowerCase().includes(f.search.trim().toLowerCase())) &&
@@ -573,11 +601,17 @@ export class RuntimeV2Store implements V2Store {
         this.q.push({ op: 'signals.insert', args: [{ ...s, id: out.id, createdAt: out.createdAt, evaluation: { ...s.evaluation, trace: shallowTrace(s.evaluation.trace) } }], provides: out.id });
         this.rt.alerted.add(s.identity);
         if (this.rt.alerted.size > 20_000) for (const k of [...this.rt.alerted].slice(0, 10_000)) this.rt.alerted.delete(k);
+        this.rt.seqOf.set(out.id, ++this.rt.signalSeq);
       }
       this.rt.signals.unshift(out);
       if (this.rt.signals.length > KEEP_SIGNALS) {
         // An alerting signal leaving memory: pages read before it was recorded no longer show it — read them again.
-        for (const x of this.rt.signals.splice(KEEP_SIGNALS)) if ((x.outcome === 'ALERTED' || x.outcome === 'NO_CHANNEL') && x.createdAt > this.rt.evictedSignalAt) this.rt.evictedSignalAt = x.createdAt;
+        for (const x of this.rt.signals.splice(KEEP_SIGNALS)) {
+          if (!(x.outcome === 'ALERTED' || x.outcome === 'NO_CHANNEL')) continue;
+          if (x.createdAt > this.rt.evictedSignalAt) this.rt.evictedSignalAt = x.createdAt;
+          this.rt.evictedSignalSeq = Math.max(this.rt.evictedSignalSeq, this.rt.seqOf.get(x.id) ?? 0);
+          this.rt.seqOf.delete(x.id);
+        }
       }
       return clone(out);
     },
@@ -593,6 +627,19 @@ export class RuntimeV2Store implements V2Store {
       const identities = new Set([...byId.values()].map((x) => x.identity));
       for (const s of stored) if (!byId.has(s.id) && !identities.has(s.identity)) byId.set(s.id, s);
       return [...byId.values()].sort(byCreated).slice(0, limit);
+    },
+    /** Stored counts (read once per filters) + this run's signals not in them: suppressed ones, and alerting ones recorded since. */
+    countByStrategy: async (f: SignalFilters): Promise<Record<string, number>> => {
+      const g = { ...f, before: undefined, limit: undefined };
+      const { rows, seq } = await this.cachedEntry(`signal-counts:${JSON.stringify(g)}`, '', () => this.db.signals.countByStrategy(g), { seq: () => this.rt.signalSeq, evicted: this.rt.evictedSignalSeq });
+      const out = { ...rows };
+      for (const s of this.rt.signals) {
+        const stored = s.outcome === 'ALERTED' || s.outcome === 'NO_CHANNEL';
+        if (stored && (this.rt.seqOf.get(s.id) ?? 0) <= seq) continue; // already in the stored count
+        if ((f.outcomes?.length && !f.outcomes.includes(s.outcome)) || !(await this.recordMatches(g, { ...s, productId: s.evaluation.productId, trace: s.evaluation.trace }))) continue;
+        out[s.strategyId] = (out[s.strategyId] ?? 0) + 1;
+      }
+      return out;
     },
   };
 
@@ -631,11 +678,14 @@ export class RuntimeV2Store implements V2Store {
       const out: V2Alert = { ...clone(a), id: a.id ?? crypto.randomUUID(), deliveries: [], acknowledgedAt: null, createdAt: this.iso() };
       this.q.push({ op: 'alerts.insert', args: [{ ...a, id: out.id, createdAt: out.createdAt }], provides: out.id, dependsOn: [a.signalId] });
       this.rt.recent.set(out.id, out);
+      this.rt.seqOf.set(out.id, ++this.rt.alertSeq);
       if (this.rt.recent.size > KEEP_RECENT) {
         const [oldest] = this.rt.recent.values();
         this.rt.recent.delete(oldest!.id);
         // Pages read before that alert was recorded no longer show it — read them again.
         if (oldest!.createdAt > this.rt.evictedAlertAt) this.rt.evictedAlertAt = oldest!.createdAt;
+        this.rt.evictedAlertSeq = Math.max(this.rt.evictedAlertSeq, this.rt.seqOf.get(oldest!.id) ?? 0);
+        this.rt.seqOf.delete(oldest!.id);
       }
       if (this.rt.feed) {
         this.rt.feed.unshift(feedItem(out));
@@ -675,6 +725,14 @@ export class RuntimeV2Store implements V2Store {
       const byId = new Map(stored.map((a) => [a.id, a]));
       for (const a of this.rt.recent.values()) if (await this.alertMatches(f, a)) byId.set(a.id, alertItem(a));
       return [...byId.values()].sort(byCreated).slice(0, limit);
+    },
+    /** Stored counts (read once per filters) + this run's alerts recorded since. */
+    countByStrategy: async (f: AlertFilters): Promise<Record<string, number>> => {
+      const g = { ...f, before: undefined, limit: undefined };
+      const { rows, seq } = await this.cachedEntry(`alert-counts:${JSON.stringify(g)}`, '', () => this.db.alerts.countByStrategy(g), { seq: () => this.rt.alertSeq, evicted: this.rt.evictedAlertSeq });
+      const out = { ...rows };
+      for (const a of this.rt.recent.values()) if ((this.rt.seqOf.get(a.id) ?? 0) > seq && (await this.alertMatches(g, a))) out[a.strategyId] = (out[a.strategyId] ?? 0) + 1;
+      return out;
     },
     feed: async (after: string | null, limit: number) =>
       clone(

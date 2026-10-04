@@ -101,6 +101,9 @@ export interface LiveInfo {
 
 export type ProductCounts = { INDEX: number; STOCK: number; COMMODITY: number; total: number };
 
+/** Records per strategy id under the other filters (for the strategy chips). */
+export type StrategyCounts = { counts: Record<string, number>; total: number };
+
 export type StrategyRow = V2Strategy & { connections: number; enabledConnections: number };
 export type ConnectionRow = V2Connection & { strategyName: string; product: V2Product | null };
 
@@ -197,11 +200,14 @@ export const v2Api = {
   backtest: (body: BacktestRequest) => post<BacktestResult>('/backtest', body).then((r) => ({ ...r, summary: normalizePaperSummary(r.summary) })),
 
   alerts: (q: AlertQuery = {}) => request<V2AlertItem[]>(`/alerts?${filterParams(q)}`),
+  /** Per strategy, how many alerts match the other filters. */
+  alertCounts: (q: AlertQuery = {}) => request<StrategyCounts>(`/alerts/counts?${filterParams(q)}`),
   alert: (id: string) => request<V2Alert>(`/alerts/${id}`),
   /** New alerts since `after` (small rows; nothing when there are none). */
   alertFeed: (after: string | null, limit = 25) => request<AlertFeedItem[]>(`/alerts/feed?${filterParams({ after: after ?? undefined, limit })}`),
   acknowledge: (id: string) => post<V2Alert>(`/alerts/${id}/acknowledge`),
   signals: (q: SignalQuery = {}) => request<V2SignalItem[]>(`/signals?${filterParams(q)}`),
+  signalCounts: (q: SignalQuery = {}) => request<StrategyCounts>(`/signals/counts?${filterParams(q)}`),
 
 
   scan: (force = false) => post<{ run: ScanRun; skipped?: string }>('/scan', { force }),
@@ -214,6 +220,7 @@ export const v2Api = {
   saveConnectionPaper: (connectionId: string, override: PaperOverride) => put<{ override: PaperOverride | null }>(`/paper/connections/${connectionId}`, { override }),
   resetConnectionPaper: (connectionId: string) => request<{ override: null }>(`/paper/connections/${connectionId}`, { method: 'DELETE' }),
   paperTrades: (q: PaperQuery = {}) => request<PaperTrade[]>(`/paper/trades?${filterParams(q)}`),
+  paperCounts: (q: PaperQuery = {}) => request<StrategyCounts>(`/paper/counts?${filterParams(q)}`),
   closePaperTrade: (id: string) => post<PaperTrade>(`/paper/trades/${id}/close`),
   resetPaper: (strategyId: string) => request<{ deleted: number }>(`/paper/strategies/${strategyId}/trades`, { method: 'DELETE' }),
 

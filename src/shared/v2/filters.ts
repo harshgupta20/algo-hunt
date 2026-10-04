@@ -8,6 +8,8 @@ import type { AlertStatus, EvaluationSource, Market, ProductKind, SignalOutcome,
 
 export interface RecordFilters {
   strategyId?: string;
+  /** Any of these strategies (several can be chosen; none = all). */
+  strategyIds?: string[];
   connectionId?: string;
   kinds?: ProductKind[];
   markets?: Market[];

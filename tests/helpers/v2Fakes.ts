@@ -203,6 +203,11 @@ export class MemoryV2Store implements V2Store {
           .filter((s) => this.matches(f, { ...s, productId: s.evaluation.productId }) && (!f.outcomes?.length || f.outcomes.includes(s.outcome)))
           .slice(0, f.limit ?? 100),
       ),
+    countByStrategy: async (f: SignalFilters) => {
+      const out: Record<string, number> = {};
+      for (const s of this.data.signals) if (this.matches({ ...f, before: undefined }, { ...s, productId: s.evaluation.productId }) && (!f.outcomes?.length || f.outcomes.includes(s.outcome))) out[s.strategyId] = (out[s.strategyId] ?? 0) + 1;
+      return out;
+    },
   };
 
   alerts = {
@@ -245,6 +250,14 @@ export class MemoryV2Store implements V2Store {
           )
           .slice(0, f.limit ?? 200),
       ),
+    countByStrategy: async (f: AlertFilters) => {
+      const out: Record<string, number> = {};
+      for (const a of this.data.alerts) {
+        const ok = this.matches({ ...f, before: undefined }, a) && (!f.active || !a.acknowledgedAt) && (!f.statuses?.length || f.statuses.includes(a.status)) && (!f.sources?.length || f.sources.includes(a.evaluation.source ?? 'HISTORICAL'));
+        if (ok) out[a.strategyId] = (out[a.strategyId] ?? 0) + 1;
+      }
+      return out;
+    },
   };
 
   scanRuns = {
@@ -296,6 +309,7 @@ export class MemoryV2Store implements V2Store {
     return (
       (!f.connectionId || r.connectionId === f.connectionId) &&
       (!f.strategyId || r.strategyId === f.strategyId) &&
+      (!f.strategyIds?.length || f.strategyIds.includes(r.strategyId)) &&
       (!f.kinds?.length || (!!p && f.kinds.includes(p.kind))) &&
       (!f.markets?.length || (!!p && f.markets.includes(p.market))) &&
       (!f.search?.trim() || symbol.toLowerCase().includes(f.search.trim().toLowerCase())) &&

@@ -126,6 +126,8 @@ export interface SummaryInput {
   now: number;
   from?: string | null;
   strategyId?: string;
+  /** Several strategies (none = all). */
+  strategyIds?: string[];
 }
 
 export function paperSummary(x: SummaryInput): PaperSummary {
@@ -137,7 +139,7 @@ export function paperSummary(x: SummaryInput): PaperSummary {
   };
   const byStrategy = group((t) => t.strategyId);
   const byConnection = group((t) => t.connectionId);
-  const strategies = x.strategies.filter((s) => !x.strategyId || s.id === x.strategyId);
+  const strategies = x.strategies.filter((s) => (!x.strategyId || s.id === x.strategyId) && (!x.strategyIds?.length || x.strategyIds.includes(s.id)));
   const stored = new Map(x.plans.map((p) => [p.strategyId, p.plan]));
   const planOf = (s: V2Strategy) => stored.get(s.id) ?? defaultPaperPlan(s.definition);
   const overrides = new Map(x.overrides.map((o) => [o.connectionId, o.override]));

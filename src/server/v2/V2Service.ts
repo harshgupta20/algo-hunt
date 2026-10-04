@@ -449,6 +449,19 @@ export class V2Service {
     return this.deps.store.signals.list({ ...rest, ...istRange(from, to), before: cursor(before), limit: Math.min(q.limit ?? 200, 1000) });
   }
 
+  /** How many alerts each strategy has under the other filters (the strategy choice itself ignored) — for the filter chips. */
+  async alertCounts(q: AlertQuery = {}): Promise<{ counts: Record<string, number>; total: number }> {
+    const { from, to, before: _b, limit: _l, strategyId: _s, strategyIds: _ss, ...rest } = q;
+    const counts = await this.deps.store.alerts.countByStrategy({ ...rest, ...istRange(from, to) });
+    return { counts, total: Object.values(counts).reduce((a, b) => a + b, 0) };
+  }
+
+  async signalCounts(q: SignalQuery = {}): Promise<{ counts: Record<string, number>; total: number }> {
+    const { from, to, before: _b, limit: _l, strategyId: _s, strategyIds: _ss, ...rest } = q;
+    const counts = await this.deps.store.signals.countByStrategy({ ...rest, ...istRange(from, to) });
+    return { counts, total: Object.values(counts).reduce((a, b) => a + b, 0) };
+  }
+
   scan(opts: ScanOptions = {}) {
     return this.scanner.runLocked(opts);
   }
@@ -507,12 +520,13 @@ export class V2Service {
   /** Paper trades by strategy / connection / entered since: closed ones from what was read before, open ones fresh. */
   private async paperTradesFor(q: PaperQuery): Promise<PaperTrade[]> {
     const since = istRange(q.from).since;
-    const keep = (t: PaperTrade) => (!q.strategyId || t.strategyId === q.strategyId) && (!q.connectionId || t.connectionId === q.connectionId) && (!since || t.entryAt >= since);
+    const keep = (t: PaperTrade) =>
+      (!q.strategyId || t.strategyId === q.strategyId) && (!q.strategyIds?.length || q.strategyIds.includes(t.strategyId)) && (!q.connectionId || t.connectionId === q.connectionId) && (!since || t.entryAt >= since);
     const [closed, open] = await Promise.all([
       q.status === 'OPEN' ? Promise.resolve([]) : this.closedTrades(),
       q.status === 'CLOSED' ? Promise.resolve([]) : this.deps.store.paper.listTrades({ status: 'OPEN', strategyId: q.strategyId, connectionId: q.connectionId, since, limit: 5_000 }),
     ]);
-    return [...open, ...closed.filter(keep)].sort(newestFirst((t) => t.entryAt));
+    return [...open.filter(keep), ...closed.filter(keep)].sort(newestFirst((t) => t.entryAt));
   }
 
   /** Results for the trades matching the filters (all when none); connections are narrowed the same way. */
@@ -530,12 +544,13 @@ export class V2Service {
       return paperSummary({
         trades: raw.filter(scope.trade),
         strategies,
-        connections: connections.filter((c) => (!q.connectionId || c.id === q.connectionId) && scope.product(c.productId, c.strategyId)),
+        connections: connections.filter((c) => (!q.connectionId || c.id === q.connectionId) && (!q.strategyIds?.length || q.strategyIds.includes(c.strategyId)) && scope.product(c.productId, c.strategyId)),
         plans,
         overrides,
         now: this.now(),
         from: q.from ?? null,
         strategyId: q.strategyId,
+        strategyIds: q.strategyIds,
       });
     });
   }
@@ -599,6 +614,19 @@ export class V2Service {
         .filter(keep)
         .slice(0, limit)
         .map((t) => (t.status === 'OPEN' ? { ...t, openPnl: unrealizedPnl(t) } : t));
+    });
+  }
+
+  /** Paper trades per strategy under the other filters (the strategy choice itself ignored) — for the filter chips. */
+  async paperCounts(q: PaperQuery = {}): Promise<{ counts: Record<string, number>; total: number }> {
+    return paperTables(async () => {
+      const { strategyId: _s, strategyIds: _ss, before: _b, limit: _l, ...rest } = q;
+      const list = await this.paperTradesFor(rest);
+      const filtered = !!(rest.kinds?.length || rest.markets?.length || rest.search?.trim() || rest.timeframes?.length || rest.to || rest.sides?.length || rest.groups?.length);
+      const scope = filtered ? await this.paperScope(rest, await this.deps.store.strategies.list(), list.map((t) => t.productId)) : null;
+      const counts: Record<string, number> = {};
+      for (const t of list) if ((!scope || scope.trade(t)) && (!rest.result || (rest.result === 'win' ? (t.netPnl ?? 0) > 0 : (t.netPnl ?? 0) < 0))) counts[t.strategyId] = (counts[t.strategyId] ?? 0) + 1;
+      return { counts, total: Object.values(counts).reduce((a, b) => a + b, 0) };
     });
   }
 

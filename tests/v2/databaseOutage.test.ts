@@ -228,6 +228,13 @@ describe('lists and history', () => {
     const p3 = await store.alerts.list({ limit: 3, before: { at: p2.at(-1)!.createdAt, id: p2.at(-1)!.id } });
     expect(p3.map((a) => a.candleTime)).toEqual([1]);
     expect((await store.alerts.get(again[0]!.id))?.candleTime).toBe(7); // today's alert opens from memory
+
+    // Strategy counts: read once, then this run's new alerts are added without asking the database again.
+    const countCalls = () => db.state.calls.get('alerts.countByStrategy') ?? 0;
+    expect(await store.alerts.countByStrategy({})).toEqual({ [s.id]: 7 });
+    await add(8);
+    expect(await store.alerts.countByStrategy({})).toEqual({ [s.id]: 8 });
+    expect(countCalls()).toBe(1);
   });
 
   it('history is kept until a period is chosen; then older records are deleted, now and once a day', async () => {

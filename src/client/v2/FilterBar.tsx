@@ -2,8 +2,9 @@
 
 /**
  * The trader's filters, shared by Alerts (active / history / signals) and Paper trading:
- *   row 1  strategy · period (today … custom dates) · product search · more filters · clear
- *   row 2  type · market · timeframe · group (e.g. Bullish / Bearish) · and per screen: candles, delivery,
+ *   row 1  period (today … custom dates) · product search · more filters · clear
+ *   row 2  strategy chips with how many records each has under the other filters (several can be chosen)
+ *   row 3  type · market · timeframe · group (e.g. Bullish / Bearish) · and per screen: candles, delivery,
  *          outcome, side — toggle chips, several per row combine (none = all)
  * Filtering happens on the server; the choice is remembered in this browser per screen.
  */
@@ -20,7 +21,8 @@ import { H } from './help';
 export type Period = 'today' | 'yesterday' | '7d' | '30d' | 'all' | 'custom';
 
 export interface FilterValue {
-  strategyId: string;
+  /** Any of these strategies (none = all). */
+  strategyIds: string[];
   period: Period;
   from: string;
   to: string;
@@ -38,7 +40,7 @@ export interface FilterValue {
 
 export type FilterField = 'sources' | 'statuses' | 'outcomes' | 'sides';
 
-export const EMPTY_FILTERS: FilterValue = { strategyId: '', period: 'all', from: '', to: '', search: '', kinds: [], markets: [], timeframes: [], groups: [], sources: [], statuses: [], outcomes: [], sides: [] };
+export const EMPTY_FILTERS: FilterValue = { strategyIds: [], period: 'all', from: '', to: '', search: '', kinds: [], markets: [], timeframes: [], groups: [], sources: [], statuses: [], outcomes: [], sides: [] };
 
 interface StrategyLite {
   id: string;
@@ -50,13 +52,16 @@ interface StrategyLite {
 export function useFilters(key: string, initial?: Partial<FilterValue>): [FilterValue, (v: FilterValue) => void] {
   const storageKey = `algo-hunt.filters.${key}`;
   const [value, setValue] = useState<FilterValue>(() => {
-    let stored: Partial<FilterValue> = {};
+    let stored: Partial<FilterValue> & { strategyId?: string } = {};
     try {
       stored = JSON.parse(window.localStorage.getItem(storageKey) ?? '{}') as Partial<FilterValue>;
     } catch {
       /* private window / blocked storage */
     }
-    return { ...EMPTY_FILTERS, ...stored, ...Object.fromEntries(Object.entries(initial ?? {}).filter(([, v]) => v !== undefined)) };
+    // Saved before several strategies could be chosen: one strategy id.
+    const { strategyId: one, ...rest } = stored;
+    const strategyIds = Array.isArray(rest.strategyIds) ? rest.strategyIds : one ? [one] : [];
+    return { ...EMPTY_FILTERS, ...rest, strategyIds, ...Object.fromEntries(Object.entries(initial ?? {}).filter(([, v]) => v !== undefined)) };
   });
   useEffect(() => {
     try {
@@ -68,11 +73,11 @@ export function useFilters(key: string, initial?: Partial<FilterValue>): [Filter
   return [value, setValue];
 }
 
-/** Group labels → the ids of those groups in the strategies in scope. */
-function groupIndex(strategies: StrategyLite[], strategyId: string): Map<string, string[]> {
+/** Group labels → the ids of those groups in the strategies in scope (the chosen ones, or all). */
+function groupIndex(strategies: StrategyLite[], strategyIds: string[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const s of strategies) {
-    if (strategyId && s.id !== strategyId) continue;
+    if (strategyIds.length && !strategyIds.includes(s.id)) continue;
     for (const g of paperGroups(s.definition)) out.set(g.label, [...(out.get(g.label) ?? []), g.id]);
   }
   return out;
@@ -97,10 +102,10 @@ const dayRange = (v: FilterValue): { from?: string; to?: string } => {
 
 /** The API query for these filters. */
 export function toQuery(v: FilterValue, strategies: StrategyLite[]): RecordFilters & { sources?: EvaluationSource[]; statuses?: AlertStatus[]; outcomes?: SignalOutcome[]; sides?: PaperSide[] } {
-  const ids = groupIndex(strategies, v.strategyId);
+  const ids = groupIndex(strategies, v.strategyIds);
   const groups = v.groups.flatMap((l) => ids.get(l) ?? []);
   return {
-    strategyId: v.strategyId || undefined,
+    strategyIds: v.strategyIds.length ? v.strategyIds : undefined,
     ...dayRange(v),
     search: v.search.trim() || undefined,
     kinds: v.kinds,
@@ -118,7 +123,7 @@ export function toQuery(v: FilterValue, strategies: StrategyLite[]): RecordFilte
 /** How many filters (beyond "everything") are on. */
 export function activeCount(v: FilterValue, fields: FilterField[]): number {
   return (
-    (v.strategyId ? 1 : 0) +
+    (v.strategyIds.length ? 1 : 0) +
     (v.period !== 'all' ? 1 : 0) +
     (v.search.trim() ? 1 : 0) +
     [v.kinds, v.markets, v.timeframes, v.groups].filter((l) => l.length).length +
@@ -126,7 +131,20 @@ export function activeCount(v: FilterValue, fields: FilterField[]): number {
   );
 }
 
-function Chips<T extends string>({ label, help, options, value, onChange }: { label: string; help: TooltipContent; options: Array<{ value: T; label: string; help: TooltipContent }>; value: T[]; onChange: (v: T[]) => void }) {
+function Chips<T extends string>({
+  label,
+  help,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  help: TooltipContent;
+  /** `count`: records it has (shown after the label; 0 = dimmed). */
+  options: Array<{ value: T; label: string; help: TooltipContent; count?: number }>;
+  value: T[];
+  onChange: (v: T[]) => void;
+}) {
   if (!options.length) return null;
   return (
     <div className="flex flex-wrap items-center gap-1" role="group" aria-label={label}>
@@ -144,9 +162,11 @@ function Chips<T extends string>({ label, help, options, value, onChange }: { la
               className={clsx(
                 'rounded-full border px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap transition-colors',
                 on ? 'border-accent bg-accent text-white' : 'border-ink-700 bg-ink-850 text-slate-400 hover:border-accent/50 hover:text-slate-200',
+                !on && o.count === 0 && 'opacity-50',
               )}
             >
               {o.label}
+              {o.count !== undefined && <span className={clsx('ml-1 tabular-nums font-semibold', on ? 'text-white/85' : 'text-slate-300')}>{o.count.toLocaleString('en-IN')}</span>}
             </button>
           </Tooltip>
         );
@@ -175,12 +195,16 @@ const PERIOD_OPTIONS: Array<{ value: Period; label: string; help: TooltipContent
   { value: 'custom', label: 'Custom', help: { title: 'Custom dates', body: 'Pick the first and last day.' } },
 ];
 
+const shortName = (name: string) => (name.length > 34 ? `${name.slice(0, 32)}…` : name);
+
 export function FilterBar({
   value,
   onChange,
   strategies,
   fields = [],
   shown,
+  counts,
+  countNoun = 'records',
 }: {
   value: FilterValue;
   onChange: (v: FilterValue) => void;
@@ -189,28 +213,27 @@ export function FilterBar({
   fields?: FilterField[];
   /** "23 alerts" — the result count shown at the right. */
   shown?: string;
+  /** Records per strategy id under the other filters (the strategy chips' numbers). */
+  counts?: Record<string, number>;
+  /** What the counts count, e.g. "alerts". */
+  countNoun?: string;
 }) {
   const [open, setOpen] = useState(true);
   const set = (patch: Partial<FilterValue>) => onChange({ ...value, ...patch });
-  const inScope = value.strategyId ? strategies.filter((s) => s.id === value.strategyId) : strategies;
+  const inScope = value.strategyIds.length ? strategies.filter((s) => value.strategyIds.includes(s.id)) : strategies;
   const timeframes = useMemo(() => TIMEFRAMES.map((t) => t.key).filter((k) => inScope.some((s) => s.definition.evaluation.triggerTimeframe === k)), [inScope]);
-  const groups = useMemo(() => [...groupIndex(strategies, value.strategyId).keys()], [strategies, value.strategyId]);
+  const groups = useMemo(() => [...groupIndex(strategies, value.strategyIds).keys()], [strategies, value.strategyIds]);
   const n = activeCount(value, fields);
-  const chipsOn = [value.kinds, value.markets, value.timeframes, value.groups, ...fields.map((f) => value[f])].filter((l) => l.length).length;
+  const chipsOn = [value.strategyIds, value.kinds, value.markets, value.timeframes, value.groups, ...fields.map((f) => value[f])].filter((l) => l.length).length;
+  // Choosing strategies keeps only the group filters those strategies have.
+  const setStrategies = (strategyIds: string[]) => {
+    const available = groupIndex(strategies, strategyIds);
+    set({ strategyIds, groups: value.groups.filter((g) => available.has(g)) });
+  };
 
   return (
     <div className="card flex flex-col gap-2 px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
-        <Tooltip content={H.filters.strategy}>
-          <select aria-label="Strategy" className="input py-1.5 text-xs max-w-[16rem]" value={value.strategyId} onChange={(e) => set({ strategyId: e.target.value, groups: [] })}>
-            <option value="">All strategies</option>
-            {strategies.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </Tooltip>
         <Segmented label="Period" value={value.period} onChange={(period) => set({ period })} options={PERIOD_OPTIONS} />
         {value.period === 'custom' && (
           <span className="inline-flex items-center gap-1">
@@ -249,6 +272,25 @@ export function FilterBar({
       </div>
       {open && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-ink-700/60 pt-2">
+          {strategies.length > 0 && (
+            <div className="basis-full">
+              <Chips
+                label="Strategy"
+                help={H.filters.strategy}
+                value={value.strategyIds}
+                onChange={setStrategies}
+                options={strategies.map((s) => {
+                  const c = counts ? (counts[s.id] ?? 0) : undefined;
+                  return {
+                    value: s.id,
+                    label: shortName(s.name),
+                    count: c,
+                    help: { title: s.name, body: c === undefined ? 'Only this strategy’s records (choose several to see them together).' : `${c.toLocaleString('en-IN')} ${countNoun} with the other filters above. Choose several strategies to see them together.` },
+                  };
+                })}
+              />
+            </div>
+          )}
           <Chips label="Type" help={H.filters.kinds} value={value.kinds} onChange={(kinds) => set({ kinds })} options={PRODUCT_KINDS.map((k) => ({ value: k, label: KIND_LABEL[k], help: KIND_HELP[k] }))} />
           <Chips label="Market" help={H.filters.markets} value={value.markets} onChange={(markets) => set({ markets })} options={MARKETS.map((m) => ({ value: m, label: MARKET_LABEL[m], help: m === 'NSE' ? H.status.nse : H.status.mcx }))} />
           <Chips

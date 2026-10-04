@@ -160,7 +160,10 @@ Copper 2,500 kg, … — so a single lot often needs more than the cash per trad
 
 One filter bar on both tabs, remembered in your browser (separately for each tab):
 
-- **Strategy**, **period** (Today · Yesterday · 7 days · 30 days · All · Custom dates, IST) and **product** search
+- **Strategy** chips show how many alerts (signals, paper trades) each strategy has with the other filters — e.g.
+  *5Mint. RSI + Bollinger 33 · 15Mint. RSI + Bollinger 127*. Click one or several to see only theirs, together (none
+  = every strategy); the numbers don't change with that choice, only with the period, type, market and the rest.
+- **Period** (Today · Yesterday · 7 days · 30 days · All · Custom dates, IST) and **product** search
   (symbol contains, e.g. NIFTY).
 - **Filters** row — click chips to narrow (several in a row combine, none = all): **Type** (Index / Stock /
   Commodity), **Market** (NSE / BSE, MCX), **Timeframe** (the strategies' trigger candles), **Group** (the top-level

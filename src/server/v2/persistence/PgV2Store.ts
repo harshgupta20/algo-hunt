@@ -118,6 +118,7 @@ function recordWhere(f: RecordStoreFilters, product: string, where: string[], va
   };
   if (f.connectionId) add(f.connectionId, (n) => `connection_id = ${n}`);
   if (f.strategyId) add(f.strategyId, (n) => `strategy_id = ${n}`);
+  if (f.strategyIds?.length) add(f.strategyIds, (n) => `strategy_id = ANY(${n}::uuid[])`);
   if (f.kinds?.length) add(f.kinds, (n) => `${product} IN (SELECT id FROM v2_products WHERE kind = ANY(${n}::text[]))`);
   if (f.markets?.length) add(f.markets, (n) => `${product} IN (SELECT id FROM v2_products WHERE market = ANY(${n}::text[]))`);
   if (f.search?.trim()) add(`%${f.search.trim().replace(/[%_\\]/g, '')}%`, (n) => `split_part(${product}, ':', 2) ILIKE ${n}`);
@@ -132,6 +133,35 @@ function recordWhere(f: RecordStoreFilters, product: string, where: string[], va
     vals.push(f.before.at, f.before.id);
     where.push(`(date_trunc('milliseconds', created_at), id) < ($${vals.length - 1}::timestamptz, $${vals.length}::uuid)`);
   }
+}
+
+/** WHERE for signal lists and counts. */
+function signalWhere(f: SignalFilters): { where: string; vals: unknown[] } {
+  const where: string[] = [];
+  const vals: unknown[] = [];
+  recordWhere(f, "evaluation->>'productId'", where, vals);
+  if (f.outcomes?.length) {
+    vals.push(f.outcomes);
+    where.push(`outcome = ANY($${vals.length}::text[])`);
+  }
+  return { where: where.length ? `WHERE ${where.join(' AND ')}` : '', vals };
+}
+
+/** WHERE for alert lists and counts (the record filters + active / delivery / candles). */
+function alertWhere(f: AlertFilters): { where: string; vals: unknown[] } {
+  const where: string[] = [];
+  const vals: unknown[] = [];
+  recordWhere(f, 'product_id', where, vals);
+  if (f.active) where.push('acknowledged_at IS NULL');
+  if (f.statuses?.length) {
+    vals.push(f.statuses);
+    where.push(`status = ANY($${vals.length}::text[])`);
+  }
+  if (f.sources?.length) {
+    vals.push(f.sources);
+    where.push(`COALESCE(evaluation->>'source', 'HISTORICAL') = ANY($${vals.length}::text[])`);
+  }
+  return { where: where.length ? `WHERE ${where.join(' AND ')}` : '', vals };
 }
 
 /** The order pages follow (matches the cursor above). */
@@ -515,17 +545,16 @@ export class PgV2Store implements V2Store {
       return r ? mapSignal(r) : null;
     },
     list: async (f: SignalFilters) => {
-      const where: string[] = [];
-      const vals: unknown[] = [];
-      recordWhere(f, "evaluation->>'productId'", where, vals);
-      if (f.outcomes?.length) {
-        vals.push(f.outcomes);
-        where.push(`outcome = ANY($${vals.length}::text[])`);
-      }
+      const { where, vals } = signalWhere(f);
       vals.push(Math.min(f.limit ?? 100, 1000));
       // Lists leave the condition trace (most of each row's size) in the database.
       const cols = `id, identity, connection_id, strategy_id, version, unit_key, trigger_timeframe, candle_time, outcome, evaluation - 'trace' AS evaluation, created_at`;
-      return (await this.pool.query(`SELECT ${cols} FROM v2_signals ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ${NEWEST_FIRST} LIMIT $${vals.length}`, vals)).rows.map(mapSignal);
+      return (await this.pool.query(`SELECT ${cols} FROM v2_signals ${where} ${NEWEST_FIRST} LIMIT $${vals.length}`, vals)).rows.map(mapSignal);
+    },
+    countByStrategy: async (f: SignalFilters) => {
+      const { where, vals } = signalWhere({ ...f, before: undefined });
+      const rows = (await this.pool.query(`SELECT strategy_id, count(*)::int AS n FROM v2_signals ${where} GROUP BY strategy_id`, vals)).rows as Array<{ strategy_id: string; n: number }>;
+      return Object.fromEntries(rows.map((r) => [r.strategy_id, Number(r.n)]));
     },
   };
 
@@ -568,24 +597,18 @@ export class PgV2Store implements V2Store {
       return mapAlert(r, (await this.deliveriesFor([id])).get(id) ?? []);
     },
     list: async (f: AlertFilters) => {
-      const where: string[] = [];
-      const vals: unknown[] = [];
-      recordWhere(f, 'product_id', where, vals);
-      if (f.active) where.push('acknowledged_at IS NULL');
-      if (f.statuses?.length) {
-        vals.push(f.statuses);
-        where.push(`status = ANY($${vals.length}::text[])`);
-      }
-      if (f.sources?.length) {
-        vals.push(f.sources);
-        where.push(`COALESCE(evaluation->>'source', 'HISTORICAL') = ANY($${vals.length}::text[])`);
-      }
+      const { where, vals } = alertWhere(f);
       vals.push(Math.min(f.limit ?? 200, 1000));
       // Lists leave the condition trace (most of each row's size) and the duplicate unit in the database.
       const cols = `id, signal_id, connection_id, strategy_id, strategy_name, version, product_id, status, unit, trigger_timeframe, candle_time, evaluation - 'trace' - 'unit' AS evaluation, acknowledged_at, created_at`;
-      const rows = (await this.pool.query(`SELECT ${cols} FROM v2_alerts ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ${NEWEST_FIRST} LIMIT $${vals.length}`, vals)).rows;
+      const rows = (await this.pool.query(`SELECT ${cols} FROM v2_alerts ${where} ${NEWEST_FIRST} LIMIT $${vals.length}`, vals)).rows;
       const deliveries = await this.deliveriesFor(rows.map((r: any) => r.id));
       return rows.map((r: any) => mapAlert(r, deliveries.get(r.id) ?? []));
+    },
+    countByStrategy: async (f: AlertFilters) => {
+      const { where, vals } = alertWhere({ ...f, before: undefined });
+      const rows = (await this.pool.query(`SELECT strategy_id, count(*)::int AS n FROM v2_alerts ${where} GROUP BY strategy_id`, vals)).rows as Array<{ strategy_id: string; n: number }>;
+      return Object.fromEntries(rows.map((r) => [r.strategy_id, Number(r.n)]));
     },
     feed: async (after: string | null, limit: number) =>
       (

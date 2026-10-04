@@ -118,6 +118,15 @@ export function AlertsTab() {
     enabled: view === 'signals' && ready,
     placeholderData: keepPreviousData,
   });
+  // Records per strategy under the other filters (the strategy chips' numbers) — the strategy choice itself is left out.
+  const { strategyIds: _chosen, ...countBase } = base;
+  const counts = useQuery({
+    queryKey: ['v2-alerts', 'counts', view, countBase, view === 'signals' ? outcomes : [sources, statuses]],
+    queryFn: () => (view === 'signals' ? v2Api.signalCounts({ ...countBase, outcomes }) : v2Api.alertCounts({ ...countBase, sources, statuses, active: view === 'active' })),
+    enabled: ready,
+    refetchInterval: 300_000,
+    placeholderData: keepPreviousData,
+  });
   const alertRows = flatPages(alerts.data?.pages);
   const signalRows = flatPages(signals.data?.pages);
   const list = view === 'signals' ? signals : alerts;
@@ -143,7 +152,15 @@ export function AlertsTab() {
           ]}
         />
       </div>
-      <FilterBar value={filters} onChange={setFilters} strategies={strategies.data ?? []} fields={view === 'signals' ? ['outcomes'] : ['sources', 'statuses']} shown={shown} />
+      <FilterBar
+        value={filters}
+        onChange={setFilters}
+        strategies={strategies.data ?? []}
+        fields={view === 'signals' ? ['outcomes'] : ['sources', 'statuses']}
+        shown={shown}
+        counts={counts.data?.counts}
+        countNoun={view === 'signals' ? 'signals' : view === 'active' ? 'active alerts' : 'alerts'}
+      />
       {view !== 'signals' && (
         <Card className="p-0 overflow-hidden">
           {alerts.isLoading ? (

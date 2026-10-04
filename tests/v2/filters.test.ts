@@ -131,6 +131,10 @@ describe('trader filters', () => {
     expect(products(await svc.paperTrades({ groups: ['g-bull'], to: '2026-10-06' }))).toEqual(['NSE:NIFTY']);
     const sum = await svc.paperSummary({ kinds: ['INDEX', 'COMMODITY'] });
     expect(sum.overall).toMatchObject({ trades: 2, netPnl: 800 });
+    // Strategy chips: trades per strategy; several strategies at once.
+    expect(await svc.paperCounts({ markets: ['NSE'] })).toEqual({ counts: { s1: 2 }, total: 2 });
+    expect(products(await svc.paperTrades({ strategyIds: ['s1', 'nope'] })).length).toBe(3);
+    expect((await svc.paperSummary({ strategyIds: ['other'] })).overall).toMatchObject({ trades: 0 });
 
     // Winners / losers, and the trade log a page at a time (the next page = entered before the last trade shown).
     expect(products(await svc.paperTrades({ status: 'CLOSED', result: 'win' }))).toEqual(['MCX:GOLD', 'NSE:NIFTY']);
@@ -142,6 +146,18 @@ describe('trader filters', () => {
     const wins = await svc.paperTrades({ status: 'CLOSED', result: 'win', limit: 1 });
     expect(products(await svc.paperTrades({ status: 'CLOSED', result: 'win', limit: 1, before: pageCursor(wins[0]!.entryAt, wins[0]!.id) }))).toEqual(['NSE:NIFTY']);
     await expect(svc.paperTrades({ before: 'not-a-cursor' })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('several strategies at once; per-strategy counts follow every filter except the strategy choice', async () => {
+    expect(products(await svc.alerts({ strategyIds: ['s1', 's2'] })).length).toBe(4);
+    expect(products(await svc.alerts({ strategyIds: ['s2'] }))).toEqual(['MCX:GOLD']);
+    expect(products((await svc.signals({ strategyIds: ['s2'] })).map((s) => s.evaluation))).toEqual(['MCX:GOLD']);
+    // Counts: the chosen strategies don't change them (each chip keeps its number) — the other filters do.
+    expect(await svc.alertCounts({ strategyIds: ['s2'] })).toEqual({ counts: { s1: 3, s2: 1 }, total: 4 });
+    expect(await svc.alertCounts({ markets: ['NSE'] })).toEqual({ counts: { s1: 3 }, total: 3 });
+    expect(await svc.alertCounts({ from: '2026-10-07' })).toEqual({ counts: { s2: 1 }, total: 1 });
+    expect(await svc.alertCounts({ statuses: ['FAILED'] })).toEqual({ counts: { s1: 1 }, total: 1 });
+    expect((await svc.signalCounts({ outcomes: ['ALERTED'] })).counts).toEqual({ s1: 2, s2: 1 });
   });
 
   it('alerts a page at a time: the same rows in the same order as one long list, whatever the filters', async () => {

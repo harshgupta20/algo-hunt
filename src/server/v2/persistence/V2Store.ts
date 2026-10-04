@@ -39,6 +39,8 @@ import type {
 export interface RecordStoreFilters {
   connectionId?: string;
   strategyId?: string;
+  /** Any of these strategies. */
+  strategyIds?: string[];
   kinds?: ProductKind[];
   markets?: Market[];
   search?: string;
@@ -151,6 +153,8 @@ export interface V2Store {
     /** Returns null when a signal with the same identity already exists (dedupe). */
     insert(signal: NewSignal): Promise<V2Signal | null>;
     list(f: SignalFilters): Promise<V2SignalItem[]>;
+    /** How many signals match, per strategy id (the filters' own strategy choice ignored by the caller). */
+    countByStrategy(f: SignalFilters): Promise<Record<string, number>>;
   };
   alerts: {
     insert(alert: NewAlert): Promise<V2Alert>;
@@ -160,6 +164,8 @@ export interface V2Store {
     get(id: string): Promise<V2Alert | null>;
     /** Newest first, without the condition traces (fetch one alert for its trace). */
     list(filters: AlertFilters): Promise<V2AlertItem[]>;
+    /** How many alerts match, per strategy id. */
+    countByStrategy(filters: AlertFilters): Promise<Record<string, number>>;
     /** Alerts recorded after `after` (ISO), newest first — tiny rows for the new-alert alarm. */
     feed(after: string | null, limit: number): Promise<AlertFeedItem[]>;
   };
