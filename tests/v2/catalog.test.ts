@@ -18,7 +18,7 @@ describe('instrument dump → products', () => {
     { instrument_token: 3, tradingsymbol: 'NIFTY26O1325000CE', name: 'NIFTY', instrument_type: 'CE', segment: 'NFO-OPT', exchange: 'NFO', expiry: '2026-10-13', strike: 25000 },
     { instrument_token: 4, tradingsymbol: 'NIFTY26O1325050CE', name: 'NIFTY', instrument_type: 'CE', segment: 'NFO-OPT', exchange: 'NFO', expiry: '2026-10-13', strike: 25050 },
     { instrument_token: 5, tradingsymbol: 'RELIANCE26OCTFUT', name: 'RELIANCE', instrument_type: 'FUT', segment: 'NFO-FUT', exchange: 'NFO', expiry: '2026-10-27' },
-    { instrument_token: 6, tradingsymbol: 'GOLD26DECFUT', name: 'GOLD', instrument_type: 'FUT', segment: 'MCX-FUT', exchange: 'MCX', expiry: '2026-12-04' },
+    { instrument_token: 6, tradingsymbol: 'GOLD26DECFUT', name: 'GOLD', instrument_type: 'FUT', segment: 'MCX-FUT', exchange: 'MCX', expiry: '2026-12-04', lot_size: 1 },
     { instrument_token: 7, tradingsymbol: 'SENSEX', name: 'SENSEX', instrument_type: 'EQ', segment: 'INDICES', exchange: 'BSE' },
     { instrument_token: 8, tradingsymbol: 'OLD26SEPFUT', name: 'OLD', instrument_type: 'FUT', segment: 'NFO-FUT', exchange: 'NFO', expiry: '2026-09-24' },
   ];
@@ -31,6 +31,10 @@ describe('instrument dump → products', () => {
     expect(nifty).toMatchObject({ kind: 'INDEX', market: 'NSE', name: 'Nifty 50', hasSpot: true, hasFutures: true, hasOptions: true, strikeStep: 50, optionExpiries: ['2026-10-13'] });
     expect(products.find((p) => p.id === 'NSE:RELIANCE')).toMatchObject({ kind: 'STOCK', name: 'RELIANCE INDUSTRIES', hasSpot: true, hasFutures: true, hasOptions: false });
     expect(products.find((p) => p.id === 'MCX:GOLD')).toMatchObject({ kind: 'COMMODITY', market: 'MCX', hasSpot: false });
+    // Kite lists MCX lots as 1; a Gold lot is 1 kg priced per 10 g → 100 units of the price. NFO lots stay as Kite gives them.
+    expect(list.find((i) => i.symbol === 'GOLD26DECFUT')?.lotSize).toBe(100);
+    expect(list.find((i) => i.symbol === 'NIFTY26OCTFUT')?.lotSize).toBe(75);
+    expect(mapRow({ instrument_token: 9, tradingsymbol: 'CRUDEOIL26OCT9000CE', name: 'CRUDEOIL', instrument_type: 'CE', segment: 'MCX-OPT', exchange: 'MCX', expiry: '2026-10-15', strike: 9000, lot_size: 1 }, TODAY)?.lotSize).toBe(100);
   });
 });
 

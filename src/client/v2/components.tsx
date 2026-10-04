@@ -4,7 +4,7 @@
  * Building blocks shared by the V2 screens: captioned cells, legs, units,
  * state badges and the condition trace ("why did it (not) fire").
  */
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import clsx from 'clsx';
 import { CheckCircle2, CircleHelp, XCircle } from 'lucide-react';
 import type { AlertStateName, ConditionTrace, EvaluationSource, ExprTrace, LegDef, LegKind, OperandTrace, SignalOutcome, TriState, UnitEvaluation, V2Instrument, V2Product, V2Unit } from '@/shared/v2';
@@ -244,5 +244,59 @@ export function SourceBadge({ source }: { source?: EvaluationSource }) {
         <Badge tone={s.tone}>{s.label}</Badge>
       </span>
     </Tooltip>
+  );
+}
+
+/**
+ * A number box that can be typed into freely: a value is taken while it is a number within [min, max];
+ * leaving the box puts back the last good value (a number outside the range is brought into it), so a
+ * half-typed amount ("5" on the way to "50000") is never forced to the minimum.
+ */
+export function NumberInput({
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  className,
+  disabled,
+  placeholder,
+  label,
+}: {
+  value: number | null;
+  onChange: (n: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  className?: string;
+  disabled?: boolean;
+  placeholder?: string;
+  label: string;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  const inRange = (n: number) => (min === undefined || n >= min) && (max === undefined || n <= max);
+  const parse = (raw: string) => (raw.trim() === '' ? NaN : Number(raw));
+  return (
+    <input
+      aria-label={label}
+      type="number"
+      min={min}
+      max={max}
+      step={step}
+      disabled={disabled}
+      placeholder={placeholder}
+      className={className}
+      value={text ?? (value === null ? '' : String(value))}
+      onChange={(e) => {
+        setText(e.target.value);
+        const n = parse(e.target.value);
+        if (Number.isFinite(n) && inRange(n)) onChange(n);
+      }}
+      onBlur={(e) => {
+        const n = parse(e.target.value);
+        if (Number.isFinite(n)) onChange(Math.min(max ?? Infinity, Math.max(min ?? -Infinity, n)));
+        setText(null);
+      }}
+    />
   );
 }

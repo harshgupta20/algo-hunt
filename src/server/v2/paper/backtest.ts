@@ -174,8 +174,9 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
       skip(e, 'An index can’t be traded — choose its future or an option leg');
       continue;
     }
-    if (plan.squareOff && e.at >= squareOffAt(cal, istDate(e.at), product.market === 'MCX' ? plan.squareOffMcx : plan.squareOffNse)) {
-      skip(e, 'After the square-off time');
+    const squareOffTime = product.market === 'MCX' ? plan.squareOffMcx : plan.squareOffNse;
+    if (plan.squareOff && e.at >= squareOffAt(cal, istDate(e.at), squareOffTime)) {
+      skip(e, `After the ${squareOffTime} square-off — switch “Square off daily” off to hold trades overnight`);
       continue;
     }
     const candles = minutes.get(inst.token) ?? [];
@@ -250,6 +251,9 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
     skipped,
     requests,
     notes: [
+      ...(plan.squareOff && (tf === '1d' || tf === '1w')
+        ? ['Daily / weekly candles close after the day’s square-off time, so with “Square off daily” on no alert can be traded — switch it off to hold positions overnight.']
+        : []),
       'Each alert is entered at its trigger candle’s close (± slippage) and exited on the traded contract’s 1-minute candles; if the target and stop-loss fall in the same minute the stop counts.',
       ...cmp.notes.map((x) => x.replace('Alerts only (no trade scoring). ', '')),
     ],

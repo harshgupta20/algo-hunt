@@ -7,10 +7,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { PaperPlan, StrategyDefinition } from '../../src/shared/v2';
 import { defaultPaperPlan } from '../../src/shared/v2';
 import { ProductService } from '../../src/server/v2/data/ProductService';
+import { RuntimeV2Store, createRuntimeState } from '../../src/server/v2/persistence/RuntimeV2Store';
 import type { RawCandle } from '../../src/server/v2/engine/candles';
 import { roundTripCharges } from '../../src/server/v2/paper/charges';
 import { V2Service } from '../../src/server/v2/V2Service';
 import { FixtureV2Provider, MemoryV2Store, NSE_SESSION, RecordingChannels, candlesAt, cond, field, fut, ist, legSeries, num, spot, strategy, timesEndingAt } from '../helpers/v2Fakes';
+import type { V2Store } from '../../src/server/v2/persistence/V2Store';
 
 const D = '2026-10-07';
 const niftySpot = spot('NSE:NIFTY', 'NIFTY 50');
@@ -88,6 +90,43 @@ describe('backtest', () => {
     expect(intraday).toMatchObject({ exitReason: 'SQUARE_OFF', exitPrice: 25_130, exitAt: new Date(ist(D, '15:20')).toISOString(), grossPnl: 750 });
     const positional = (await run({ targetPct: null, stopPct: null, squareOff: false })).trades[0];
     expect(positional).toMatchObject({ exitReason: 'END', exitPrice: 25_130, exitAt: new Date(ist(D, '10:10')).toISOString() });
+  });
+
+  it('needs a Kite login — says so instead of an empty result (Compare too)', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    provider.connected = false;
+    await expect(run({})).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/Kite isn’t logged in.*Log in to Kite/) });
+    await expect(svc.compare({ strategyId, products: ['NSE:NIFTY'], from: D, to: D })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('daily candles close after the square-off: says why nothing traded; positional settings trade', async () => {
+    const daily: StrategyDefinition = { ...strategy([{ id: 'A', kind: 'FUT' }], cond(field(legSeries('A', '1d')), 'CROSSED_ABOVE', num(25_100))), name: 'Daily close above 25,100' };
+    daily.evaluation = { mode: 'COMPLETED_CANDLE', triggerTimeframe: '1d' };
+    const id = (await svc.createStrategy(daily)).id;
+    // Closes above 25,100 on Tuesday 6 Oct; Wednesday morning's minutes rise through the target.
+    const dayTimes = ['2026-10-02', '2026-10-05', '2026-10-06'].map((d) => ist(d, '00:00'));
+    provider.set(niftyFut, '1d', candlesAt(dayTimes, [25_050, 25_080, 25_150]));
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    const p = { ...defaultPaperPlan(daily), slippagePct: 0, targetPct: 1, stopPct: 0.5 };
+    const intraday = await svc.backtest({ strategyId: id, products: ['NSE:NIFTY'], from: '2026-10-02', to: '2026-10-07', plan: p, capital: null });
+    expect(intraday.trades).toEqual([]);
+    expect(intraday.skipped[0]?.reason).toMatch(/After the 15:20 square-off — switch “Square off daily” off/);
+    expect(intraday.notes[0]).toMatch(/Daily \/ weekly candles close after the day’s square-off time/);
+    const positional = await svc.backtest({ strategyId: id, products: ['NSE:NIFTY'], from: '2026-10-02', to: '2026-10-07', plan: { ...p, squareOff: false }, capital: null });
+    expect(positional.trades).toHaveLength(1);
+    expect(positional.trades[0]).toMatchObject({ entryPrice: 25_150, exitReason: 'TARGET' }); // held overnight, the target met the next morning
+    expect(positional.notes.join(' ')).not.toMatch(/square-off time/);
+  });
+
+  it('runs the same through the app’s memory layer (as in the running app)', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    const clock = { now: ist('2026-10-08', '09:00') };
+    const store: V2Store = new RuntimeV2Store(new MemoryV2Store(() => clock.now), () => clock.now, createRuntimeState());
+    const app = new V2Service({ store, provider, products: new ProductService(store, provider), channels: new RecordingChannels(), clock: () => clock.now });
+    await app.syncProducts();
+    const id = (await app.createStrategy(S)).id;
+    const r = await app.backtest({ strategyId: id, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}), capital: 500_000 });
+    expect(r.trades[0]).toMatchObject({ exitReason: 'TARGET', exitPrice: 25_371.2, grossPnl: 18_840 });
   });
 
   it('refuses a missing strategy or a reversed period', async () => {

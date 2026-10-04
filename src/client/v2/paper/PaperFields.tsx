@@ -14,14 +14,10 @@ import { PAPER_DEFAULTS, diffOverride, effectivePlan } from '@/shared/v2';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { InlineSpinner } from '../../components/loaders';
 import { v2Api } from '../api';
-import { Toggle } from '../components';
+import { NumberInput, Toggle } from '../components';
 import { H } from '../help';
 import { inr } from './money';
 
-const numberOr = (v: string, fallback: number) => {
-  const n = Number(v);
-  return v.trim() === '' || !Number.isFinite(n) ? fallback : n;
-};
 
 function Field({ label, help, own, onReset, children }: { label: string; help: TooltipContent; own?: boolean; onReset?: () => void; children: ReactNode }) {
   return (
@@ -47,21 +43,7 @@ function PctField({ label, value, fallback, max, onChange }: { label: string; va
   return (
     <>
       <input type="checkbox" aria-label={`${label} on`} className="accent-[rgb(var(--accent))]" checked={value !== null} onChange={(e) => onChange(e.target.checked ? fallback : null)} />
-      <input
-        aria-label={label}
-        type="number"
-        min={0.1}
-        max={max}
-        step={1}
-        disabled={value === null}
-        className="input py-1 text-xs w-20 tabular-nums disabled:opacity-40"
-        value={value ?? ''}
-        placeholder="none"
-        onChange={(e) => {
-          const n = Number(e.target.value);
-          if (e.target.value.trim() !== '' && Number.isFinite(n) && n > 0) onChange(Math.min(max, n));
-        }}
-      />
+      <NumberInput label={label} min={0.1} max={max} step={1} disabled={value === null} className="input py-1 text-xs w-20 tabular-nums disabled:opacity-40" value={value} placeholder="none" onChange={onChange} />
       <span className="text-xs text-slate-400">%</span>
     </>
   );
@@ -77,15 +59,7 @@ export function PaperTermsFields({ value, onChange, base, hasGroups }: { value: 
       <div className="flex flex-wrap items-end gap-2">
         <Field label="Cash per trade" help={H.paper.cash} own={own('cashPerTrade')} onReset={() => reset('cashPerTrade')}>
           <span className="text-xs text-slate-400">₹</span>
-          <input
-            aria-label="Cash per trade"
-            type="number"
-            min={100}
-            step={1000}
-            className="input py-1 text-xs w-28 tabular-nums"
-            value={value.cashPerTrade}
-            onChange={(e) => set({ cashPerTrade: Math.max(100, numberOr(e.target.value, value.cashPerTrade)) })}
-          />
+          <NumberInput label="Cash per trade" min={100} max={1e9} step={1000} className="input py-1 text-xs w-28 tabular-nums" value={value.cashPerTrade} onChange={(cashPerTrade) => set({ cashPerTrade })} />
         </Field>
         <Field label="Target" help={H.paper.target} own={own('targetPct')} onReset={() => reset('targetPct')}>
           <PctField label="Target %" value={value.targetPct} fallback={PAPER_DEFAULTS.targetPct} max={1000} onChange={(targetPct) => set({ targetPct })} />
@@ -117,16 +91,7 @@ export function PaperTermsFields({ value, onChange, base, hasGroups }: { value: 
           <Toggle checked={value.charges} onChange={(charges) => set({ charges })} label="Deduct charges" help={H.paper.charges} />
         </Field>
         <Field label="Slippage" help={H.paper.slippage} own={own('slippagePct')} onReset={() => reset('slippagePct')}>
-          <input
-            aria-label="Slippage %"
-            type="number"
-            min={0}
-            max={10}
-            step={0.1}
-            className="input py-1 text-xs w-20 tabular-nums"
-            value={value.slippagePct}
-            onChange={(e) => set({ slippagePct: Math.min(10, Math.max(0, numberOr(e.target.value, value.slippagePct))) })}
-          />
+          <NumberInput label="Slippage %" min={0} max={10} step={0.1} className="input py-1 text-xs w-20 tabular-nums" value={value.slippagePct} onChange={(slippagePct) => set({ slippagePct })} />
           <span className="text-xs text-slate-400">%</span>
         </Field>
       </div>

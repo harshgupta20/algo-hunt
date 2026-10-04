@@ -398,9 +398,15 @@ export class V2Service {
     return this.tools.explain({ definition: input.definition, product: p, config: input.config ?? DEFAULT_CONFIG });
   }
 
+  /** Compare and Backtest replay Kite's candles: without a login they would only collect errors. */
+  private async requireKite(what: string): Promise<void> {
+    if (!(await this.deps.provider.isConnected())) throw new V2ServiceError(409, `Kite isn’t logged in, so there are no candles to ${what} on. Log in to Kite (Connect Kite in the top bar), then run it again.`);
+  }
+
   async compare(input: { strategyId?: string; definition?: StrategyDefinition } & CompareRequest) {
     const definition = input.definition ?? (input.strategyId ? (await this.getStrategy(input.strategyId)).definition : undefined);
     if (!definition) throw new V2ServiceError(400, 'strategyId or definition is required');
+    await this.requireKite('compare');
     try {
       return await this.tools.compare(definition, input);
     } catch (err) {
@@ -457,6 +463,7 @@ export class V2Service {
   async backtest(req: BacktestRequest): Promise<BacktestResult> {
     const s = await this.getStrategy(req.strategyId);
     if (req.from > req.to) throw new V2ServiceError(400, '“From” must be on or before “to”');
+    await this.requireKite('backtest');
     try {
       return await runBacktest({ store: this.deps.store, provider: this.deps.provider, tools: this.tools, now: () => this.now() }, s, req);
     } catch (err) {

@@ -52,6 +52,30 @@ export const KNOWN_PRODUCTS: KnownProduct[] = [
 
 export const KNOWN_PRODUCT: Record<string, KnownProduct> = Object.fromEntries(KNOWN_PRODUCTS.map((p) => [p.id, p]));
 
+/**
+ * Units of the quoted price in one MCX lot (futures and options alike). Kite's instrument list gives MCX
+ * contracts a lot size of 1 (quantities there are in lots), so without this a CRUDEOIL lot would count as one
+ * barrel instead of 100 — paper trades, backtests, margin and charges would be 100× too small.
+ * MCX contract specifications (2026): Gold 1 kg priced per 10 g, Gold Mini 100 g per 10 g, Gold Petal 1 g per g,
+ * Silver 30 kg / Silver Mini 5 kg per kg, Crude Oil 100 / Mini 10 barrels, Natural Gas 1,250 / Mini 250 mmBtu,
+ * Copper 2,500 kg, Aluminium and Zinc 5 tonnes, Nickel 250 kg — all per kg.
+ */
+export const MCX_LOT_UNITS: Record<string, number> = {
+  GOLD: 100,
+  GOLDM: 10,
+  GOLDPETAL: 1,
+  SILVER: 30,
+  SILVERM: 5,
+  CRUDEOIL: 100,
+  CRUDEOILM: 10,
+  NATURALGAS: 1250,
+  NATGASMINI: 250,
+  COPPER: 2500,
+  ALUMINIUM: 5000,
+  ZINC: 5000,
+  NICKEL: 250,
+};
+
 export const PRODUCT_KIND_LABEL: Record<ProductKind, string> = { INDEX: 'Index', STOCK: 'Stock', COMMODITY: 'Commodity' };
 
 // ---- Legs ---------------------------------------------------------------------------------

@@ -108,9 +108,20 @@ The first time, run `npm run live -- --check`. It connects to Kite, prints a few
    traded** with the reason.
 4. Results: **final capital** (and the lowest the account went), net P&L, return on capital, win rate, profit factor,
    drawdown, the P&L charts, **by product** (open a row for the contracts used and data notes), every trade (CSV).
+   When nothing was traded, a box at the top says why — no alerts in the period, or every alert skipped (grouped by
+   reason, with what to change: e.g. *Not enough money* → raise the capital, a futures lot needs its margin of about
+   ₹1.4–2.3 lakh; *After the square-off* → switch **Square off daily** off). Products whose candles couldn't be read
+   are listed there too.
+
+Needs a **Kite login** (candles come from Kite) — without one it says so instead of running. **Daily / weekly
+strategies** alert at the 15:30 close, after the square-off time: switch **Square off daily** off to trade them
+(held overnight, closed by the target / stop-loss / expiry / end of the test).
 
 Limits (as Compare): contracts are the ones listed today, with option strikes fixed around ATM at the start of the
 period; Kite has no candles for expired contracts.
+
+MCX quantities are in the exchange's units: one CRUDEOIL lot is 100 barrels, Gold Mini 100 g (priced per 10 g),
+Copper 2,500 kg, … — so a single lot often needs more than the cash per trade (shown *over budget*).
 
 ## 3. Connect and switch on (Connections tab)
 

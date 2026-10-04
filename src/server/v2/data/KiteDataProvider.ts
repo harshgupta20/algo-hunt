@@ -8,7 +8,7 @@
  * calls are batched (≤1000 / ≤500 instruments per request).
  */
 import type { Exchange, LegKind, V2Instrument } from '@/shared/v2';
-import { KNOWN_PRODUCTS } from '@/shared/v2';
+import { KNOWN_PRODUCTS, MCX_LOT_UNITS } from '@/shared/v2';
 import type { KiteAuthService } from '../../services/kite/kiteAuth';
 import { withKiteRetry } from '../../services/kite/kiteClient';
 import type { KiteHistoricalProvider } from '../../services/kite/KiteHistoricalProvider';
@@ -44,6 +44,9 @@ function expiryOf(v: KiteRow['expiry']): string | null {
 function make(r: KiteRow, productId: string, kind: LegKind, exchange: Exchange): V2Instrument {
   const token = Number(r.instrument_token);
   const isOption = kind === 'CE' || kind === 'PE';
+  // Kite lists MCX lots as 1: use the contract's real size (units of the quoted price per lot).
+  const lot = Number(r.lot_size) || 1;
+  const lotSize = exchange === 'MCX' && lot <= 1 ? (MCX_LOT_UNITS[productId.split(':')[1] ?? ''] ?? lot) : lot;
   return {
     id: `K:${token}`,
     token,
@@ -53,7 +56,7 @@ function make(r: KiteRow, productId: string, kind: LegKind, exchange: Exchange):
     symbol: r.tradingsymbol,
     expiry: kind === 'SPOT' ? null : expiryOf(r.expiry),
     strike: isOption ? Number(r.strike) || 0 : null,
-    lotSize: Number(r.lot_size) || 1,
+    lotSize,
     tickSize: Number(r.tick_size) || 0,
   };
 }

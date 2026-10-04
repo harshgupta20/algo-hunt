@@ -18,7 +18,7 @@ import { InfoTip, Tooltip } from '../../components/Tooltip';
 import { EmptyState, StatCard } from '../../components/ui';
 import { BrandLoader, InlineSpinner } from '../../components/loaders';
 import { v2Api } from '../api';
-import { Cell, LegBadge, Section, Segmented, Toggle } from '../components';
+import { Cell, LegBadge, NumberInput, Section, Segmented, Toggle } from '../components';
 import { daysAgo, istStampIso, istToday } from '../format';
 import { H } from '../help';
 import { ProductPicker } from '../ProductPicker';
@@ -31,6 +31,73 @@ import { LoadMore } from '../LoadMore';
 
 const DAY = 86_400_000;
 const spanDays = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / DAY) + 1;
+
+/** What to change when alerts were skipped for this reason. */
+function skipHint(reason: string): string | null {
+  if (reason.startsWith('Not enough money')) return 'Raise the starting capital (a futures lot needs its margin) or switch on “No limit”.';
+  if (reason.startsWith('After the')) return 'Switch “Square off daily” off in the trades settings to hold positions overnight.';
+  if (reason.startsWith('An index can’t be traded')) return 'In “What each group trades”, pick the future or an option leg instead of the index.';
+  if (/doesn['’]t trade/.test(reason)) return 'In “What each group trades”, choose a leg for that group.';
+  if (reason.startsWith('No price')) return 'Kite had no candles for that contract at the alert — try a shorter, more recent period.';
+  return null;
+}
+
+/**
+ * Above the results: why there are no trades (no alerts, or every alert skipped — grouped by reason with
+ * what to change) and products whose candles couldn't be read (otherwise only inside their row).
+ */
+function ResultNotice({ r }: { r: BacktestResult }) {
+  const broken = r.products.filter((p) => p.errors.length);
+  const alerts = r.products.reduce((n, p) => n + p.alerts, 0);
+  const reasons = new Map<string, number>();
+  for (const s of r.skipped) {
+    const key = s.reason.replace(/needs ₹[\d,]+/, 'needs ₹…').replace(/₹[\d,]+ free/, '₹… free');
+    reasons.set(key, (reasons.get(key) ?? 0) + 1);
+  }
+  const top = [...reasons].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const firstFor = (key: string) => r.skipped.find((s) => s.reason.replace(/needs ₹[\d,]+/, 'needs ₹…').replace(/₹[\d,]+ free/, '₹… free') === key)?.reason ?? key;
+  if (!broken.length && r.trades.length) return null;
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-warn/30 bg-warn/5 p-3 text-xs text-slate-300">
+      {!r.trades.length && (
+        <div>
+          <p className="font-semibold text-warn">No trades in this backtest</p>
+          {alerts === 0 ? (
+            <p className="mt-0.5">
+              The strategy would not have alerted on {r.products.length === 1 ? 'this product' : 'these products'} between {r.from} and {r.to}
+              {broken.length ? ' — some candles could not be read (below)' : ' — try a longer period or other products'}.
+            </p>
+          ) : (
+            <ul className="mt-1 flex flex-col gap-1">
+              <li>
+                {alerts} alert{alerts === 1 ? '' : 's'}, none traded:
+              </li>
+              {top.map(([key, n]) => (
+                <li key={key} className="pl-3">
+                  <span className="tabular-nums text-slate-200">{n}×</span> {firstFor(key)}
+                  {skipHint(key) && <span className="block text-slate-500">→ {skipHint(key)}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {broken.length > 0 && (
+        <div>
+          <p className="font-semibold text-warn">Candles could not be read for {broken.length === r.products.length ? 'every product' : `${broken.length} product(s)`}</p>
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {broken.slice(0, 5).map((p) => (
+              <li key={p.productId}>
+                <span className="font-medium text-slate-200">{p.symbol}</span>: {p.errors[0]}
+                {p.errors.length > 1 ? ` (+${p.errors.length - 1} more — open its row below)` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function Results({ r, names: known }: { r: BacktestResult; names: Map<string, string> }) {
   const names = useMemo(() => new Map([...known, [r.strategyId, r.strategyName]]), [known, r.strategyId, r.strategyName]);
@@ -55,6 +122,8 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
           </button>
         </Tooltip>
       </div>
+
+      <ResultNotice r={r} />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <StatCard
@@ -299,19 +368,16 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
                 </Cell>
                 <Cell label="Starting capital" help={H.backtest.capital}>
                   <span className="text-xs text-slate-400">₹</span>
-                  <input
-                    aria-label="Starting capital"
-                    type="number"
+                  <NumberInput
+                    label="Starting capital"
                     min={1000}
+                    max={1e10}
                     step={10_000}
                     disabled={capital === null}
                     className="input py-1 text-xs w-32 tabular-nums disabled:opacity-40"
-                    value={capital ?? ''}
+                    value={capital}
                     placeholder="no limit"
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      if (Number.isFinite(v) && v >= 0) setCapital(Math.max(1000, v));
-                    }}
+                    onChange={setCapital}
                   />
                   <Toggle checked={capital === null} onChange={(off) => setCapital(off ? null : BACKTEST_DEFAULT_CAPITAL)} label="No limit" help={H.backtest.noLimit} />
                 </Cell>
