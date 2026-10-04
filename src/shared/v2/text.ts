@@ -46,6 +46,11 @@ export function operandCore(o: Operand): string {
     case 'OI_CHANGE':
       return `OI change (${o.lookback} candle${o.lookback === 1 ? '' : 's'})`;
     case 'INDICATOR': {
+      // "Lowest low (3 candles)" reads better than the generic "N-candle low / high(3) Lowest low".
+      if (o.indicator === 'RANGE') {
+        const n = o.params.period ?? 3;
+        return `${o.output === 'high' ? 'Highest high' : 'Lowest low'} (${n} candle${n === 1 ? '' : 's'})`;
+      }
       const spec = INDICATOR[o.indicator];
       const params = spec ? spec.params.map((p) => o.params[p.name] ?? p.default).join(',') : Object.values(o.params).join(',');
       const out = o.output ? ` ${spec?.outputs?.find((x) => x.value === o.output)?.label ?? o.output}` : '';

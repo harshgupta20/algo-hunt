@@ -463,6 +463,13 @@ export class V2Service {
   async backtest(req: BacktestRequest): Promise<BacktestResult> {
     const s = await this.getStrategy(req.strategyId);
     if (req.from > req.to) throw new V2ServiceError(400, '“From” must be on or before “to”');
+    // Exit rules use the strategy's legs and indicators: the same checks as the strategy's own conditions.
+    const groups = new Set(resolveRules(s.definition, req.plan.rules).map((r) => r.group));
+    for (const x of req.exits ?? []) {
+      if (!groups.has(x.group)) throw new V2ServiceError(400, 'An exit rule is for a group the strategy doesn’t have');
+      const issue = validateStrategy({ ...s.definition, expression: x.when }).find((i) => i.severity === 'error');
+      if (issue) throw new V2ServiceError(400, `Exit rule: ${issue.message}`);
+    }
     await this.requireKite('backtest');
     try {
       return await runBacktest({ store: this.deps.store, provider: this.deps.provider, tools: this.tools, now: () => this.now() }, s, req);

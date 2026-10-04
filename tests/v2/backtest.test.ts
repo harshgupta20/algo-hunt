@@ -11,7 +11,8 @@ import { RuntimeV2Store, createRuntimeState } from '../../src/server/v2/persiste
 import type { RawCandle } from '../../src/server/v2/engine/candles';
 import { roundTripCharges } from '../../src/server/v2/paper/charges';
 import { V2Service } from '../../src/server/v2/V2Service';
-import { FixtureV2Provider, MemoryV2Store, NSE_SESSION, RecordingChannels, candlesAt, cond, field, fut, ist, legSeries, num, spot, strategy, timesEndingAt } from '../helpers/v2Fakes';
+import { FixtureV2Provider, MemoryV2Store, NSE_SESSION, RecordingChannels, and, candlesAt, cond, field, fut, ind, ist, legSeries, num, spot, strategy, timesEndingAt } from '../helpers/v2Fakes';
+import { indicatorValues } from '../../src/server/v2/engine/indicators';
 import type { V2Store } from '../../src/server/v2/persistence/V2Store';
 
 const D = '2026-10-07';
@@ -127,6 +128,36 @@ describe('backtest', () => {
     const id = (await app.createStrategy(S)).id;
     const r = await app.backtest({ strategyId: id, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}), capital: 500_000 });
     expect(r.trades[0]).toMatchObject({ exitReason: 'TARGET', exitPrice: 25_371.2, grossPnl: 18_840 });
+  });
+
+  it('exit rules: the trade closes at the first candle close where its condition is true', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(60));
+    // Entered at 10:00 (close 25,120); 15-minute closes rise by 1 → above 25,122 first on the 10:30–10:45 candle.
+    const exits = [{ group: null, when: cond(field(legSeries('A')), 'GT', num(25_122)) }];
+    const r = await svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({ targetPct: null, stopPct: null }), capital: null, exits });
+    expect(r.trades[0]).toMatchObject({ exitReason: 'EXIT_RULE', exitAt: new Date(ist(D, '10:45')).toISOString(), exitPrice: 25_570 }); // the 10:44 minute's close
+    expect(r.notes.some((n) => /^Exit rule: .*checked at each 15m candle close/.test(n))).toBe(true);
+    // A target that comes first still wins.
+    const target = await svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}), capital: null, exits });
+    expect(target.trades[0]).toMatchObject({ exitReason: 'TARGET' });
+    // Several conditions: AND needs both — never true here, so the trade runs to the square-off.
+    const both = [{ group: null, when: and(cond(field(legSeries('A')), 'GT', num(25_122)), cond(field(legSeries('A')), 'LT', num(25_000))) }];
+    const r2 = await svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({ targetPct: null, stopPct: null }), capital: null, exits: both });
+    expect(r2.trades[0]).toMatchObject({ exitReason: 'SQUARE_OFF' });
+  });
+
+  it('exit rules are checked like the strategy’s own conditions', async () => {
+    const bad = [{ group: null, when: cond(field(legSeries('D')), 'GT', num(1)) }];
+    await expect(svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}), capital: null, exits: bad })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^Exit rule: /) });
+    await expect(svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}), capital: null, exits: [{ group: 'nope', when: cond(field(legSeries('A')), 'GT', num(1)) }] })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('N-candle low / high: the previous N candles, not the current one', () => {
+    const c = (low: number, high: number) => ({ time: 0, open: low, high, low, close: low, volume: 0 });
+    const candles = [c(10, 20), c(8, 22), c(9, 19), c(7, 25), c(12, 18)];
+    const range = (output: 'low' | 'high') => indicatorValues(candles as never, { ...(ind(legSeries('A'), 'RANGE', { period: 3 }) as Parameters<typeof indicatorValues>[1]), output });
+    expect(range('low')).toEqual([undefined, undefined, undefined, 8, 7]);
+    expect(range('high')).toEqual([undefined, undefined, undefined, 22, 25]);
   });
 
   it('refuses a missing strategy or a reversed period', async () => {

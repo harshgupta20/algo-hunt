@@ -10,9 +10,9 @@
  */
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Download, FlaskConical } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, FlaskConical, LogOut, Plus, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
-import type { BacktestResult, ConnectionConfig, PaperPlan } from '@/shared/v2';
+import type { BacktestResult, ConnectionConfig, ExprNode, GroupNode, PaperPlan, PaperRule, StrategyDefinition } from '@/shared/v2';
 import { BACKTEST_DEFAULT_CAPITAL, COMPARE_MAX_DAYS, EXPIRY_MODES, TIMEFRAME, defaultPaperPlan, paperGroups, resolveRules } from '@/shared/v2';
 import { InfoTip, Tooltip } from '../../components/Tooltip';
 import { EmptyState, StatCard } from '../../components/ui';
@@ -23,6 +23,8 @@ import { daysAgo, istStampIso, istToday } from '../format';
 import { H } from '../help';
 import { ProductPicker } from '../ProductPicker';
 import { PaperRulesEditor } from '../strategies/PaperPlanEditor';
+import { ExpressionEditor } from '../strategies/ExpressionEditor';
+import { indicatorOperand, legSeries, newGroup } from '../strategies/defaults';
 import { Sparkline } from '../paper/charts';
 import { inr, pct, pnlClass, signedInr } from '../paper/money';
 import { PaperTermsFields } from '../paper/PaperFields';
@@ -31,6 +33,97 @@ import { LoadMore } from '../LoadMore';
 
 const DAY = 86_400_000;
 const spanDays = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / DAY) + 1;
+
+// ---- exit rules ----------------------------------------------------------------------------------
+
+const ruleKey = (r: Pick<PaperRule, 'group'>) => r.group ?? '*';
+const uid = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `x${Math.random().toString(36).slice(2)}`);
+
+/** The trader's usual exits, on the traded contract (mirrored for a sell). */
+function quickExit(kind: 'rsi' | 'ma' | 'low', rule: PaperRule, def: StrategyDefinition): ExprNode {
+  const s = legSeries(rule.leg!, def.evaluation.triggerTimeframe);
+  const sell = rule.side === 'SELL';
+  const close = { kind: 'FIELD' as const, series: s, field: 'close' as const };
+  if (kind === 'rsi') return { type: 'CONDITION', id: uid(), left: indicatorOperand(s, 'RSI'), operator: sell ? 'CROSSED_ABOVE' : 'CROSSED_BELOW', right: { kind: 'CONSTANT', value: sell ? 60 : 40 } };
+  if (kind === 'ma') return { type: 'CONDITION', id: uid(), left: close, operator: sell ? 'CROSSED_ABOVE' : 'CROSSED_BELOW', right: indicatorOperand(s, 'SMA') };
+  return { type: 'CONDITION', id: uid(), left: close, operator: sell ? 'CROSSED_ABOVE' : 'CROSSED_BELOW', right: { ...indicatorOperand(s, 'RANGE'), output: sell ? 'high' : 'low' } };
+}
+
+/** Exit rules per trade rule: an AND / OR condition tree (the strategy editor's) that closes those trades. */
+function ExitRulesEditor({ def, rules, exits, onChange }: { def: StrategyDefinition; rules: PaperRule[]; exits: Record<string, GroupNode>; onChange: (e: Record<string, GroupNode>) => void }) {
+  const groups = paperGroups(def);
+  const label = (r: PaperRule) => (r.group === null ? 'Every trade' : `${groups.find((g) => g.id === r.group)?.label ?? 'Group'} trades`);
+  const set = (key: string, g: GroupNode | null) => {
+    const next = { ...exits };
+    if (g) next[key] = g;
+    else delete next[key];
+    onChange(next);
+  };
+  const traded = rules.filter((r) => r.leg);
+  if (!traded.length) return null;
+  return (
+    <div className="rounded-lg border border-ink-700/60 bg-ink-950/30 p-3">
+      <p className="mb-2 flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+        Exit rules — close a trade when… <InfoTip content={H.backtest.exitRules} />
+      </p>
+      <div className="flex flex-col gap-3">
+        {traded.map((r) => {
+          const key = ruleKey(r);
+          const tree = exits[key];
+          const leg = def.legs.find((l) => l.id === r.leg);
+          const quick = (
+            <span className="flex flex-wrap gap-1.5">
+              {(
+                [
+                  ['rsi', 'RSI turns', H.backtest.exitRsi],
+                  ['ma', 'Price crosses SMA', H.backtest.exitMa],
+                  ['low', r.side === 'SELL' ? '3-candle high' : '3-candle low', H.backtest.exitLow],
+                ] as const
+              ).map(([kind, text, help]) => (
+                <Tooltip key={kind} content={help}>
+                  <button type="button" className="btn-ghost py-0.5 text-[11px]" onClick={() => set(key, { ...(tree ?? newGroup('OR')), children: [...(tree?.children ?? []), quickExit(kind, r, def)] })}>
+                    <Plus className="w-3 h-3" /> {text}
+                  </button>
+                </Tooltip>
+              ))}
+            </span>
+          );
+          return (
+            <div key={key} className="flex flex-col gap-2 rounded-lg border border-ink-700 bg-ink-950/40 px-2.5 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-slate-200">{label(r)}</span>
+                <span className="text-[11px] text-slate-500">
+                  {r.side === 'SELL' ? 'sell' : 'buy'} {leg ? `${r.leg} · ${leg.kind}` : r.leg}
+                </span>
+                {tree ? (
+                  <Tooltip content={H.backtest.exitRemove} className="ml-auto">
+                    <button type="button" className="btn-ghost py-0.5 text-[11px] text-slate-400" onClick={() => set(key, null)}>
+                      <Trash2 className="w-3 h-3" /> No exit rule
+                    </button>
+                  </Tooltip>
+                ) : (
+                  <Tooltip content={H.backtest.exitAdd} className="ml-auto">
+                    <button type="button" className="btn-ghost py-0.5 text-[11px]" onClick={() => set(key, newGroup('OR', [quickExit('rsi', r, def)]))}>
+                      <LogOut className="w-3 h-3" /> Add exit rule
+                    </button>
+                  </Tooltip>
+                )}
+              </div>
+              {tree ? (
+                <>
+                  <ExpressionEditor expression={tree} onChange={(root) => set(key, root as GroupNode)} defaultSeries={legSeries(r.leg!, def.evaluation.triggerTimeframe)} legs={def.legs} />
+                  {quick}
+                </>
+              ) : (
+                <span className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">Or start from: {quick}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 /** What to change when alerts were skipped for this reason. */
 function skipHint(reason: string): string | null {
@@ -302,6 +395,7 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
   const [shift, setShift] = useState(0);
   const [trigger, setTrigger] = useState<'ON_TRANSITION' | 'WHILE_TRUE'>('ON_TRANSITION');
   const [result, setResult] = useState<BacktestResult | null>(null);
+  const [exits, setExits] = useState<Record<string, GroupNode>>({});
   useEffect(() => {
     if (initialStrategyId) setStrategyId(initialStrategyId);
   }, [initialStrategyId]);
@@ -315,6 +409,7 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
     if (!def) return setPlan(null);
     const saved = settings.data?.plans[strategyId];
     setPlan(saved ? { ...saved, rules: resolveRules(def, saved.rules) } : defaultPaperPlan(def));
+    setExits({});
   }, [strategyId, def, settings.data]);
   const names = useMemo(() => new Map((strategies.data ?? []).map((s) => [s.id, s.name])), [strategies.data]);
   const span = spanDays(range.from, range.to);
@@ -322,7 +417,12 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
   const reversed = range.from > range.to;
 
   const run = useMutation({
-    mutationFn: () => v2Api.backtest({ strategyId, products, from: range.from, to: range.to, plan: plan!, capital, expiry, strikeShift: shift, trigger }),
+    mutationFn: () => {
+      // Exit rules of the groups that still trade (a group switched to "don't trade" drops its rule).
+      const rules = resolveRules(def!, plan!.rules);
+      const sent = rules.filter((r) => r.leg && exits[ruleKey(r)]?.children.length).map((r) => ({ group: r.group, when: exits[ruleKey(r)]! }));
+      return v2Api.backtest({ strategyId, products, from: range.from, to: range.to, plan: plan!, capital, expiry, strikeShift: shift, trigger, exits: sent });
+    },
     onSuccess: setResult,
   });
 
@@ -395,6 +495,8 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
                   <PaperRulesEditor def={def} rules={resolveRules(def, plan.rules)} onChange={(rules) => setPlan({ ...plan, rules })} />
                 </div>
               </div>
+
+              <ExitRulesEditor def={def} rules={resolveRules(def, plan.rules)} exits={exits} onChange={setExits} />
 
               <div className="flex flex-wrap items-end gap-5">
                 <Cell label={hasOptions ? 'Option expiry' : 'Futures expiry'} help={H.connection.expiry}>

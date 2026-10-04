@@ -9,6 +9,7 @@
  */
 import type {
   AlertPolicy,
+  ExprNode,
   CompareProductResult,
   CompareResult,
   ConditionTrace,
@@ -24,7 +25,7 @@ import type {
   V2Product,
   V2Unit,
 } from '@/shared/v2';
-import { COMPARE_MAX_DAYS, TIMEFRAME } from '@/shared/v2';
+import { COMPARE_MAX_DAYS, TIMEFRAME, TIMEFRAMES } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { decide, initialState } from '../alerts/alertPolicy';
 import { calendars, dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
@@ -73,6 +74,15 @@ export interface CompareRequest {
   strikeShift?: number;
   trigger?: AlertPolicy['trigger'];
   cooldownMinutes?: number | null;
+  /** Backtest exit conditions: for each, the candle closes (ms) where it is true are returned in `exits[key]`. */
+  exits?: Array<{ key: string; when: ExprNode }>;
+}
+
+/** An exit condition as a definition of its own: same legs, checked on its smallest timeframe's candle closes. */
+export function exitDefinition(d: StrategyDefinition, when: ExprNode): StrategyDefinition {
+  const tfs = seriesOf({ ...d, expression: when }).map((s) => s.timeframe);
+  const smallest = TIMEFRAMES.find((t) => tfs.includes(t.key))?.key ?? d.evaluation.triggerTimeframe;
+  return { ...d, expression: when, evaluation: { mode: 'COMPLETED_CANDLE', triggerTimeframe: smallest } };
 }
 
 export const COMPARE_MAX_PRODUCTS = 20;
@@ -276,6 +286,8 @@ export class V2Tools {
         r.unit = unit;
         if (unit.baseStrike !== null) r.notes.push(`Option legs fixed at the strikes around ATM ${unit.atmStrike} (start of the period), expiry ${unit.expiry}`);
         await fetchUnits(candles, d, [unit], r.errors);
+        const exits = (req.exits ?? []).map((x) => ({ key: x.key, def: exitDefinition(d, x.when) }));
+        for (const x of exits) await fetchUnits(candles, x.def, [unit], r.errors);
         requests += candles.requests;
 
         const memo = new Map<string, unknown>();
@@ -294,6 +306,20 @@ export class V2Tools {
           state = { ...decision.next, lastEvaluatedCandle: e.triggerCandle };
           if (decision.outcome) r.alerts.push({ candleTime: e.triggerCandle, prices: e.prices, trace: e.trace });
           prev = e.result;
+        }
+        // Exit conditions: every close of their own timeframe where they are true.
+        if (exits.length) {
+          r.exits = {};
+          for (const x of exits) {
+            const tf = x.def.evaluation.triggerTimeframe;
+            const xbase = { ...base, definition: x.def, memo: new Map<string, unknown>() };
+            const times: number[] = [];
+            for (const open of triggerOpens(cal, req.from, req.to, tf, until)) {
+              const at = cal.candleClose(open, tf);
+              if (evaluateUnit({ ...xbase, triggerOpenMs: open, at }).result === 'TRUE') times.push(at);
+            }
+            r.exits[x.key] = times;
+          }
         }
         if (r.candles && r.decided < r.candles) {
           const unknown = r.candles - r.decided;

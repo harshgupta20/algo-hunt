@@ -75,6 +75,7 @@ The first time, run `npm run live -- --check`. It connects to Kite, prints a few
      ```
    - **Need a leg you haven't added?** Pick **+ Add FUT / CE ATM / PE ATM / SPOT leg** at the bottom of any Leg list. The leg is added to section 1 and used by that condition. With only one leg, a hint above the conditions offers the same buttons.
    - **Bollinger Bands and moving averages** are price levels, so you never type a number for them. Choosing Bollinger **Upper / Middle / Lower** (or SMA, EMA, the Supertrend line) makes the condition read *Close crossed above Bollinger Upper* automatically.
+   - **N-candle low / high** is the lowest low (or highest high) of the previous N candles, not counting the current one: *Close crossed below Lowest low (3 candles)* = the 3-candle low is broken; *Close crossed above Highest high (20 candles)* = a 20-candle breakout.
      - **%B** and **Bandwidth %** are readings, so they get a number (%B 1 = on the upper band, Bandwidth 2 = a tight squeeze).
      - Older conditions like "Bollinger Upper crossed above 60" show a one-click **Compare Close with it** fix.
    - Combine conditions with AND / OR groups and NOT. Name a group (e.g. "Future conditions", "Option conditions") so the preview and alerts read clearly.
@@ -119,6 +120,14 @@ strategies** alert at the 15:30 close, after the square-off time: switch **Squar
 
 Limits (as Compare): contracts are the ones listed today, with option strikes fixed around ATM at the start of the
 period; Kite has no candles for expired contracts.
+
+**Exit rules** (Backtest only for now): under the trade settings, each group that trades can get its own
+**Exit when…** conditions — the same builder as the strategy's (any leg, timeframe and indicator; AND / OR).
+Quick buttons add the usual ones on the traded contract: **RSI turns** (crossed below 40), **Price crosses SMA**
+(close crossed below SMA 20) and **3-candle low** (close crossed below the lowest low of the previous 3 candles; for a
+sell they are mirrored). They're checked at every close of the smallest timeframe used; the trade exits at that
+close (*Exit rule* in the trade list). Target, stop-loss, square-off and the other exits still apply — whichever
+comes first. The results' notes repeat the rules in words.
 
 MCX quantities are in the exchange's units: one CRUDEOIL lot is 100 barrels, Gold Mini 100 g (priced per 10 g),
 Copper 2,500 kg, … — so a single lot often needs more than the cash per trade (shown *over budget*).

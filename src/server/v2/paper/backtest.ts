@@ -6,19 +6,19 @@
  *   entry     the leg's close on the alert's trigger candle ± slippage; whole lots for the cash per trade
  *   money     a trade opens only if the starting capital + realised P&L − money already in use covers it
  *   exits     stop-loss / target inside each minute (both in one minute → the stop; a gap past the stop fills
- *             at the minute's open), the other group firing, the day's square-off, expiry, or the end of the
- *             test (still open → closed at the last price)
+ *             at the minute's open), an exit rule coming true (at that candle's close), the other group firing,
+ *             the day's square-off, expiry, or the end of the test (still open → closed at the last price)
  *   one open position per product (Compare tests one strike position)
  *
  * Limits (as Compare): contracts are those listed today with their strikes fixed at the start of the period,
  * and Kite has no candles for expired contracts.
  */
 import type { BacktestProduct, BacktestRequest, BacktestResult, BacktestSkip, PaperExitReason, PaperTrade, StrategyDefinition, V2Instrument, V2Strategy, V2Unit } from '@/shared/v2';
-import { resolveRules } from '@/shared/v2';
+import { nodeText, paperGroups, resolveRules } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { calendars, dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
 import type { V2DataProvider } from '../data/DataProvider';
-import type { V2Tools } from '../debug/tools';
+import { exitDefinition, type V2Tools } from '../debug/tools';
 import type { RawCandle } from '../engine/candles';
 import type { V2Store } from '../persistence/V2Store';
 import { buildTrade, exitDeadline, firedGroupOf, settle, squareOffAt } from './PaperTrader';
@@ -45,7 +45,12 @@ interface Open {
   i: number;
   lastClose: number;
   deadline: { at: number; reason: 'SQUARE_OFF' | 'EXPIRY' } | null;
+  /** Candle closes after entry where the trade's exit rule is true (ascending). */
+  exits: number[];
 }
+
+/** The rule's key in the exit-rule list (as sent to Compare). */
+const exitKey = (group: string | null) => group ?? '*';
 
 interface AlertEvent {
   at: number;
@@ -60,7 +65,9 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
   const tf = d.evaluation.triggerTimeframe;
   const now = deps.now();
   const ids = [...new Set(req.products)];
-  const cmp = await deps.tools.compare(d, { products: ids, from: req.from, to: req.to, expiry: req.expiry, strikeShift: req.strikeShift, trigger: req.trigger, cooldownMinutes: req.cooldownMinutes ?? null });
+  const exitRules = (req.exits ?? []).map((x) => ({ key: exitKey(x.group), when: x.when }));
+  const cmp = await deps.tools.compare(d, { products: ids, from: req.from, to: req.to, expiry: req.expiry, strikeShift: req.strikeShift, trigger: req.trigger, cooldownMinutes: req.cooldownMinutes ?? null, exits: exitRules });
+  const exitTimes = new Map(cmp.products.map((r) => [r.productId, r.exits ?? {}]));
   const cals = calendars(await deps.store.calendar.list());
   const products = new Map((await deps.store.products.list({ ids })).map((p) => [p.id, p]));
   const plan = { ...req.plan, enabled: true, rules: resolveRules(d, req.plan.rules) };
@@ -109,6 +116,13 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
     realized += s.netPnl;
   };
 
+  /** The next timed exit: the square-off / expiry deadline or the exit rule, whichever is first. */
+  const due = (o: Open): { at: number; reason: PaperExitReason } | null => {
+    const rule = o.exits[0];
+    if (rule !== undefined && (!o.deadline || rule < o.deadline.at)) return { at: rule, reason: 'EXIT_RULE' };
+    return o.deadline;
+  };
+
   /** Walk a trade's minutes that closed by `until`; true when it closed. */
   const advance = (o: Open, until: number): boolean => {
     const t = o.t;
@@ -117,8 +131,9 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
       const c = o.candles[o.i]!;
       const t0 = c.time * 1000;
       if (t0 + MINUTE > until) break;
-      if (o.deadline && t0 >= o.deadline.at) {
-        finish(o, o.lastClose, o.deadline.reason, o.deadline.at);
+      const next = due(o);
+      if (next && t0 >= next.at) {
+        finish(o, o.lastClose, next.reason, next.at);
         return true;
       }
       const hitStop = t.stopPrice !== null && (buy ? c.low <= t.stopPrice : c.high >= t.stopPrice);
@@ -135,8 +150,9 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
       o.lastClose = c.close;
       o.i++;
     }
-    if (o.deadline && until > o.deadline.at && (o.i >= o.candles.length || o.candles[o.i]!.time * 1000 >= o.deadline.at)) {
-      finish(o, o.lastClose, o.deadline.reason, o.deadline.at);
+    const next = due(o);
+    if (next && until > next.at && (o.i >= o.candles.length || o.candles[o.i]!.time * 1000 >= next.at)) {
+      finish(o, o.lastClose, next.reason, next.at);
       return true;
     }
     return false;
@@ -205,7 +221,8 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
     }
     const t: PaperTrade = { ...draft, id: `bt-${++n}` };
     const first = candles.findIndex((c) => c.time * 1000 >= e.at);
-    open.set(slot, { t, candles, i: first < 0 ? candles.length : first, lastClose: ref, deadline: exitDeadline(t, cal) });
+    const exits = (exitTimes.get(e.productId)?.[exitKey(rule.group)] ?? []).filter((x) => x > e.at);
+    open.set(slot, { t, candles, i: first < 0 ? candles.length : first, lastClose: ref, deadline: exitDeadline(t, cal), exits });
     inUse += t.capitalUsed;
   }
   // Play out what's still open, then close the rest at the last price.
@@ -255,6 +272,10 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
         ? ['Daily / weekly candles close after the day’s square-off time, so with “Square off daily” on no alert can be traded — switch it off to hold positions overnight.']
         : []),
       'Each alert is entered at its trigger candle’s close (± slippage) and exited on the traded contract’s 1-minute candles; if the target and stop-loss fall in the same minute the stop counts.',
+      ...(req.exits ?? []).map((x) => {
+        const group = paperGroups(d).find((g) => g.id === x.group)?.label;
+        return `Exit rule${group ? ` (${group})` : ''}: ${nodeText(x.when, d.legs)} — checked at each ${exitDefinition(d, x.when).evaluation.triggerTimeframe} candle close; the trade exits at that close.`;
+      }),
       ...cmp.notes.map((x) => x.replace('Alerts only (no trade scoring). ', '')),
     ],
   };

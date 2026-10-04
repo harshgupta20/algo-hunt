@@ -107,6 +107,7 @@ const REASON_TEXT: Record<PaperExitReason, string> = {
   EXPIRY: 'expiry',
   MANUAL: 'closed by hand',
   END: 'end of the backtest',
+  EXIT_RULE: 'exit rule',
 };
 
 /** A new open trade for `ref` (the market price): whole lots for the cash per trade (≥ 1), slippage, target / stop. */

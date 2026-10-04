@@ -6,7 +6,19 @@
 import { z } from 'zod';
 import type { PaperPlan, PaperStats, PaperSummary, PaperTrade } from './paper';
 import { paperPlanSchema } from './paper';
-import type { ExpirySelector, Timeframe } from './types';
+import { exprNode } from './schema';
+import type { ExprNode, ExpirySelector, Timeframe } from './types';
+
+/**
+ * Close a trade when a condition comes true — e.g. "RSI crossed below 40 OR close crossed below the 3-candle low".
+ * One per trade rule (`group` as in PaperRule; null = the strategy without groups). Checked at every close of the
+ * smallest timeframe the condition uses; the trade exits at that candle's close (target, stop-loss, square-off and
+ * the rest still apply, whichever comes first).
+ */
+export interface BacktestExitRule {
+  group: string | null;
+  when: ExprNode;
+}
 
 export interface BacktestRequest {
   strategyId: string;
@@ -22,6 +34,8 @@ export interface BacktestRequest {
   strikeShift?: number;
   trigger?: 'ON_TRANSITION' | 'WHILE_TRUE';
   cooldownMinutes?: number | null;
+  /** Exit conditions per trade rule (none = target / stop-loss / square-off … only). */
+  exits?: BacktestExitRule[];
 }
 
 export interface BacktestSkip {
@@ -80,6 +94,7 @@ export const backtestRequestSchema = z.object({
   strikeShift: z.number().int().min(-10).max(10).optional(),
   trigger: z.enum(['ON_TRANSITION', 'WHILE_TRUE']).optional(),
   cooldownMinutes: z.number().min(0).max(1440).nullable().optional(),
+  exits: z.array(z.object({ group: z.string().nullable(), when: exprNode })).max(8).optional(),
 }) as z.ZodType<BacktestRequest>;
 
 export const BACKTEST_DEFAULT_CAPITAL = 100_000;

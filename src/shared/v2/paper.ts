@@ -9,7 +9,8 @@ import type { ExprNode, LegDef, LegId, StrategyDefinition, V2Instrument } from '
 
 export type PaperSide = 'BUY' | 'SELL';
 /** END: a backtest ended with the trade still open (closed at the last price). */
-export type PaperExitReason = 'TARGET' | 'STOP' | 'SQUARE_OFF' | 'OPPOSITE' | 'EXPIRY' | 'MANUAL' | 'END';
+/** EXIT_RULE: a backtest exit condition (BacktestExitRule) came true. */
+export type PaperExitReason = 'TARGET' | 'STOP' | 'SQUARE_OFF' | 'OPPOSITE' | 'EXPIRY' | 'MANUAL' | 'END' | 'EXIT_RULE';
 
 /** What to trade when a group (or the whole strategy) fires. `leg: null` = don't trade that group. */
 export interface PaperRule {

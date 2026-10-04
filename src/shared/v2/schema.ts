@@ -41,7 +41,7 @@ const patternId = z.enum([
   'THREE_WHITE_SOLDIERS', 'THREE_BLACK_CROWS', 'BULLISH_MARUBOZU', 'BEARISH_MARUBOZU', 'ANY_BULLISH', 'ANY_BEARISH',
 ]);
 
-const exprNode: z.ZodType<ExprNode> = z.lazy(() =>
+export const exprNode: z.ZodType<ExprNode> = z.lazy(() =>
   z.union([
     z.object({ type: z.enum(['AND', 'OR']), id: z.string().min(1), label: z.string().optional(), children: z.array(exprNode) }),
     z.object({ type: z.literal('NOT'), id: z.string().min(1), child: exprNode }),

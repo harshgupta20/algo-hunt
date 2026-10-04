@@ -297,6 +297,19 @@ export const INDICATORS: IndicatorSpec[] = [
     requiredHistory: (p) => (p.period ?? 10) + 1,
     description: 'ATR-based trailing line; direction +1 uptrend, −1 downtrend.',
   },
+  {
+    id: 'RANGE',
+    label: 'N-candle low / high',
+    params: [{ name: 'period', label: 'Candles', default: 3, min: 1, max: 200, integer: true }],
+    outputs: [
+      { value: 'low', label: 'Lowest low' },
+      { value: 'high', label: 'Highest high' },
+    ],
+    unit: 'price',
+    requiredHistory: (p) => (p.period ?? 3) + 1,
+    description:
+      'Lowest low (or highest high) of the previous N candles, not counting the current one. “Close crossed below Lowest low (3)” = the 3-candle low is broken; “Close crossed above Highest high (20)” = a 20-candle breakout.',
+  },
 ];
 
 export const INDICATOR: Record<string, IndicatorSpec> = Object.fromEntries(INDICATORS.map((i) => [i.id, i]));

@@ -534,6 +534,8 @@ export interface CompareProductResult {
   candles: number;
   decided: number;
   alerts: CompareAlert[];
+  /** Backtest exit rules: per rule key, the candle-close times (ms) at which the exit condition was true. */
+  exits?: Record<string, number[]>;
   errors: string[];
   notes: string[];
 }

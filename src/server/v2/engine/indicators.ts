@@ -45,6 +45,7 @@ export function indicatorKey(op: IndicatorOperand): string {
 
 /** One value per candle (undefined during warm-up). The multiplier is NOT applied here. */
 export function indicatorValues(candles: Candle[], op: IndicatorOperand): Array<number | undefined> {
+  if (op.indicator === 'RANGE') return rangeValues(candles, Math.max(1, Math.round(op.params.period ?? 3)), outputOf(op) === 'high');
   const lib = LIBRARY[op.indicator];
   if (!lib) throw new Error(`Unknown indicator ${op.indicator}`);
   const spec = INDICATOR[op.indicator]!;
@@ -55,6 +56,16 @@ export function indicatorValues(candles: Candle[], op: IndicatorOperand): Array<
     ind.update(source && source !== 'close' ? { ...c, close: fieldValue(c, source) ?? 0 } : c);
     const v = ind.value();
     return v === undefined || !Number.isFinite(v) ? undefined : v;
+  });
+}
+
+/** Lowest low / highest high of the `n` candles before each candle (the current one excluded). */
+function rangeValues(candles: Candle[], n: number, high: boolean): Array<number | undefined> {
+  return candles.map((_, i) => {
+    if (i < n) return undefined;
+    let v = high ? -Infinity : Infinity;
+    for (let j = i - n; j < i; j++) v = high ? Math.max(v, candles[j]!.high) : Math.min(v, candles[j]!.low);
+    return v;
   });
 }
 
