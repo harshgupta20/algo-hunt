@@ -9,6 +9,7 @@ Kite's own candles.
 
 | Page | What's inside |
 | --- | --- |
+| [market.md](market.md) | **Market — eagle view** (`/market`): every panel, its data sources, refresh rates and limits |
 | [v2-user-guide.md](v2-user-guide.md) | **For the trader:** setup, live alerts on your computer, build a strategy, compare products, connect and switch on, alerts |
 | [v2-architecture.md](v2-architecture.md) | The strategy system: legs, units, evaluation, scanner, **live worker** (streaming + verification), module map, persistence |
 | [architecture.md](architecture.md) | The whole app: components, how alerts are produced, request flow, integrations, authentication, decisions |

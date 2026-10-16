@@ -12,6 +12,10 @@ export const HELP = {
       title: 'V2 — Strategy + Product = Alert',
       body: 'Build a strategy once without choosing a product, then connect it to any NSE index, NSE stock or MCX commodity to get alerts. Compare shows which products the strategy fires on.',
     },
+    market: {
+      title: 'Market — eagle view',
+      body: 'The whole Indian market on one page: indices, breadth, sectors, a map of every Nifty 500 stock, movers, F&O positioning, FII / DII money, the world, news and the results calendar.',
+    },
     settings: { title: 'Settings', body: 'Zerodha Kite connection, theme and desktop notifications.' },
     collapse: { title: 'Collapse sidebar', body: 'Shrink the sidebar to icons for more room. Hover an icon to see where it goes; your choice is remembered in this browser.' },
     expand: { title: 'Expand sidebar', body: 'Show the sidebar with its labels again.' },

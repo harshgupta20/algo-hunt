@@ -48,6 +48,17 @@ db/migrations/         SQL migrations (applied automatically)
 
 ---
 
+## Market — eagle view
+
+**Market** in the sidebar (`/market`) is the daily look at the whole Indian market:
+- indices with their story and breadth;
+- a map of every Nifty 500 stock, plus sectors, themes, styles and rotation;
+- movers, pivots and CPR;
+- F&O positioning (option chain, OI build-up, FII positions);
+- FII / DII money, world markets, tagged news and the results calendar.
+
+It uses your Kite session plus free public data (NSE, Yahoo, news feeds) and stores nothing in the database: [docs/market.md](docs/market.md).
+
 ## For the trader: the Windows app
 
 **Algo-Hunt-Setup.exe** is the `.bat` below as a program. It installs like any software and asks for the settings in

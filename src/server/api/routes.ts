@@ -6,6 +6,7 @@ import type { AppContext } from './context';
 import { Router } from './http';
 import { preferencesController } from './controllers/preferencesController';
 import { kiteController } from './controllers/kiteController';
+import { marketController } from './controllers/marketController';
 import { v2Controller } from './controllers/v2Controller';
 
 export function createRouter(ctx: AppContext): Router {
@@ -80,6 +81,17 @@ export function createRouter(ctx: AppContext): Router {
   const prefs = preferencesController(ctx);
   r.get('/preferences', prefs.get);
   r.put('/preferences', prefs.save);
+
+  // Market eagle view: indices, sectors, stocks, movers, F&O, world, news, calendar (read-only).
+  const market = marketController(ctx);
+  r.get('/market/overview', market.overview);
+  r.get('/market/map', market.map);
+  r.get('/market/movers', market.movers);
+  r.get('/market/options', market.options);
+  r.get('/market/global', market.global);
+  r.get('/market/news', market.news);
+  r.get('/market/calendar', market.calendar);
+  r.get('/market/company/:symbol', market.company);
 
   // Kite Connect OAuth: status, login redirect, callback, token submit, logout.
   const kite = kiteController(ctx);

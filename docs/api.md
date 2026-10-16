@@ -147,3 +147,19 @@ Validation failures return `400` with `{ error, issues: [{ path, message, severi
 | --- | --- | --- | --- |
 | GET | `/api/preferences` | — | `{ theme: 'light'\|'dark', soundEnabled, browserNotifications }` |
 | PUT | `/api/preferences` | Full object (all three fields) | Saved object |
+
+### 4.5 Market — eagle view (read-only)
+
+Everything is cached in memory on the server (seconds while NSE is open, minutes when closed); nothing touches the
+database. Shapes: `src/shared/market/types.ts`. Details: [market.md](market.md).
+
+| Method | Path | Query | Response |
+| --- | --- | --- | --- |
+| GET | `/api/market/overview` | — | `MarketOverview`: session, headline indices (+ intraday line), every NSE index, 52-week highs / lows count, FII / DII (latest + history), participant OI (5 days), pivots, index futures premium, source health |
+| GET | `/api/market/map` | `universe` = `nifty50` \| `nifty100` \| `nifty500` (default) \| `midcap150` \| `smallcap250` \| `fno` | `MarketMap`: `source` (`kite` \| `nse`), `note`, `stocks[]` (price, %, OHLC, value, volume, sector, index membership, F&O, circuit, your alerts today) |
+| GET | `/api/market/movers` | — | `MoversData`: 52-week highs / lows, volume shockers, most active, OI build-up, bulk / block deals, pre-open (09:00–09:15 only) |
+| GET | `/api/market/options` | — | `OptionsData`: Nifty / Bank Nifty chains (PCR, max pain, walls, straddle, OI by strike) — `available: false` + `reason` without a Kite session |
+| GET | `/api/market/global` | — | `GlobalData`: world indices, commodities, currencies, rates, crypto |
+| GET | `/api/market/news` | — | `NewsData`: up to 240 headlines, newest first, tagged with symbols and sectors |
+| GET | `/api/market/calendar` | — | `CalendarData`: events (next 21 days), corporate actions, latest announcements |
+| GET | `/api/market/company/:symbol` | — | `CompanyData`: quote, 52-week range, intraday line, news (7 days), NSE filings (30 days), events — `400` for a malformed symbol |

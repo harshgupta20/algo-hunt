@@ -18,6 +18,7 @@ import type {
   StrategyDefinition,
   V2Alert,
   V2Connection,
+  V2Instrument,
   V2Product,
   V2Settings,
   V2Strategy,
@@ -162,6 +163,11 @@ export class V2Service {
   async productCounts(f: Pick<ProductFilters, 'search' | 'market' | 'needs'>) {
     const byKind = await this.deps.store.products.countByKind(f);
     return { ...byKind, total: byKind.INDEX + byKind.STOCK + byKind.COMMODITY };
+  }
+
+  /** A product's contracts (spot, futures, every option) — the market view's option chain. */
+  instrumentsFor(productId: string): Promise<V2Instrument[]> {
+    return this.deps.store.instruments.forProduct(productId);
   }
 
   async product(id: string): Promise<V2Product> {

@@ -152,3 +152,50 @@ export function EmptyState({ title, hint }: { title: string; hint?: string }) {
     </div>
   );
 }
+
+// ---- panels & toggles (V2 and the market view) ----------------------------------------------------
+
+export function Section({ step, title, help, children, actions }: { step?: string; title: string; help: TooltipContent; children: ReactNode; actions?: ReactNode }) {
+  return (
+    <section className="card p-4">
+      <div className="flex items-center gap-2 mb-3">
+        {step && <span className="text-[10px] font-semibold uppercase tracking-widest text-accent-soft">{step}</span>}
+        <h3 className="text-sm font-semibold text-slate-200">{title}</h3>
+        <InfoTip content={help} />
+        {actions && <div className="ml-auto flex items-center gap-2">{actions}</div>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+export function Segmented<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: Array<{ value: T; label: ReactNode; help: TooltipContent }>; label: string }) {
+  return (
+    <div role="radiogroup" aria-label={label} className="flex rounded-lg overflow-hidden border border-ink-700 text-xs">
+      {options.map((o) => (
+        <Tooltip key={o.value} content={o.help} side="bottom">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={o.value === value}
+            onClick={() => onChange(o.value)}
+            className={clsx('inline-flex items-center gap-1 px-2.5 py-1', o.value === value ? 'bg-accent text-white' : 'bg-ink-800 text-slate-400 hover:text-slate-200')}
+          >
+            {o.label}
+          </button>
+        </Tooltip>
+      ))}
+    </div>
+  );
+}
+
+export function Toggle({ checked, onChange, label, help, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: string; help: TooltipContent; disabled?: boolean }) {
+  return (
+    <Tooltip content={help}>
+      <label className={clsx('inline-flex items-center gap-1.5 text-xs cursor-pointer', disabled ? 'text-slate-500' : 'text-slate-300')}>
+        <input type="checkbox" className="accent-[rgb(var(--accent))]" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+        {label}
+      </label>
+    </Tooltip>
+  );
+}
