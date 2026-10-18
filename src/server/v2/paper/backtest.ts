@@ -10,13 +10,16 @@
  *             the day's square-off, expiry, or the end of the test (still open → closed at the last price)
  *   one open position per product (Compare tests one strike position)
  *
- * Limits (as Compare): contracts are those listed today with their strikes fixed at the start of the period,
- * and Kite has no candles for expired contracts.
+ * Any number of products and any period: candles come product by product through Kite's request queue (the
+ * cost is only waiting), through the candle cache so a re-run is quick; a job reports progress and can cancel.
+ * Contracts are those listed today with their strikes fixed at the start of the period, and Kite has no
+ * candles for expired contracts (each product notes where its data starts).
  */
-import type { BacktestProduct, BacktestRequest, BacktestResult, BacktestSkip, PaperExitReason, PaperTrade, StrategyDefinition, V2Instrument, V2Strategy, V2Unit } from '@/shared/v2';
+import type { BacktestJob, BacktestProduct, BacktestRequest, BacktestResult, BacktestSkip, CompareProductResult, PaperExitReason, PaperTrade, StrategyDefinition, V2Instrument, V2Strategy, V2Unit } from '@/shared/v2';
 import { nodeText, paperGroups, resolveRules } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { calendars, dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
+import { CandleCache, type CandleStats } from '../data/CandleCache';
 import type { V2DataProvider } from '../data/DataProvider';
 import { exitDefinition, type V2Tools } from '../debug/tools';
 import type { RawCandle } from '../engine/candles';
@@ -36,6 +39,16 @@ export interface BacktestDeps {
   provider: V2DataProvider;
   tools: V2Tools;
   now: () => number;
+  /** Candles kept between runs (default: only within this run). */
+  cache?: CandleCache;
+}
+
+/** A run as a job: progress, cancelling and the Kite / cache counts. */
+export interface BacktestRun {
+  /** Throws when the job was cancelled. */
+  checkpoint(): void;
+  progress(p: Pick<BacktestJob, 'phase' | 'done' | 'total' | 'current'>): void;
+  stats: CandleStats;
 }
 
 interface Open {
@@ -60,20 +73,65 @@ interface AlertEvent {
   trace: Parameters<typeof firedGroupOf>[1];
 }
 
-export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req: BacktestRequest): Promise<BacktestResult> {
+export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req: BacktestRequest, run?: BacktestRun): Promise<BacktestResult> {
   const d: StrategyDefinition = strategy.definition;
   const tf = d.evaluation.triggerTimeframe;
   const now = deps.now();
   const ids = [...new Set(req.products)];
   const exitRules = (req.exits ?? []).map((x) => ({ key: exitKey(x.group), when: x.when }));
-  const cmp = await deps.tools.compare(d, { products: ids, from: req.from, to: req.to, expiry: req.expiry, strikeShift: req.strikeShift, trigger: req.trigger, cooldownMinutes: req.cooldownMinutes ?? null, exits: exitRules });
-  const exitTimes = new Map(cmp.products.map((r) => [r.productId, r.exits ?? {}]));
   const cals = calendars(await deps.store.calendar.list());
   const products = new Map((await deps.store.products.list({ ids })).map((p) => [p.id, p]));
   const plan = { ...req.plan, enabled: true, rules: resolveRules(d, req.plan.rules) };
   const end = Math.min(now, dateStartMs(addDays(req.to, 1)));
-  let requests = cmp.requests;
   const calOf = (productId: string): MarketCalendar => cals[products.get(productId)?.market ?? 'NSE'];
+  const symbolOf = (productId: string) => products.get(productId)?.symbol ?? productId.split(':')[1] ?? productId;
+  const stats = run?.stats ?? { fetched: 0, cached: 0 };
+  const provider = (deps.cache ?? new CandleCache()).wrap(deps.provider, cals, deps.now, stats);
+  /** The group an alert fired and the trade rule it follows (its group's, else the first). */
+  const ruleFor = (trace: AlertEvent['trace']) => {
+    const fired = firedGroupOf(d, trace);
+    return { fired, rule: plan.rules.find((r) => r.group === (fired?.id ?? null)) ?? plan.rules[0] };
+  };
+
+  // 1-minute candles of the contracts a product's alerts trade, from its first alert — fetched as soon as its
+  // alerts are found, so the job's progress is simply products done.
+  const errors = new Map<string, string[]>();
+  const pushError = (productId: string, e: string) => errors.set(productId, [...(errors.get(productId) ?? []), e]);
+  const minutes = new Map<number, RawCandle[]>();
+  const fetchMinutes = async (r: CompareProductResult) => {
+    if (!r.unit) return;
+    const traded = new Map<number, { inst: V2Instrument; from: string }>();
+    for (const a of r.alerts) {
+      const leg = ruleFor(a.trace).rule?.leg;
+      const inst = leg ? r.unit.legs[leg] : null;
+      if (inst && !traded.has(inst.token)) traded.set(inst.token, { inst, from: istDate(a.candleTime * 1000) });
+    }
+    for (const { inst, from } of traded.values()) {
+      run?.checkpoint();
+      try {
+        const rows = await provider.getHistoricalCandles({ instrument: inst, interval: '1m', from, to: req.to });
+        minutes.set(inst.token, [...rows].sort((a, b) => a.time - b.time));
+        if (!rows.length) pushError(r.productId, `No 1-minute candles for ${inst.symbol} from ${from} (its first alert) — it didn’t trade, so its trades close only at square-off / the end of the test`);
+      } catch (err) {
+        pushError(r.productId, `1-minute candles for ${inst.symbol}: ${msg(err)}`);
+      }
+    }
+  };
+
+  const cmp = await deps.tools.compare(
+    d,
+    { products: ids, from: req.from, to: req.to, expiry: req.expiry, strikeShift: req.strikeShift, trigger: req.trigger, cooldownMinutes: req.cooldownMinutes ?? null, exits: exitRules },
+    {
+      provider,
+      checkpoint: (i, id) => {
+        run?.checkpoint();
+        run?.progress({ phase: 'CANDLES', done: i, total: ids.length, current: symbolOf(id) });
+      },
+      onProduct: fetchMinutes,
+    },
+  );
+  run?.progress({ phase: 'TRADES', done: ids.length, total: ids.length, current: null });
+  const exitTimes = new Map(cmp.products.map((r) => [r.productId, r.exits ?? {}]));
 
   // Alerts in time order, across products (money is shared).
   const events: AlertEvent[] = [];
@@ -82,23 +140,6 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
     for (const a of r.alerts) events.push({ at: calOf(r.productId).candleClose(a.candleTime * 1000, tf), productId: r.productId, unit: r.unit, prices: a.prices, trace: a.trace });
   }
   events.sort((a, b) => a.at - b.at);
-
-  // 1-minute candles of every contract a rule trades.
-  const errors = new Map<string, string[]>();
-  const pushError = (productId: string, e: string) => errors.set(productId, [...(errors.get(productId) ?? []), e]);
-  const traded = new Map<number, { inst: V2Instrument; productId: string }>();
-  for (const r of cmp.products) for (const rule of plan.rules) if (r.unit && rule.leg && r.unit.legs[rule.leg]) traded.set(r.unit.legs[rule.leg]!.token, { inst: r.unit.legs[rule.leg]!, productId: r.productId });
-  const minutes = new Map<number, RawCandle[]>();
-  for (const { inst, productId } of traded.values()) {
-    try {
-      const rows = await deps.provider.getHistoricalCandles({ instrument: inst, interval: '1m', from: req.from, to: req.to });
-      requests++;
-      minutes.set(inst.token, [...rows].sort((a, b) => a.time - b.time));
-      if (!rows.length) pushError(productId, `No 1-minute candles for ${inst.symbol} in the period — its trades close only at square-off / the end of the test`);
-    } catch (err) {
-      pushError(productId, `1-minute candles for ${inst.symbol}: ${msg(err)}`);
-    }
-  }
 
   const open = new Map<string, Open>();
   const closed: PaperTrade[] = [];
@@ -165,8 +206,7 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
     const product = products.get(e.productId);
     if (!product) continue;
     const cal = calOf(e.productId);
-    const fired = firedGroupOf(d, e.trace);
-    const rule = plan.rules.find((r) => r.group === (fired?.id ?? null)) ?? plan.rules[0];
+    const { fired, rule } = ruleFor(e.trace);
     const slot = e.productId;
     const cur = open.get(slot);
     if (cur) {
@@ -234,7 +274,7 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
     const unitContracts = r.unit ? Object.entries(r.unit.legs).map(([leg, i]) => `${leg}: ${i ? i.symbol : 'not listed'}`) : [];
     return {
       productId: r.productId,
-      symbol: products.get(r.productId)?.symbol ?? r.productId.split(':')[1] ?? r.productId,
+      symbol: symbolOf(r.productId),
       name: r.productName,
       alerts: r.alerts.length,
       trades: list.length,
@@ -266,7 +306,7 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
     products: results.sort((a, b) => b.stats.netPnl - a.stats.netPnl),
     trades: [...closed].sort((a, b) => b.entryAt.localeCompare(a.entryAt)),
     skipped,
-    requests,
+    requests: stats.fetched,
     notes: [
       ...(plan.squareOff && (tf === '1d' || tf === '1w')
         ? ['Daily / weekly candles close after the day’s square-off time, so with “Square off daily” on no alert can be traded — switch it off to hold positions overnight.']

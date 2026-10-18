@@ -77,15 +77,47 @@ export interface BacktestResult {
   /** Simulated trades, newest first. */
   trades: PaperTrade[];
   skipped: BacktestSkip[];
+  /** Candle sets fetched from Kite (the rest came from memory — an earlier run's). */
   requests: number;
   notes: string[];
+}
+
+/**
+ * A backtest running in the background (memory only): candles are fetched product by product through Kite's
+ * request queue — any number of products, any period, the cost is only waiting — then every alert is traded.
+ */
+export interface BacktestJob {
+  id: string;
+  strategyId: string;
+  strategyName: string;
+  status: 'RUNNING' | 'DONE' | 'FAILED' | 'CANCELLED';
+  /** Epoch ms. */
+  startedAt: number;
+  finishedAt: number | null;
+  /** CANDLES: fetching candles and finding alerts, product by product. TRADES: trading the alerts minute by minute. */
+  phase: 'CANDLES' | 'TRADES';
+  /** Products finished / in the test. */
+  done: number;
+  total: number;
+  /** Symbol of the product being fetched. */
+  current: string | null;
+  /** Candle sets fetched from Kite so far, and answered from memory (an earlier run's). */
+  fetched: number;
+  cached: number;
+  /** Estimated seconds left (null until the first products finish). */
+  etaSeconds: number | null;
+  error: string | null;
+  /** What was asked — the page restores its form from it. */
+  request: BacktestRequest;
+  /** When DONE. */
+  result?: BacktestResult;
 }
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const backtestRequestSchema = z.object({
   strategyId: z.string().min(1),
-  products: z.array(z.string().min(1)).min(1).max(20),
+  products: z.array(z.string().min(1)).min(1),
   from: isoDate,
   to: isoDate,
   plan: paperPlanSchema,
@@ -99,7 +131,7 @@ export const backtestRequestSchema = z.object({
 
 export const BACKTEST_DEFAULT_CAPITAL = 100_000;
 
-/** Longest Compare / Backtest span (calendar days) per trigger timeframe (Kite candle limits + request time). */
+/** Longest Compare span (calendar days) per trigger timeframe (it answers in one request). Backtests have no limit. */
 export const COMPARE_MAX_DAYS: Record<Timeframe, number> = {
   '1m': 2,
   '3m': 5,

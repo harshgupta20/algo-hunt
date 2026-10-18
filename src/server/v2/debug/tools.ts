@@ -25,7 +25,7 @@ import type {
   V2Product,
   V2Unit,
 } from '@/shared/v2';
-import { COMPARE_MAX_DAYS, TIMEFRAME, TIMEFRAMES } from '@/shared/v2';
+import { COMPARE_MAX_DAYS, TIMEFRAME, TIMEFRAMES, legNameById } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { decide, initialState } from '../alerts/alertPolicy';
 import { calendars, dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
@@ -78,6 +78,16 @@ export interface CompareRequest {
   exits?: Array<{ key: string; when: ExprNode }>;
 }
 
+/** Hooks for a long compare (a backtest job). */
+export interface CompareRun {
+  /** Candles from here instead of the tools' provider (the backtest's cache). */
+  provider?: V2DataProvider;
+  /** Before each product; throws to stop the run. */
+  checkpoint?: (index: number, productId: string) => void;
+  /** When a product is finished, before the next one starts. */
+  onProduct?: (r: CompareProductResult) => Promise<void>;
+}
+
 /** An exit condition as a definition of its own: same legs, checked on its smallest timeframe's candle closes. */
 export function exitDefinition(d: StrategyDefinition, when: ExprNode): StrategyDefinition {
   const tfs = seriesOf({ ...d, expression: when }).map((s) => s.timeframe);
@@ -128,6 +138,23 @@ async function fetchUnits(candles: CandleService, d: StrategyDefinition, units: 
     }
   }
   await Promise.all([...jobs.values()].map((j) => candles.fetchSeries(j.inst, j.tf).catch((err) => errors.push(`${j.inst.symbol}: ${msg(err)}`))));
+}
+
+/** Legs whose contract has no candles until after the period began (Kite has nothing from before it traded). */
+function lateStarts(d: StrategyDefinition, unit: V2Unit, candles: CandleService, firstOpen: number): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const start = istDate(firstOpen);
+  for (const s of seriesOf(d)) {
+    const inst = legInstrument(s.leg, unit);
+    if (!inst || seen.has(s.leg)) continue;
+    seen.add(s.leg);
+    const res = candles.lookup(inst, s);
+    if ('error' in res || !res.candles.length) continue;
+    const first = istDate(res.candles[0]!.time * 1000);
+    if (first > start) out.push(`${legNameById(s.leg, d.legs)}: Kite has candles for ${inst.symbol} only from ${first} — the days before can’t alert`);
+  }
+  return out;
 }
 
 export class V2Tools {
@@ -221,15 +248,14 @@ export class V2Tools {
     };
   }
 
-  async compare(d: StrategyDefinition, req: CompareRequest): Promise<CompareResult> {
+  /** Past alerts of a strategy on products (no limits here — the Compare endpoint caps its own requests). */
+  async compare(d: StrategyDefinition, req: CompareRequest, run: CompareRun = {}): Promise<CompareResult> {
     const now = this.now();
     const tf = d.evaluation.triggerTimeframe;
+    const provider = run.provider ?? this.deps.provider;
     if (req.from > req.to) throw new Error('"from" must be on or before "to"');
-    const span = (Date.parse(req.to) - Date.parse(req.from)) / DAY + 1;
-    if (span > COMPARE_MAX_DAYS[tf]) throw new Error(`Comparisons on ${TIMEFRAME[tf].label} candles are limited to ${COMPARE_MAX_DAYS[tf]} days`);
     const ids = [...new Set(req.products)];
     if (!ids.length) throw new Error('Choose at least one product');
-    if (ids.length > COMPARE_MAX_PRODUCTS) throw new Error(`Compare at most ${COMPARE_MAX_PRODUCTS} products at a time`);
 
     const cals = calendars(await this.deps.store.calendar.list());
     const products = new Map((await this.deps.store.products.list({ ids })).map((p) => [p.id, p]));
@@ -240,7 +266,8 @@ export class V2Tools {
     let requests = 0;
 
     const results: CompareProductResult[] = [];
-    for (const id of ids) {
+    for (const [index, id] of ids.entries()) {
+      run.checkpoint?.(index, id);
       const product = products.get(id);
       const r: CompareProductResult = { productId: id, productName: product?.name ?? id, unit: null, candles: 0, decided: 0, alerts: [], errors: [], notes: [] };
       results.push(r);
@@ -250,7 +277,7 @@ export class V2Tools {
       }
       try {
         const cal = cals[product.market];
-        const candles = new CandleService(this.deps.provider, cals, until, Infinity, { from: req.from, to: req.to });
+        const candles = new CandleService(provider, cals, until, Infinity, { from: req.from, to: req.to });
         const all = await this.deps.products.instruments(id, now);
         const opens = triggerOpens(cal, req.from, req.to, tf, until);
         r.candles = opens.length;
@@ -268,7 +295,7 @@ export class V2Tools {
           if (price === undefined && !r.errors.length) {
             try {
               requests++;
-              price = (await this.deps.provider.getLtp([ref])).get(ref.token);
+              price = (await provider.getLtp([ref])).get(ref.token);
               if (price !== undefined) r.notes.push('No price at the start of the period — ATM taken from the live price');
             } catch {
               /* the resolver below reports the missing price */
@@ -286,6 +313,7 @@ export class V2Tools {
         r.unit = unit;
         if (unit.baseStrike !== null) r.notes.push(`Option legs fixed at the strikes around ATM ${unit.atmStrike} (start of the period), expiry ${unit.expiry}`);
         await fetchUnits(candles, d, [unit], r.errors);
+        if (opens.length) r.notes.push(...lateStarts(d, unit, candles, opens[0]!));
         const exits = (req.exits ?? []).map((x) => ({ key: x.key, def: exitDefinition(d, x.when) }));
         for (const x of exits) await fetchUnits(candles, x.def, [unit], r.errors);
         requests += candles.requests;
@@ -330,6 +358,8 @@ export class V2Tools {
         }
       } catch (err) {
         r.errors.push(msg(err));
+      } finally {
+        await run.onProduct?.(r);
       }
     }
 

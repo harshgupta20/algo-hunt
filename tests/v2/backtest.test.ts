@@ -5,7 +5,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { PaperPlan, StrategyDefinition } from '../../src/shared/v2';
-import { defaultPaperPlan } from '../../src/shared/v2';
+import { backtestRequestSchema, defaultPaperPlan } from '../../src/shared/v2';
 import { ProductService } from '../../src/server/v2/data/ProductService';
 import { RuntimeV2Store, createRuntimeState } from '../../src/server/v2/persistence/RuntimeV2Store';
 import type { RawCandle } from '../../src/server/v2/engine/candles';
@@ -158,6 +158,69 @@ describe('backtest', () => {
     const range = (output: 'low' | 'high') => indicatorValues(candles as never, { ...(ind(legSeries('A'), 'RANGE', { period: 3 }) as Parameters<typeof indicatorValues>[1]), output });
     expect(range('low')).toEqual([undefined, undefined, undefined, 8, 7]);
     expect(range('high')).toEqual([undefined, undefined, undefined, 22, 25]);
+  });
+
+  /** Poll a backtest job until it stops running. */
+  const settled = async (id: string) => {
+    for (let i = 0; i < 200; i++) {
+      const job = svc.backtestJob(id);
+      if (job.status !== 'RUNNING') return job;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error('backtest job did not finish');
+  };
+  const jobRequest = () => ({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}), capital: 500_000 });
+
+  it('runs as a background job: progress, the same result, and a re-run answered from memory', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    const job = await svc.startBacktest(jobRequest());
+    expect(job).toMatchObject({ status: 'RUNNING', total: 1, strategyName: 'Future breaks 25,100' });
+    const done = await settled(job.id);
+    expect(done).toMatchObject({ status: 'DONE', phase: 'TRADES', done: 1, total: 1, cached: 0, error: null });
+    expect(done.result!.trades[0]).toMatchObject({ exitReason: 'TARGET', grossPnl: 18_840 });
+    expect(done.result!.requests).toBe(done.fetched);
+    expect(svc.latestBacktestJob()?.id).toBe(job.id);
+    // Another target on the same candles: nothing asked of Kite.
+    const before = provider.calls.historical;
+    const again = await settled((await svc.startBacktest({ ...jobRequest(), plan: plan({ targetPct: 2 }) })).id);
+    expect(provider.calls.historical).toBe(before);
+    expect(again).toMatchObject({ status: 'DONE', fetched: 0 });
+    expect(again.cached).toBe(done.fetched);
+    expect(again.result!.requests).toBe(0);
+  });
+
+  it('a job can be cancelled, and starting another cancels the one running', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    const fetch = provider.getHistoricalCandles.bind(provider);
+    provider.getHistoricalCandles = async (q) => (await new Promise((r) => setTimeout(r, 20)), fetch(q));
+    const first = await svc.startBacktest(jobRequest());
+    const second = await svc.startBacktest(jobRequest());
+    expect(await settled(first.id)).toMatchObject({ status: 'CANCELLED', result: undefined });
+    expect(await settled(second.id)).toMatchObject({ status: 'DONE' });
+    const third = await svc.startBacktest(jobRequest());
+    svc.cancelBacktest(third.id);
+    expect(await settled(third.id)).toMatchObject({ status: 'CANCELLED' });
+    expect(() => svc.backtestJob('nope')).toThrow(/no longer in memory/);
+  });
+
+  it('fetches 1-minute candles only for contracts that alerted, from the first alert', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    const asked: string[] = [];
+    const fetch = provider.getHistoricalCandles.bind(provider);
+    provider.getHistoricalCandles = async (q) => (asked.push(`${q.interval} ${q.from}`), fetch(q));
+    const quiet = (await svc.createStrategy({ ...S, name: 'Never', expression: cond(field(legSeries('A')), 'GT', num(99_999)) })).id;
+    await svc.backtest({ ...jobRequest(), strategyId: quiet, from: '2026-10-01' });
+    expect(asked.filter((a) => a.startsWith('1m'))).toEqual([]);
+    await svc.backtest({ ...jobRequest(), from: '2026-10-01' });
+    expect(asked.filter((a) => a.startsWith('1m'))).toEqual([`1m ${D}`]);
+  });
+
+  it('any number of products and any period; notes where a contract’s candles start', async () => {
+    expect(backtestRequestSchema.safeParse({ ...jobRequest(), products: Array.from({ length: 250 }, (_, i) => `NSE:S${i}`) }).success).toBe(true);
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    const r = await svc.backtest({ ...jobRequest(), from: '2026-07-01' });
+    expect(r.trades).toHaveLength(1);
+    expect(r.products[0]!.notes.join(' ')).toMatch(/^A · .*: Kite has candles for \S+ only from 2026-10-0\d — the days before can’t alert/);
   });
 
   it('refuses a missing strategy or a reversed period', async () => {

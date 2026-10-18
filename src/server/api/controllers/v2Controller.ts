@@ -174,6 +174,10 @@ export function v2Controller(ctx: AppContext) {
     scanRuns: (req) => svc().scanRuns(num(req.query.get('limit'))),
 
     backtest: (req) => svc().backtest(parse(backtestRequestSchema, req.body)),
+    startBacktest: (req) => svc().startBacktest(parse(backtestRequestSchema, req.body)),
+    latestBacktestJob: async () => svc().latestBacktestJob(),
+    backtestJob: async (req) => svc().backtestJob(req.params.id!),
+    cancelBacktest: async (req) => svc().cancelBacktest(req.params.id!),
     paperPlan: (req) => svc().paperPlan(req.params.id!),
     savePaperPlan: (req) => svc().savePaperPlan(req.params.id!, parse(paperPlanSchema, req.body)),
     paperSummary: (req) => svc().paperSummary({ ...records(req.query), sides: csv(req.query.get('sides'), SIDES) }),

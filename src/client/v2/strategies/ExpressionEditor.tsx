@@ -8,7 +8,7 @@
  */
 import clsx from 'clsx';
 import { AlertTriangle, ArrowDown, ArrowUp, Ban, CandlestickChart, FolderPlus, Info, Plus, Trash2, Undo2 } from 'lucide-react';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import type { ConditionNode, ExprNode, GroupNode, LegDef, LegId, LegKind, Operand, PatternNode, SeriesSpec } from '@/shared/v2';
 import { OPERATORS, PATTERNS, conditionText, legName, nodeText, operandUnit } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
@@ -200,6 +200,19 @@ function NodeEditor({
   );
 }
 
+/** The group's AND / OR drawn between its items, so the logic reads down the list. */
+function Joiner({ type }: { type: GroupNode['type'] }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="h-px flex-1 bg-accent/25" />
+      <Tooltip content={type === 'AND' ? H.editor.joinAnd : H.editor.joinOr}>
+        <span className="block rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-[10px] font-bold tracking-widest text-accent-soft">{type}</span>
+      </Tooltip>
+      <span className="h-px flex-1 bg-accent/25" />
+    </div>
+  );
+}
+
 export function GroupEditor({ group, ctx, onChange, depth = 0, embedded }: { group: GroupNode; ctx: Ctx; onChange: (g: GroupNode) => void; depth?: number; embedded?: boolean }) {
   const setChild = (i: number, n: ExprNode) => onChange({ ...group, children: group.children.map((c, j) => (j === i ? n : c)) });
   const remove = (i: number) => onChange({ ...group, children: group.children.filter((_, j) => j !== i) });
@@ -244,19 +257,21 @@ export function GroupEditor({ group, ctx, onChange, depth = 0, embedded }: { gro
         </span>
         {depth > 2 && <span className="text-[11px] text-warn">Deep nesting — consider simplifying</span>}
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1.5">
         {group.children.map((c, i) => (
-          <NodeEditor
-            key={c.id}
-            node={c}
-            ctx={ctx}
-            index={i}
-            count={group.children.length}
-            depth={depth}
-            onChange={(n) => setChild(i, n)}
-            onRemove={() => remove(i)}
-            onMove={(d) => move(i, d)}
-          />
+          <Fragment key={c.id}>
+            {i > 0 && <Joiner type={group.type} />}
+            <NodeEditor
+              node={c}
+              ctx={ctx}
+              index={i}
+              count={group.children.length}
+              depth={depth}
+              onChange={(n) => setChild(i, n)}
+              onRemove={() => remove(i)}
+              onMove={(d) => move(i, d)}
+            />
+          </Fragment>
         ))}
         {group.children.length === 0 && <p className="text-xs text-warn">Empty group — add a condition.</p>}
       </div>

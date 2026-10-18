@@ -7,6 +7,7 @@ import type {
   ConnectionConfig,
   DatabaseInfo,
   AlertQuery,
+  BacktestJob,
   BacktestRequest,
   BacktestResult,
   PaperOverride,
@@ -24,19 +25,21 @@ import type {
   V2Strategy,
   ValidationIssue,
 } from '@/shared/v2';
-import { DEFAULT_TELEGRAM_BOT, defaultPaperPlan, hasErrors, newestFirst, olderThan, parseCursor, resolveRules, incompatibility, strategySummary, validateConnection, validateStrategy } from '@/shared/v2';
+import { DEFAULT_TELEGRAM_BOT, TIMEFRAME, defaultPaperPlan, hasErrors, newestFirst, olderThan, parseCursor, resolveRules, incompatibility, strategySummary, validateConnection, validateStrategy } from '@/shared/v2';
 import { istDate } from '../utils/marketTime';
 import { envChannelFactory, recentTelegramChats, telegramBotInfo, type ChannelFactory, type ChannelName } from './alerts/notifications';
 import { getConfig } from '../config/index';
 import { calendars, dateStartMs } from './calendar/MarketCalendar';
+import { CandleCache } from './data/CandleCache';
 import type { Quote, V2DataProvider } from './data/DataProvider';
 import type { ProductService } from './data/ProductService';
-import { V2Tools, type CompareRequest } from './debug/tools';
+import { COMPARE_MAX_DAYS, COMPARE_MAX_PRODUCTS, V2Tools, type CompareRequest } from './debug/tools';
 import type { ProductFilters, PruneResult, V2Store } from './persistence/V2Store';
 import { liveHealth } from './live/health';
 import { PaperTrader, unrealizedPnl } from './paper/PaperTrader';
 import { paperSummary } from './paper/summary';
 import { runBacktest } from './paper/backtest';
+import { BacktestJobs } from './paper/BacktestJobs';
 import { V2Scanner, type ScanOptions } from './scanner/V2Scanner';
 import { atmReference, resolveUnits, unitInstruments } from './universe/resolve';
 
@@ -104,6 +107,9 @@ export class V2Service {
   /** History clean-up: the IST day it last ran, and what it removed. */
   private prunedDay: string | null = null;
   private lastPrune: DatabaseInfo['lastPrune'] = null;
+  /** Backtests: candles kept between runs, and the background jobs (memory only). */
+  private readonly candleCache = new CandleCache();
+  private readonly backtestJobs = new BacktestJobs(() => this.now());
 
   constructor(private readonly deps: V2ServiceDeps) {
     this.channels = deps.channels ?? envChannelFactory;
@@ -412,6 +418,10 @@ export class V2Service {
   async compare(input: { strategyId?: string; definition?: StrategyDefinition } & CompareRequest) {
     const definition = input.definition ?? (input.strategyId ? (await this.getStrategy(input.strategyId)).definition : undefined);
     if (!definition) throw new V2ServiceError(400, 'strategyId or definition is required');
+    // Compare answers in one request, so it stays small (backtests run as jobs, without limits).
+    const tf = definition.evaluation.triggerTimeframe;
+    if ((Date.parse(input.to) - Date.parse(input.from)) / 86_400_000 + 1 > COMPARE_MAX_DAYS[tf]) throw new V2ServiceError(400, `Comparisons on ${TIMEFRAME[tf].label} candles are limited to ${COMPARE_MAX_DAYS[tf]} days`);
+    if (new Set(input.products).size > COMPARE_MAX_PRODUCTS) throw new V2ServiceError(400, `Compare at most ${COMPARE_MAX_PRODUCTS} products at a time`);
     await this.requireKite('compare');
     try {
       return await this.tools.compare(definition, input);
@@ -478,8 +488,8 @@ export class V2Service {
 
   // ---- backtest ----------------------------------------------------------------------------
 
-  /** What the strategy would have made on these products with this money over past candles (nothing saved). */
-  async backtest(req: BacktestRequest): Promise<BacktestResult> {
+  /** The strategy of a backtest request, after checking the request (and that Kite is logged in). */
+  private async backtestStrategy(req: BacktestRequest): Promise<V2Strategy> {
     const s = await this.getStrategy(req.strategyId);
     if (req.from > req.to) throw new V2ServiceError(400, '“From” must be on or before “to”');
     // Exit rules use the strategy's legs and indicators: the same checks as the strategy's own conditions.
@@ -490,11 +500,45 @@ export class V2Service {
       if (issue) throw new V2ServiceError(400, `Exit rule: ${issue.message}`);
     }
     await this.requireKite('backtest');
+    return s;
+  }
+
+  private backtestDeps() {
+    return { store: this.deps.store, provider: this.deps.provider, tools: this.tools, now: () => this.now(), cache: this.candleCache };
+  }
+
+  /** What the strategy would have made on these products with this money over past candles (nothing saved). */
+  async backtest(req: BacktestRequest): Promise<BacktestResult> {
+    const s = await this.backtestStrategy(req);
     try {
-      return await runBacktest({ store: this.deps.store, provider: this.deps.provider, tools: this.tools, now: () => this.now() }, s, req);
+      return await runBacktest(this.backtestDeps(), s, req);
     } catch (err) {
       throw new V2ServiceError(400, msg(err));
     }
+  }
+
+  /** Start a backtest in the background (cancelling one still running); follow it with backtestJob. */
+  async startBacktest(req: BacktestRequest): Promise<BacktestJob> {
+    const s = await this.backtestStrategy(req);
+    const meta = { strategyId: s.id, strategyName: s.name, request: req, total: new Set(req.products).size };
+    return this.backtestJobs.start(meta, (run) => runBacktest(this.backtestDeps(), s, req, run));
+  }
+
+  backtestJob(id: string): BacktestJob {
+    const job = this.backtestJobs.get(id);
+    if (!job) throw new V2ServiceError(404, 'This backtest is no longer in memory (the app restarted, or it finished over an hour ago) — run it again');
+    return job;
+  }
+
+  /** The latest backtest (running or finished within the hour), or null. */
+  latestBacktestJob(): BacktestJob | null {
+    return this.backtestJobs.latest();
+  }
+
+  cancelBacktest(id: string): BacktestJob {
+    const job = this.backtestJobs.cancel(id);
+    if (!job) throw new V2ServiceError(404, 'This backtest is no longer in memory');
+    return job;
   }
 
   // ---- paper trading -----------------------------------------------------------------------

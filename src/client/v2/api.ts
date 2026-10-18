@@ -32,7 +32,7 @@ import type {
   V2Unit,
   ValidationIssue,
 } from '@/shared/v2';
-import { filterParams, normalizePaperSummary, type AlertQuery, type BacktestRequest, type BacktestResult, type PaperQuery, type SignalQuery } from '@/shared/v2';
+import { filterParams, normalizePaperSummary, type AlertQuery, type BacktestJob, type BacktestRequest, type BacktestResult, type PaperQuery, type SignalQuery } from '@/shared/v2';
 
 const BASE = '/api/v2';
 
@@ -69,6 +69,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 const post = <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
 const put = <T>(path: string, body: unknown) => request<T>(path, { method: 'PUT', body: JSON.stringify(body) });
+const normalizeJob = (j: BacktestJob): BacktestJob => (j.result ? { ...j, result: { ...j.result, summary: normalizePaperSummary(j.result.summary) } } : j);
 
 export interface ChannelStatus {
   telegram: { configured: boolean; detail: string };
@@ -198,6 +199,10 @@ export const v2Api = {
 
   compare: (body: CompareInput) => post<CompareResult>('/compare', body),
   backtest: (body: BacktestRequest) => post<BacktestResult>('/backtest', body).then((r) => ({ ...r, summary: normalizePaperSummary(r.summary) })),
+  startBacktest: (body: BacktestRequest) => post<BacktestJob>('/backtest/jobs', body).then(normalizeJob),
+  latestBacktest: () => request<BacktestJob | null>('/backtest/jobs/latest').then((j) => (j ? normalizeJob(j) : null)),
+  backtestJob: (id: string) => request<BacktestJob>(`/backtest/jobs/${id}`).then(normalizeJob),
+  cancelBacktest: (id: string) => request<BacktestJob>(`/backtest/jobs/${id}`, { method: 'DELETE' }).then(normalizeJob),
 
   alerts: (q: AlertQuery = {}) => request<V2AlertItem[]>(`/alerts?${filterParams(q)}`),
   /** Per strategy, how many alerts match the other filters. */

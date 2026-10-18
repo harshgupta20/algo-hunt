@@ -48,6 +48,10 @@ export function createRouter(ctx: AppContext): Router {
   r.post('/v2/connections/:id/explain', v2.explainConnection);
   r.post('/v2/compare', v2.compare);
   r.post('/v2/backtest', v2.backtest);
+  r.post('/v2/backtest/jobs', v2.startBacktest);
+  r.get('/v2/backtest/jobs/latest', v2.latestBacktestJob); // before /v2/backtest/jobs/:id
+  r.get('/v2/backtest/jobs/:id', v2.backtestJob);
+  r.delete('/v2/backtest/jobs/:id', v2.cancelBacktest);
   r.get('/v2/alerts', v2.alerts);
   r.get('/v2/alerts/feed', v2.alertFeed); // before /v2/alerts/:id
   r.get('/v2/alerts/counts', v2.alertCounts);

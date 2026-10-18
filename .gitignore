@@ -13,7 +13,7 @@ coverage/
 next-env.d.ts
 
 # Local database and its snapshots — data never goes into git (git pull must not touch it)
-data/
+/data/
 backups/
 
 # The desktop app build (desktop/)
