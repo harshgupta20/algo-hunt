@@ -8,6 +8,7 @@ import { preferencesController } from './controllers/preferencesController';
 import { kiteController } from './controllers/kiteController';
 import { marketController } from './controllers/marketController';
 import { v2Controller } from './controllers/v2Controller';
+import { equityController } from './controllers/equityController';
 
 export function createRouter(ctx: AppContext): Router {
   const r = new Router();
@@ -16,6 +17,31 @@ export function createRouter(ctx: AppContext): Router {
     const kite = await ctx.kiteAuth.status();
     return { status: 'ok', store: 'postgres', kite: kite.state };
   });
+
+  // Equity — NSE cash stocks: its own strategies, watchlists, backtests and screens (independent of V2)
+  const eq = equityController(ctx);
+  r.get('/equity/stocks', eq.stocks);
+  r.get('/equity/presets', eq.presets);
+  r.get('/equity/templates', eq.templates);
+  r.get('/equity/strategies', eq.listStrategies);
+  r.post('/equity/strategies', eq.createStrategy);
+  r.post('/equity/strategies/validate', eq.validate); // before /equity/strategies/:id
+  r.get('/equity/strategies/:id', eq.getStrategy);
+  r.put('/equity/strategies/:id', eq.updateStrategy);
+  r.delete('/equity/strategies/:id', eq.removeStrategy);
+  r.post('/equity/strategies/:id/duplicate', eq.duplicateStrategy);
+  r.get('/equity/watchlists', eq.listWatchlists);
+  r.post('/equity/watchlists', eq.createWatchlist);
+  r.put('/equity/watchlists/:id', eq.updateWatchlist);
+  r.delete('/equity/watchlists/:id', eq.removeWatchlist);
+  r.post('/equity/backtests', eq.startBacktest);
+  r.get('/equity/backtests/latest', eq.latestBacktest); // before /equity/backtests/:id
+  r.get('/equity/backtests/:id', eq.backtestJob);
+  r.delete('/equity/backtests/:id', eq.cancelBacktest);
+  r.post('/equity/screens', eq.startScreen);
+  r.get('/equity/screens/latest', eq.latestScreen); // before /equity/screens/:id
+  r.get('/equity/screens/:id', eq.screenJob);
+  r.delete('/equity/screens/:id', eq.cancelScreen);
 
   // V2 — product-agnostic strategies + product connections
   const v2 = v2Controller(ctx);

@@ -5,11 +5,13 @@ import { usePathname } from 'next/navigation';
 import { Tooltip } from '../Tooltip';
 import { HELP } from '../../lib/help';
 import clsx from 'clsx';
-import { Layers, Radar, Settings } from 'lucide-react';
+import { CandlestickChart, Layers, Radar, Settings } from 'lucide-react';
 
 const NAV = [
   // The whole market at a glance (indices, sectors, stocks, F&O, flows, world, news).
   { to: '/market', label: 'Market', icon: Radar, help: HELP.nav.market },
+  // Equity: NSE cash-stock strategies, backtests and screens (independent of V2).
+  { to: '/equity', label: 'Equity', icon: CandlestickChart, help: HELP.nav.equity },
   // V2: strategies connected to any product (NSE / BSE / MCX) → alerts.
   { to: '/v2', label: 'V2', icon: Layers, help: HELP.nav.v2 },
   // Kite login, appearance and desktop notifications.

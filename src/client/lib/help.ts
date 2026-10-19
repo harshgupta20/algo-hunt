@@ -12,6 +12,10 @@ export const HELP = {
       title: 'V2 — Strategy + Product = Alert',
       body: 'Build a strategy once without choosing a product, then connect it to any NSE index, NSE stock or MCX commodity to get alerts. Compare shows which products the strategy fires on.',
     },
+    equity: {
+      title: 'Equity — stock strategies',
+      body: 'Strategies for NSE cash stocks, separate from F&O: a dedicated builder (with your trader’s templates), backtests over years with your money (pyramiding, charges, CAGR, drawdown vs NIFTY 50), a screener for today’s signals, and watchlists.',
+    },
     market: {
       title: 'Market — eagle view',
       body: 'The whole Indian market on one page: indices, breadth, sectors, a map of every Nifty 500 stock, movers, F&O positioning, FII / DII money, the world, news and the results calendar.',

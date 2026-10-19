@@ -4,30 +4,18 @@
  * Building blocks shared by the V2 screens: captioned cells, legs, units,
  * state badges and the condition trace ("why did it (not) fire").
  */
-import { useState, type ReactNode } from 'react';
 import clsx from 'clsx';
 import { CheckCircle2, CircleHelp, XCircle } from 'lucide-react';
 import type { AlertStateName, ConditionTrace, EvaluationSource, ExprTrace, LegDef, LegKind, OperandTrace, SignalOutcome, TriState, UnitEvaluation, V2Instrument, V2Product, V2Unit } from '@/shared/v2';
 import { legKindText, legName } from '@/shared/v2';
-import { InfoTip, Tooltip, type TooltipContent } from '../components/Tooltip';
+import { Tooltip, type TooltipContent } from '../components/Tooltip';
 import { Badge } from '../components/ui';
 import { H } from './help';
 import { LEG_KIND_TEXT, OUTCOME_LABEL, TRI_CLASS, fmtNum, istStamp, shortDate } from './format';
 
-export function Cell({ label, help, children, className }: { label: string; help: TooltipContent; children: ReactNode; className?: string }) {
-  return (
-    <div className={clsx('flex flex-col gap-1', className)}>
-      <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-        {label}
-        <InfoTip content={help} />
-      </span>
-      <div className="flex flex-wrap items-center gap-1.5">{children}</div>
-    </div>
-  );
-}
-
-// Section, Segmented and Toggle are shared UI (used by the market view too).
+// Section, Segmented, Toggle, Cell and NumberInput are shared UI (the market view and Equity use them too).
 export { Section, Segmented, Toggle } from '../components/ui';
+export { Cell, NumberInput } from '../components/form';
 
 /** "B · CE ATM+1" in the leg's colour. */
 export function LegBadge({ leg, className }: { leg: LegDef; className?: string }) {
@@ -202,59 +190,5 @@ export function SourceBadge({ source }: { source?: EvaluationSource }) {
         <Badge tone={s.tone}>{s.label}</Badge>
       </span>
     </Tooltip>
-  );
-}
-
-/**
- * A number box that can be typed into freely: a value is taken while it is a number within [min, max];
- * leaving the box puts back the last good value (a number outside the range is brought into it), so a
- * half-typed amount ("5" on the way to "50000") is never forced to the minimum.
- */
-export function NumberInput({
-  value,
-  onChange,
-  min,
-  max,
-  step,
-  className,
-  disabled,
-  placeholder,
-  label,
-}: {
-  value: number | null;
-  onChange: (n: number) => void;
-  min?: number;
-  max?: number;
-  step?: number;
-  className?: string;
-  disabled?: boolean;
-  placeholder?: string;
-  label: string;
-}) {
-  const [text, setText] = useState<string | null>(null);
-  const inRange = (n: number) => (min === undefined || n >= min) && (max === undefined || n <= max);
-  const parse = (raw: string) => (raw.trim() === '' ? NaN : Number(raw));
-  return (
-    <input
-      aria-label={label}
-      type="number"
-      min={min}
-      max={max}
-      step={step}
-      disabled={disabled}
-      placeholder={placeholder}
-      className={className}
-      value={text ?? (value === null ? '' : String(value))}
-      onChange={(e) => {
-        setText(e.target.value);
-        const n = parse(e.target.value);
-        if (Number.isFinite(n) && inRange(n)) onChange(n);
-      }}
-      onBlur={(e) => {
-        const n = parse(e.target.value);
-        if (Number.isFinite(n)) onChange(Math.min(max ?? Infinity, Math.max(min ?? -Infinity, n)));
-        setText(null);
-      }}
-    />
   );
 }

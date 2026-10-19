@@ -10,6 +10,8 @@ import { createAppStore, type AppStore } from '../db/appStore';
 import { KiteAuthService } from '../services/kite/kiteAuth';
 import { KiteHistoricalProvider } from '../services/kite/KiteHistoricalProvider';
 import { createV2Module, type V2Module } from '../v2';
+import { createEquityModule, type EquityModule } from '../equity';
+import { getLists } from '../market/lists';
 
 export interface AppContext {
   /** Kite login session + UI preferences. */
@@ -19,6 +21,8 @@ export interface AppContext {
   historical: KiteHistoricalProvider;
   /** V2: product-agnostic strategies + product connections (alerts). */
   v2: V2Module;
+  /** Equity: NSE cash-stock strategies, watchlists, backtests and screens (independent of V2). */
+  equity: EquityModule;
 }
 
 function build(): AppContext {
@@ -26,7 +30,15 @@ function build(): AppContext {
   const kiteAuth = new KiteAuthService(store);
   const historical = new KiteHistoricalProvider(kiteAuth);
   const v2 = createV2Module({ kiteAuth, historical });
-  return { store, kiteAuth, historical, v2 };
+  const equity = createEquityModule({
+    kite: (fn) => kiteAuth.call(fn),
+    historical,
+    kiteConnected: async () => (await kiteAuth.status()).state === 'connected',
+    // NSE index constituents (with sectors) from the market module; the F&O list from V2's catalogue.
+    lists: async () => (await getLists())?.all.map((s) => ({ symbol: s.symbol, sector: s.sector, groups: s.groups })),
+    fno: async () => (await v2.service.products({ kind: 'STOCK', needs: ['FUT'], limit: 5000 })).map((p) => p.symbol),
+  });
+  return { store, kiteAuth, historical, v2, equity };
 }
 
 /** New on every evaluation of this module — i.e. after a dev hot reload of any service it wires. */

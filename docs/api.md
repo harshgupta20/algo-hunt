@@ -163,3 +163,27 @@ database. Shapes: `src/shared/market/types.ts`. Details: [market.md](market.md).
 | GET | `/api/market/news` | — | `NewsData`: up to 240 headlines, newest first, tagged with symbols and sectors |
 | GET | `/api/market/calendar` | — | `CalendarData`: events (next 21 days), corporate actions, latest announcements |
 | GET | `/api/market/company/:symbol` | — | `CompanyData`: quote, 52-week range, intraday line, news (7 days), NSE filings (30 days), events — `400` for a malformed symbol |
+
+### 4.6 Equity — NSE cash-stock strategies
+
+Independent of V2. Shapes: `src/shared/equity/types.ts`. Details: [equity.md](equity.md). Service errors return
+`{ error, issues? }` (`issues` = validation messages with paths). Backtests and screens run as background jobs:
+`POST` returns the job (`status: RUNNING`); poll `GET …/:id` until `DONE` (then `result`), `FAILED` or `CANCELLED`.
+
+| Method | Path | Body / query | Response |
+| --- | --- | --- | --- |
+| GET | `/api/equity/stocks` | `search`, `preset` (`NIFTY50` \| `NIFTYNEXT50` \| `NIFTY100` \| `MIDCAP150` \| `SMALLCAP250` \| `NIFTY500` \| `FNO` \| `ALL`), `symbols` (comma list), `limit` (≤ 5000, default 200) | `{ total, stocks: EqStock[] }` |
+| GET | `/api/equity/presets` | — | `EqPresetInfo[]` (count per list; `note` when NSE's lists can't be read) |
+| GET | `/api/equity/templates` | — | `EqTemplate[]` |
+| GET / POST | `/api/equity/strategies` | POST: `EqStrategyDefinition` | `EqStrategy[]` / `201 EqStrategy` (`400` with `issues` when invalid) |
+| POST | `/api/equity/strategies/validate` | `EqStrategyDefinition` | `ValidationIssue[]` |
+| GET / PUT / DELETE | `/api/equity/strategies/:id` | PUT: `EqStrategyDefinition` | `EqStrategy` (version + 1 on PUT) / `204` |
+| POST | `/api/equity/strategies/:id/duplicate` | — | `201 EqStrategy` |
+| GET / POST | `/api/equity/watchlists` | POST: `{ name, symbols[] }` | `EqWatchlist[]` / `201` (`400` for non-NSE symbols) |
+| PUT / DELETE | `/api/equity/watchlists/:id` | PUT: `{ name, symbols[] }` | `EqWatchlist` / `204` |
+| POST | `/api/equity/backtests` | `EqBacktestRequest` (`strategyId` or `definition`, `symbols`, `from`, `to`, `capital` \| null, `maxPositions` \| null) | `EqBacktestJob` — `409` without a Kite login |
+| GET | `/api/equity/backtests/latest` | — | the latest job (finished within the hour) or `null` |
+| GET / DELETE | `/api/equity/backtests/:id` | — | `EqBacktestJob` (DELETE cancels) — `404` once it's gone from memory |
+| POST | `/api/equity/screens` | `EqScreenRequest` (`strategyId` or `definition`, `symbols`) | `EqScreenJob` |
+| GET | `/api/equity/screens/latest` | — | latest screen job or `null` |
+| GET / DELETE | `/api/equity/screens/:id` | — | `EqScreenJob` (DELETE cancels) |

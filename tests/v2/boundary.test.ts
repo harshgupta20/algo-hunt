@@ -63,3 +63,36 @@ describe('V2 module boundaries', () => {
     }
   });
 });
+
+describe('Equity module boundaries (independent of F&O / V2)', () => {
+  const V2 = /(server|shared|client)\/v2(\/|$)|^\.\.?\/v2(\/|$)/;
+  const EQUITY = /(server|shared|client)\/equity(\/|$)|^\.\.?\/equity(\/|$)/;
+
+  it('shared/equity depends on nothing but itself and zod', () => {
+    const list = files('src/shared/equity');
+    expect(list.length).toBeGreaterThan(3);
+    for (const f of list) for (const spec of imports(f)) expect(spec.startsWith('./') || spec === 'zod', `${relative(ROOT, f)} imports ${spec}`).toBe(true);
+  });
+
+  it('equity never imports V2, and V2 never imports equity', () => {
+    for (const f of [...files('src/server/equity'), ...files('src/client/equity'), ...files('src/shared/equity')]) for (const spec of imports(f)) expect(V2.test(spec), `${relative(ROOT, f)} imports ${spec}`).toBe(false);
+    for (const f of [...files('src/server/v2'), ...files('src/client/v2'), ...files('src/shared/v2')]) for (const spec of imports(f)) expect(EQUITY.test(spec), `${relative(ROOT, f)} imports ${spec}`).toBe(false);
+  });
+
+  it('server/equity reaches outside itself only for low-level building blocks', () => {
+    const list = files('src/server/equity');
+    expect(list.length).toBeGreaterThan(8);
+    const own = join(ROOT, 'src/server/equity');
+    const buildingBlocks = ['src/server/services/indicator/rsi', 'src/server/services/indicator/types', 'src/server/utils/logger', 'src/server/db/pool', 'src/server/config/index'].map((p) => join(ROOT, p));
+    for (const f of list) {
+      for (const spec of imports(f)) {
+        let ok: boolean;
+        if (spec.startsWith('.')) {
+          const target = join(f, '..', spec);
+          ok = target.startsWith(own) || buildingBlocks.includes(target);
+        } else ok = spec === '@/shared/equity' || spec === 'pg' || spec === 'zod' || spec.startsWith('node:');
+        expect(ok, `${relative(ROOT, f)} imports ${spec}`).toBe(true);
+      }
+    }
+  });
+});

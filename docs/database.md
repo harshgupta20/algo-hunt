@@ -53,6 +53,16 @@ through [PgV2Store](../src/server/v2/persistence/PgV2Store.ts).
 
 ---
 
+### Equity tables (012)
+
+| Table | Purpose |
+| --- | --- |
+| `eq_strategies` | Equity strategies: `name`, `definition` JSON (the full `EqStrategyDefinition`), `version` (+1 on every save) |
+| `eq_watchlists` | The trader's stock lists: `name`, `symbols` JSON (NSE symbols in the trader's order) |
+
+Both are read once per process and then served from memory (writes go to the database first). Equity candles,
+backtests and screens are never stored ([equity.md](equity.md)).
+
 ## 3. Retired tables (left untouched)
 
 The V1 pages and MCX V2 were removed from the code on 2026-09-27, but **their tables and data were not dropped**
@@ -77,6 +87,7 @@ Dropping them is optional and irreversible — only add a migration for it if yo
 | [009_v2_delivery_target.sql](../db/migrations/009_v2_delivery_target.sql) | `v2_deliveries.target` — who each delivery went to (one row per Telegram chat) |
 | [010_v2_paper.sql](../db/migrations/010_v2_paper.sql) | `v2_paper_plans`, `v2_paper_trades` (paper trading) |
 | [011_v2_paper_connections.sql](../db/migrations/011_v2_paper_connections.sql) | `v2_paper_overrides` (a connection's own paper values) |
+| [012_equity.sql](../db/migrations/012_equity.sql) | `eq_strategies`, `eq_watchlists` (the Equity section) |
 
 Keep every migration file: the runner tracks applied files by name, and a fresh database is built by replaying them
 in order.
