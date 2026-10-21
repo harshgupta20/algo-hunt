@@ -25,7 +25,7 @@ strategy's daily / weekly candles; TradingView has no date link, so the tooltip 
 | Sell when (first of) | Target % · stop-loss % · trailing stop % (below the highest high since the first buy) · exit conditions (a group) · time exit (N checks) · the pyramiding stop. Target and stop-loss measured from the average price (moves with adds) or the first buy |
 | Pyramiding | When the MA (SMA / EMA / WMA, period N, on the strategy's timeframe) **rises to the last buy price** and the close is at or above it → buy one more lot; **the stop for ALL lots becomes that MA value**. Repeats until a stop or any other exit sells everything. Optional max adds |
 | Money per buy | ₹ per buy (whole shares) · shares per buy · % of the account's value. The same for the first buy and every add |
-| Orders | **Not a choice** — the same for every strategy (`EQ_ORDER_RULES`): fill at the **next trading day's open** (what an end-of-day alert lets you do) with 0.1 % slippage, stops on **any day's low** (a stop-loss order), Zerodha delivery charges. The builder shows them in one line |
+| Orders | **Not a choice** — the same for every strategy (`EQ_ORDER_RULES`): fill at the **next trading day's open** (what an end-of-day alert lets you do), stops on **any day's low** (a stop-loss order), and — **for now — no charges and no slippage**, so every price is the candle's own, like TradingView's strategy tester (commission 0, slippage 0) and each trade matches its chart. The builder shows them in one line |
 
 ## 3. Exact rules (the engine follows these — `src/server/equity/engine/`)
 
@@ -73,6 +73,8 @@ strategy's daily / weekly candles; TradingView has no date link, so the tooltip 
   after the period), a signal on a stock that then stopped trading.
 - **End of the period:** positions still held are valued at the last close (reason END, sell charges counted).
 - **Only finished sessions:** today's candle counts after 15:40 IST on a weekday; Kite's forming candle is dropped.
+- **Charges and slippage are OFF for now** (`EQ_ORDER_RULES`, 21 Oct 2026 — to match TradingView's strategy tester).
+  The engine still models both; turning them back on is `charges: true, slippagePct: 0.1` there. When on:
 - **Charges (Zerodha, per order — `engine/charges.ts`):** delivery: STT 0.1 % on buys and sells, exchange
   0.00307 %, SEBI ₹10 / crore, stamp 0.015 % on buys, GST 18 % on exchange + SEBI, DP ₹15.34 per sell (GST already
   included — ₹3.50 CDSL + ₹9.50 Zerodha + ₹2.34 GST). **A lot bought and sold the same day is intraday** (Zerodha

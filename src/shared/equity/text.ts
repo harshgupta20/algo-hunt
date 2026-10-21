@@ -44,7 +44,8 @@ export function operandText(o: EqOperand, tf: EqTimeframe): string {
 /** How every backtest fills orders, in one line (EQ_ORDER_RULES). */
 export function orderRulesText(): string {
   const r = EQ_ORDER_RULES;
-  return `${r.fill === 'NEXT_OPEN' ? 'bought / sold at the next day’s open' : 'filled at the signal close'}${r.slippagePct ? ` (${trim(r.slippagePct)}% slippage)` : ''} · stops ${r.stopTrigger === 'TOUCH' ? 'on any day’s low' : 'on a closing basis'}${r.charges ? ' · Zerodha delivery charges' : ''}`;
+  const costs = r.charges || r.slippagePct ? `${r.charges ? ' · Zerodha delivery charges' : ''}` : ' · no charges or slippage (like TradingView’s strategy tester)';
+  return `${r.fill === 'NEXT_OPEN' ? 'bought / sold at the next day’s open' : 'filled at the signal close'}${r.slippagePct ? ` (${trim(r.slippagePct)}% slippage)` : ''} · stops ${r.stopTrigger === 'TOUCH' ? 'on any day’s low' : 'on a closing basis'}${costs}`;
 }
 
 export function conditionText(c: EqCondition, tf: EqTimeframe): string {

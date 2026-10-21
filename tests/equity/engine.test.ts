@@ -78,8 +78,17 @@ describe('crossovers and fills', () => {
     expect(t.fills[0]!.reason).toMatch(/— bought at the next open$/);
   });
 
-  it('a real backtest: next open, 0.1 % slippage shown with the open in each order, Zerodha charges', () => {
+  it('a real backtest (EQ_ORDER_RULES): the candles’ own prices at the next open — no charges, no slippage', () => {
     const r = run(def, [['AAA', rows]], {}, EQ_ORDER_RULES);
+    const [buy, sell] = r.trades[0]!.fills;
+    expect(buy).toMatchObject({ date: rows[7]![0], price: 13, charges: 0 });
+    expect(buy!.reason).toMatch(/— bought at the next open$/);
+    expect(sell).toMatchObject({ date: rows[10]![0], price: 10, charges: 0 });
+    expect(r.trades[0]).toMatchObject({ charges: 0, netPnl: (10 - 13) * 10 });
+  });
+
+  it('with slippage and charges switched on, the order shows the open and the slippage', () => {
+    const r = run(def, [['AAA', rows]], {}, { ...EQ_ORDER_RULES, charges: true, slippagePct: 0.1 });
     const [buy, sell] = r.trades[0]!.fills;
     // Bought at the 8th open (13) + 0.1 % = 13.013 → 13.02 (whole paise, rounded up); sold at the 11th open (10) − 0.1 %.
     expect(buy).toMatchObject({ date: rows[7]![0], price: 13.02, charges: orderCharges('BUY', 130.2) });
@@ -400,7 +409,7 @@ describe('real-market limits', () => {
     const rows = daily('2025-01-06', [100.05, 110.15, 110.25, 100.35, 100.45]);
     const def = plain({ entry: { when: cross105, trigger: 'WHEN_TRUE' }, exit: { ...noExit, when: below105 }, sizing: { mode: 'QUANTITY', value: 1000 } });
     const r = run(def, [['AAA', rows]], {}, NEXT);
-    expect(r.perSymbol[0]!.notes).toContain("2 orders were over 10% of that day's traded volume (up to 100%) — a real order that size would likely fill worse than the 0.1% slippage assumed");
+    expect(r.perSymbol[0]!.notes).toContain("2 orders were over 10% of that day's traded volume (up to 100%) — a real order that size would likely have moved the price, so its fill here is optimistic");
   });
 
   it('flags stretches where Kite’s adjusted prices move in coarse steps', () => {

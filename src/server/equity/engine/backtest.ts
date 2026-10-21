@@ -174,7 +174,7 @@ export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, c
         }
       }
     }
-    if (big) notes.get(st.symbol)?.push(`${big} order${big === 1 ? ' was' : 's were'} over 10% of that day's traded volume (up to ${worst > 9.99 ? '>999' : Math.round(worst * 100)}%) — a real order that size would likely fill worse than the 0.1% slippage assumed`);
+    if (big) notes.get(st.symbol)?.push(`${big} order${big === 1 ? ' was' : 's were'} over 10% of that day's traded volume (up to ${worst > 9.99 ? '>999' : Math.round(worst * 100)}%) — a real order that size would likely have moved the price, so its fill here is optimistic`);
   }
 
   const perSymbol: EqSymbolResult[] = candles.map((c) => {
@@ -201,7 +201,7 @@ export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, c
       : 'Stops sell when a check’s close is below them; targets when a day’s high reaches them.',
     'Sells before buys each day; when money is short, same-day buys are taken in alphabetical order.',
     'Fill prices are whole paise (buys rounded up, sales down). A next-open order lapses if the stock doesn’t trade on the next market day; a candle locked at a circuit (one price all day) can’t be bought at the upper circuit or sold at the lower one; an add that would open at or below the stop it sets isn’t bought.',
-    rules.charges ? 'Zerodha charges on every order: delivery (STT, exchange, SEBI, stamp, GST, ₹15.34 DP charge on sells); a lot bought and sold the same day pays intraday charges instead.' : 'No charges.',
+    rules.charges ? 'Zerodha charges on every order: delivery (STT, exchange, SEBI, stamp, GST, ₹15.34 DP charge on sells); a lot bought and sold the same day pays intraday charges instead.' : rules.slippagePct ? 'No charges.' : 'No charges or slippage — every price is the candle’s own, like TradingView’s strategy tester.',
     ...(rules.slippagePct ? [`${rules.slippagePct}% slippage on every market order (not on targets).`] : []),
     ...(def.pyramid.enabled ? [`Pyramiding: one more lot when ${def.pyramid.maType}(${def.pyramid.maPeriod}) reaches the last buy price with the close at or above it; the stop for all lots moves to that MA value once the lot is bought.`] : []),
     'Positions still open at the end are valued at the last close (reason END).',

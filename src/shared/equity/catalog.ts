@@ -164,9 +164,14 @@ export const EQ_LIMITS = {
   maxAdds: 100,
 } as const;
 
-/** How every backtest fills orders: bought / sold at the next open after the signal (what an end-of-day alert
- *  allows), stops as stop-loss orders on any day's low, Zerodha delivery charges and 0.1 % slippage. */
-export const EQ_ORDER_RULES: EqOrderRules = { fill: 'NEXT_OPEN', stopTrigger: 'TOUCH', charges: true, slippagePct: 0.1 };
+/**
+ * How every backtest fills orders: bought / sold at the next open after the signal (what an end-of-day alert
+ * allows), stops as stop-loss orders on any day's low. No charges and no slippage FOR NOW (user, 21 Oct 2026):
+ * prices are the candles' own, like TradingView's strategy tester (commission 0, slippage 0), so every trade can be
+ * matched on its chart. The engine still models both (Zerodha delivery / intraday charges, % slippage) — set
+ * `charges: true, slippagePct: 0.1` here to bring them back.
+ */
+export const EQ_ORDER_RULES: EqOrderRules = { fill: 'NEXT_OPEN', stopTrigger: 'TOUCH', charges: false, slippagePct: 0 };
 
 /** Starting money in the backtest form. */
 export const EQ_DEFAULT_CAPITAL = 500_000;

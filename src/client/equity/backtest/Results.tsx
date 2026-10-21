@@ -116,7 +116,7 @@ function TradeRows({ t, tf, open, onToggle }: { t: EqTrade; tf: EqTimeframe; ope
                         {f.quantity.toLocaleString('en-IN')} @ {num(f.price)}
                       </span>
                     </td>
-                    <td className="py-1.5 pr-3 align-top whitespace-nowrap tabular-nums text-slate-500">charges {inr(f.charges)}</td>
+                    <td className="py-1.5 pr-3 align-top whitespace-nowrap tabular-nums text-slate-500">{f.charges ? `charges ${inr(f.charges)}` : ''}</td>
                     <td className="py-1.5 pr-3 align-top whitespace-nowrap tabular-nums text-slate-500">{f.stopAfter !== null ? `stop → ${num(f.stopAfter)}` : ''}</td>
                     <td className="py-1.5 align-top text-slate-400">
                       {f.reason}
@@ -184,7 +184,7 @@ export function Results({ r }: { r: EqBacktestResult }) {
         <StatCard label="Profit factor" value={s.profitFactor === null ? '∞' : num(s.profitFactor)} hint={`avg ${signedInr(s.expectancy)} a trade`} help={{ ...E.backtest.profitFactor, note: E.backtest.expectancy.body }} />
         <StatCard label="Trades" value={s.trades.toLocaleString('en-IN')} hint={`${num(s.avgHoldingDays, 0)} days held avg${s.adds ? ` · ${s.adds} adds` : ''}`} help={{ ...E.backtest.trades, note: E.backtest.holding.body }} />
       </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className={clsx('grid grid-cols-2 gap-3', s.charges ? 'md:grid-cols-4' : 'md:grid-cols-3')}>
         <Tooltip content={E.backtest.benchmark} className="block">
           <div className="card p-3 text-xs">
             <p className="text-slate-500">NIFTY 50, bought and held</p>
@@ -197,12 +197,14 @@ export function Results({ r }: { r: EqBacktestResult }) {
             )}
           </div>
         </Tooltip>
-        <Tooltip content={E.backtest.charges} className="block">
-          <div className="card p-3 text-xs">
-            <p className="text-slate-500">Charges paid</p>
-            <p className="mt-1 tabular-nums text-slate-200">{inr(s.charges, 0)}</p>
-          </div>
-        </Tooltip>
+        {s.charges > 0 && (
+          <Tooltip content={E.backtest.charges} className="block">
+            <div className="card p-3 text-xs">
+              <p className="text-slate-500">Charges paid</p>
+              <p className="mt-1 tabular-nums text-slate-200">{inr(s.charges, 0)}</p>
+            </div>
+          </Tooltip>
+        )}
         <Tooltip content={E.backtest.exposure} className="block">
           <div className="card p-3 text-xs">
             <p className="text-slate-500">Time invested</p>
@@ -245,17 +247,17 @@ export function Results({ r }: { r: EqBacktestResult }) {
                   <Th help={{ title: 'Shares', body: 'Shares bought in total (first buy + adds).' }} right>
                     Shares
                   </Th>
-                  <Th help={{ title: 'Avg price', body: 'Average buy price of all lots (after slippage).' }} right>
+                  <Th help={{ title: 'Avg price', body: 'Average buy price of all lots.' }} right>
                     Avg
                   </Th>
-                  <Th help={{ title: 'Sold at', body: 'Sale price (after slippage).' }} right>
+                  <Th help={{ title: 'Sold at', body: 'Sale price.' }} right>
                     Sold at
                   </Th>
                   <Th help={E.backtest.exitReason}>Why</Th>
                   <Th help={{ title: 'Invested', body: 'Money put in by every buy.' }} right>
                     Invested
                   </Th>
-                  <Th help={{ title: 'Net P&L', body: 'After charges and slippage.' }} right>
+                  <Th help={{ title: 'Net P&L', body: 'Sale value − money put in (− charges, when they’re counted).' }} right>
                     Net P&L
                   </Th>
                   <Th help={{ title: 'Return', body: 'Net P&L ÷ money put in.' }} right>
@@ -296,7 +298,7 @@ export function Results({ r }: { r: EqBacktestResult }) {
                 <Th help={E.backtest.winRate} right>
                   Won
                 </Th>
-                <Th help={{ title: 'Net P&L', body: 'All trades in this stock, after charges.' }} right>
+                <Th help={{ title: 'Net P&L', body: 'All trades in this stock.' }} right>
                   Net P&L
                 </Th>
                 <Th help={{ title: 'Invested', body: 'Money put in across its trades.' }} right>
