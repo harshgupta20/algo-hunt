@@ -16,7 +16,7 @@ import type {
   EqWatchlist,
   ValidationIssue,
 } from '@/shared/equity';
-import { EQ_TEMPLATES, hasErrors, normalizeDefinition, requiredBars, validateDefinition } from '@/shared/equity';
+import { EQ_TEMPLATES, hasErrors, normalizeDefinition, settleBars, validateDefinition } from '@/shared/equity';
 import { addDays, type Bars } from './engine/bars';
 import { runBacktest, type StockCandles } from './engine/backtest';
 import { screenStock } from './engine/screen';
@@ -49,8 +49,25 @@ const msg = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
 /** Calendar days of daily candles to fetch before the period so every indicator has settled. */
 export function warmupDays(d: EqStrategyDefinition): number {
-  // ~250 trading days a year; weekly candles need 7 calendar days each.
-  return Math.max(60, Math.ceil(requiredBars(d) * (d.timeframe === '1w' ? 7 : 1.5)) + 30);
+  // ~245 trading days a year (+ a margin for holidays); weekly candles need 7 calendar days each.
+  return Math.max(60, Math.ceil(settleBars(d) * (d.timeframe === '1w' ? 7 : 1.6)) + 30);
+}
+
+/** Kite's daily candles begin on 3 Jan 2000, and it serves up to 1,900 days per request (KiteHistoricalProvider). */
+export const HISTORY_START = '2000-01-01';
+const KITE_DAYS_PER_REQUEST = 1900;
+
+/**
+ * First date of daily candles to fetch for data ending `to` whose checks start at `from`: the warm-up every
+ * indicator needs to match TradingView to 1 part in 10⁷ (warmupDays), stretched back to fill the last Kite
+ * request — that history costs no extra request — and never before Kite's data begins (2000). The backtest and the
+ * screener both use it; their starts can differ, but every recursive value has forgotten its start by then.
+ */
+export function historyFrom(d: EqStrategyDefinition, from: string, to: string): string {
+  const want = addDays(from, -warmupDays(d));
+  const span = Math.round((Date.parse(to) - Date.parse(want)) / 86_400_000) + 1;
+  const start = addDays(to, -Math.ceil(span / KITE_DAYS_PER_REQUEST) * KITE_DAYS_PER_REQUEST + 1);
+  return start < HISTORY_START ? HISTORY_START : start;
 }
 
 export class EquityService {
@@ -190,14 +207,18 @@ export class EquityService {
     await this.requireKite('backtest on');
     const { found, unknown } = await this.deps.universe.resolve(req.symbols);
     if (!found.length) throw new EquityError(400, `None of these are NSE stocks: ${unknown.slice(0, 10).join(', ')}`);
-    const fetchFrom = addDays(req.from, -warmupDays(def));
+    // One data end for the whole job, fixed before fetching: a run crossing the 15:40 cut-off must not give some
+    // stocks today's candle and others not.
+    const end = this.deps.candles.endDate(req.to);
+    const fetchFrom = historyFrom(def, req.from, end);
     return this.backtests.start({ strategyName: def.name, request: req, total: found.length }, async (run) => {
       const benchToken = await this.deps.universe.benchmarkToken().catch(() => null);
       let bench: Bars | null = null;
-      if (benchToken) bench = await this.deps.candles.daily(benchToken, req.from, req.to, run.stats).catch(() => null);
-      const candles = await this.fetchAll(found, fetchFrom, req.to, run);
+      if (benchToken) bench = await this.deps.candles.daily(benchToken, req.from, end, run.stats).catch(() => null);
+      const candles = await this.fetchAll(found, fetchFrom, end, run);
       run.checkpoint();
-      const result = runBacktest(def, req, candles, bench, this.deps.candles.endDate(req.to));
+      const result = runBacktest(def, req, candles, bench, end);
+      if (addDays(req.from, -warmupDays(def)) < HISTORY_START) result.notes.unshift('Some indicators here need history from before 2000, where Kite has none — early in the period their values can differ slightly from TradingView’s, which has older data.');
       if (unknown.length) result.notes.unshift(`Not NSE stocks (skipped): ${unknown.join(', ')}`);
       return { ...result, requests: run.stats.fetched };
     });
@@ -225,7 +246,7 @@ export class EquityService {
     const { found, unknown } = await this.deps.universe.resolve(req.symbols);
     if (!found.length) throw new EquityError(400, `None of these are NSE stocks: ${unknown.slice(0, 10).join(', ')}`);
     const today = this.deps.candles.endDate('9999-12-31');
-    const from = addDays(today, -warmupDays(def) - 14);
+    const from = historyFrom(def, today, today);
     return this.screens.start({ strategyName: def.name, request: req, total: found.length }, async (run) => {
       const rows: EqScreenRow[] = [];
       await this.fetchAll(found, from, today, run, (c) => rows.push(screenStock(def, c, today)));

@@ -24,3 +24,6 @@ backups/
 /desktop/github-token.txt
 # …but desktop/build/ is the installer's resources (icon, pictures, disclaimer, installer.nsh), not build output
 !/desktop/build/
+
+# Python bytecode (scripts/equity-verify/oracle)
+__pycache__/

@@ -5,8 +5,8 @@
  *   Weekly  Monday–Sunday weeks (IST): open of the first day, highest high, lowest low, close of the last day,
  *           summed volume; `date` is the week's LAST trading day (when the weekly candle closes).
  *           The last week counts as complete only when no weekday of it is left after the data's end date —
- *           so a weekly check never uses a half-built week. (A week cut short by a Friday holiday is only
- *           completed once the next week starts.)
+ *           so a weekly check never uses a half-built week. (A week cut short by a Friday holiday completes once
+ *           that Friday's date is reached — no exchange holiday calendar is used.)
  */
 
 export interface Bars {
@@ -52,7 +52,11 @@ function empty(n: number): Omit<Bars, 'date' | 'length'> {
   return { open: new Float64Array(n), high: new Float64Array(n), low: new Float64Array(n), close: new Float64Array(n), volume: new Float64Array(n) };
 }
 
-/** Daily bars from Kite candles: sorted by date, one per IST date (the later candle wins on a duplicate). */
+/**
+ * Daily bars from Kite candles: sorted by date, one per IST date (the later candle wins on a duplicate). A bad
+ * tick in the source — an open or close outside the high–low, or a high below the low — is repaired: high = the
+ * largest of the four prices, low = the smallest, so stops and targets never read an impossible day.
+ */
 export function dailyBars(candles: RawDailyCandle[]): Bars {
   const byDate = new Map<string, RawDailyCandle>();
   for (const c of candles) {
@@ -64,8 +68,8 @@ export function dailyBars(candles: RawDailyCandle[]): Bars {
   dates.forEach((d, i) => {
     const c = byDate.get(d)!;
     b.open[i] = c.open;
-    b.high[i] = c.high;
-    b.low[i] = c.low;
+    b.high[i] = Math.max(c.open, c.high, c.low, c.close);
+    b.low[i] = Math.min(c.open, c.high, c.low, c.close);
     b.close[i] = c.close;
     b.volume[i] = Number.isFinite(c.volume) ? c.volume : 0;
   });

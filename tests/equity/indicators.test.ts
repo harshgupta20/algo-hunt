@@ -83,6 +83,30 @@ describe('equity indicators = the streaming library', () => {
   });
 });
 
+describe('TradingView edge cases', () => {
+  it('a gap in a series (ROC of a zero-volume day) leaves that candle unknown — not every average after it', () => {
+    const src = Float64Array.from([1, 2, NaN, 4, 5, 6]);
+    expect(Array.from(sma(src, 2))).toEqual([NaN, 1.5, NaN, 3, 4.5, 5.5]);
+    expect(Number.isFinite(ema(src, 2)[5]!)).toBe(true);
+    expect(Number.isFinite(wma(src, 2)[5]!)).toBe(true);
+  });
+
+  it('Bollinger on a flat window: zero width, %B undefined (not a floating-point sliver)', () => {
+    const flat = Float64Array.from(Array(20).fill(38.39));
+    const bb = bollinger(flat, 20, 2);
+    expect([bb.upper[19], bb.lower[19], bb.bandwidth[19]]).toEqual([bb.mid[19], bb.mid[19], 0]);
+    expect(bb.percentB[19]).toBeNaN();
+  });
+
+  it('DMI keeps its last values over a stretch with no price range (fixnan)', () => {
+    const rows = [...Array.from({ length: 20 }, (_, i) => 100 + (i % 3)), ...Array(30).fill(100)];
+    const b = dailyBars(rows.map((c, i) => ({ time: 1_700_000_000 + i * 86_400, open: c, high: c, low: c, close: c, volume: 1 })));
+    const d = dmi(b, 3, 3);
+    expect(Number.isFinite(d.plus.at(-1)!)).toBe(true);
+    expect(Number.isFinite(d.adx.at(-1)!)).toBe(true);
+  });
+});
+
 describe('hand-checked indicators', () => {
   const col = Float64Array.from([10, 11, 12, 13, 14, 15, 9, 20]);
 

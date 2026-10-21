@@ -11,7 +11,7 @@ import type { EqBacktestJob, EqOperand, EqScreenJob, EqStrategyDefinition } from
 import { EQ_TEMPLATES, all, any, cond, defaultDefinition, ind, normalizeDefinition, num, price } from '../../src/shared/equity';
 import { CandleCache, lastFinishedSession, type DailySource } from '../../src/server/equity/data/candles';
 import { Universe, stocksFromKite } from '../../src/server/equity/data/universe';
-import { EquityService, warmupDays } from '../../src/server/equity/EquityService';
+import { EquityService, historyFrom } from '../../src/server/equity/EquityService';
 import { MemoryEquityStore } from '../../src/server/equity/store/MemoryEquityStore';
 
 const ist = (date: string, hhmm = '09:00') => Date.parse(`${date}T${hhmm}:00+05:30`);
@@ -160,7 +160,7 @@ describe('equity service', () => {
     // Warm-up: candles fetched from before the period (SMA 10 needs history); NIFTY 50 for the period itself.
     const aaa = kite.calls.find((c) => c.token === 1)!;
     expect(aaa.from < '2025-01-20').toBe(true);
-    expect(aaa.from).toBe(new Date(Date.parse('2025-01-20') - warmupDays(cross) * 86_400_000).toISOString().slice(0, 10));
+    expect(aaa.from).toBe(historyFrom(cross, '2025-01-20', '2025-03-31'));
     expect(r.requests).toBe(3);
     expect(svc.latestBacktest()!.id).toBe(job.id);
   });

@@ -4,7 +4,8 @@
  *
  * Only FINISHED sessions are used: today's candle counts once the market has closed (15:30 IST + a settle
  * margin); during the session Kite's forming candle is dropped. The cache keeps each stock's candles in memory
- * until a newer session finishes, so a re-run (another target, another stock list…) asks Kite only for what's new.
+ * for the rest of the session they were fetched in — re-runs that day ask Kite for nothing — and refetches after
+ * the next session finishes, which also picks up Kite's later corrections (a split adjusted after the fact).
  * Memory only (never the database); the least recently used stocks go first past MAX_BARS.
  */
 import { addDays, dailyBars, istDateOf, sliceBars, weekday, type Bars, type RawDailyCandle } from '../engine/bars';
@@ -22,7 +23,8 @@ export interface CandleStats {
 const IST_MS = 5.5 * 3600_000;
 /** 15:30 close + 10 min for Kite's final daily candle. */
 const SESSION_DONE_MIN = 15 * 60 + 40;
-const MAX_BARS = 2_000_000;
+/** ~80 bytes a candle: 4M ≈ 320 MB — a NIFTY 500 run with history from 2000 fits without refetching mid-run. */
+const MAX_BARS = 4_000_000;
 
 /** The last date whose daily candle is final: today after the close on a weekday, else the previous weekday. */
 export function lastFinishedSession(now: number): string {
@@ -39,6 +41,8 @@ interface Entry {
   from: string;
   /** Candles are final up to this date (the data's end when fetched). */
   asOf: string;
+  /** The last finished session when fetched — the entry is reused only until a newer one finishes. */
+  session: string;
   bars: Bars;
 }
 
@@ -61,16 +65,17 @@ export class CandleCache {
   async daily(token: number, from: string, to: string, stats: CandleStats): Promise<Bars> {
     const end = this.endDate(to);
     const hit = this.entries.get(token);
-    if (hit && hit.from <= from && hit.asOf >= end) {
+    const session = lastFinishedSession(this.now());
+    if (hit && hit.session === session && hit.from <= from && hit.asOf >= end) {
       stats.cached++;
       this.touch(token, hit);
       return this.cut(hit.bars, from, end);
     }
     stats.fetched++;
-    const fetchFrom = hit && hit.from < from ? hit.from : from;
+    const fetchFrom = hit && hit.session === session && hit.from < from ? hit.from : from;
     const rows = await this.source.getCandles({ token, timeframe: '1d', from: fetchFrom, to: end });
     const bars = dailyBars(rows.filter((c) => istDateOf(c.time * 1000) <= end));
-    this.store(token, { from: fetchFrom, asOf: end, bars });
+    this.store(token, { from: fetchFrom, asOf: end, session, bars });
     return this.cut(bars, from, end);
   }
 

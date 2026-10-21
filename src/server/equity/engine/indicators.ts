@@ -14,60 +14,68 @@ type Col = Float64Array;
 
 const blank = (n: number): Col => new Float64Array(n).fill(NaN);
 
-function firstFinite(a: Col): number {
-  for (let i = 0; i < a.length; i++) if (Number.isFinite(a[i]!)) return i;
-  return -1;
+/**
+ * Apply `f` to the defined values of `src` only and put the results back in place — TradingView ignores na
+ * values in a source series, so a gap (e.g. ROC of a zero-volume day) leaves that candle na instead of breaking
+ * every average after it. Leading na (an indicator still warming up) is the common case of the same rule.
+ */
+function definedOnly(src: Col, f: (dense: Col) => Col): Col {
+  const idx: number[] = [];
+  for (let i = 0; i < src.length; i++) if (Number.isFinite(src[i]!)) idx.push(i);
+  if (idx.length === src.length) return f(src);
+  const res = f(Float64Array.from(idx, (i) => src[i]!));
+  const out = blank(src.length);
+  idx.forEach((i, k) => (out[i] = res[k]!));
+  return out;
 }
 
-/** Feed the defined part of `src` through a streaming accumulator. */
+/** Feed a gap-free series through a streaming accumulator. */
 function stream(src: Col, make: () => { push(x: number): number | undefined }): Col {
   const out = blank(src.length);
-  const f = firstFinite(src);
-  if (f < 0) return out;
   const acc = make();
-  for (let i = f; i < src.length; i++) {
+  for (let i = 0; i < src.length; i++) {
     const v = acc.push(src[i]!);
     if (v !== undefined) out[i] = v;
   }
   return out;
 }
 
-export function sma(src: Col, n: number): Col {
-  const out = blank(src.length);
-  const f = firstFinite(src);
-  if (f < 0) return out;
-  let sum = 0;
-  for (let i = f; i < src.length; i++) {
-    sum += src[i]!;
-    if (i - f >= n) sum -= src[i - n]!;
-    if (i - f + 1 >= n) out[i] = sum / n;
-  }
-  return out;
-}
+export const sma = (src: Col, n: number): Col =>
+  definedOnly(src, (x) => {
+    const out = blank(x.length);
+    let sum = 0;
+    for (let i = 0; i < x.length; i++) {
+      sum += x[i]!;
+      if (i >= n) sum -= x[i - n]!;
+      if (i + 1 >= n) out[i] = sum / n;
+    }
+    return out;
+  });
 
-export const ema = (src: Col, n: number): Col => stream(src, () => new Ema(n));
-export const rma = (src: Col, n: number): Col => stream(src, () => new Rma(n));
+export const ema = (src: Col, n: number): Col => definedOnly(src, (x) => stream(x, () => new Ema(n)));
+export const rma = (src: Col, n: number): Col => definedOnly(src, (x) => stream(x, () => new Rma(n)));
 
-export function wma(src: Col, n: number): Col {
-  const out = blank(src.length);
-  const f = firstFinite(src);
-  if (f < 0) return out;
-  const norm = (n * (n + 1)) / 2;
-  for (let i = f + n - 1; i < src.length; i++) {
-    let s = 0;
-    for (let j = 0; j < n; j++) s += (n - j) * src[i - j]!;
-    out[i] = s / norm;
-  }
-  return out;
-}
+export const wma = (src: Col, n: number): Col =>
+  definedOnly(src, (x) => {
+    const out = blank(x.length);
+    const norm = (n * (n + 1)) / 2;
+    for (let i = n - 1; i < x.length; i++) {
+      let s = 0;
+      for (let j = 0; j < n; j++) s += (n - j) * x[i - j]!;
+      out[i] = s / norm;
+    }
+    return out;
+  });
 
 export const movingAverage = (type: EqMaType, src: Col, n: number): Col => (type === 'EMA' ? ema(src, n) : type === 'WMA' ? wma(src, n) : sma(src, n));
 
 export function rsi(src: Col, n: number): Col {
-  return stream(src, () => {
-    const calc = new RsiCalculator(n);
-    return { push: (x: number) => calc.update(x) };
-  });
+  return definedOnly(src, (x) =>
+    stream(x, () => {
+      const calc = new RsiCalculator(n);
+      return { push: (v: number) => calc.update(v) };
+    }),
+  );
 }
 
 export function macd(close: Col, fast: number, slow: number, signal: number): { line: Col; signal: Col; hist: Col } {
@@ -99,8 +107,13 @@ export function bollinger(close: Col, n: number, k: number): Record<'upper' | 'm
     let mean = 0;
     for (let j = i - n + 1; j <= i; j++) mean += close[j]!;
     mean /= n;
+    // TradingView's ta.stdev zeroes deviations within 1e-10 — a flat window has no width (and %B is undefined),
+    // not a floating-point sliver that makes %B any number at all.
     let v = 0;
-    for (let j = i - n + 1; j <= i; j++) v += (close[j]! - mean) ** 2;
+    for (let j = i - n + 1; j <= i; j++) {
+      const dev = close[j]! - mean;
+      if (Math.abs(dev) > 1e-10) v += dev * dev;
+    }
     const std = Math.sqrt(v / n);
     const upper = mean + k * std;
     const lower = mean - k * std;
@@ -175,6 +188,8 @@ export function dmi(b: Bars, n: number, smoothing: number): { plus: Col; minus: 
   const p = new Rma(n);
   const m = new Rma(n);
   const ax = new Rma(smoothing);
+  let pdi = NaN;
+  let mdi = NaN;
   for (let i = 1; i < len; i++) {
     const up = b.high[i]! - b.high[i - 1]!;
     const down = b.low[i - 1]! - b.low[i]!;
@@ -183,8 +198,12 @@ export function dmi(b: Bars, n: number, smoothing: number): { plus: Col; minus: 
     const pv = p.push(up > down && up > 0 ? up : 0);
     const mv = m.push(down > up && down > 0 ? down : 0);
     if (a === undefined || pv === undefined || mv === undefined) continue;
-    const pdi = a === 0 ? 0 : (100 * pv) / a;
-    const mdi = a === 0 ? 0 : (100 * mv) / a;
+    // fixnan: with no range at all (a flat, untraded stretch) TradingView keeps the last values.
+    if (a !== 0) {
+      pdi = (100 * pv) / a;
+      mdi = (100 * mv) / a;
+    }
+    if (!Number.isFinite(pdi)) continue;
     plus[i] = pdi;
     minus[i] = mdi;
     const sum = pdi + mdi;

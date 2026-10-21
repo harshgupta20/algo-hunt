@@ -7,12 +7,12 @@ import { describe, expect, it } from 'vitest';
 import type { EqBacktestRequest, EqOrderRules, EqStrategyDefinition } from '../../src/shared/equity';
 import { EQ_ORDER_RULES, all, any, cond, defaultDefinition, ind, num, price } from '../../src/shared/equity';
 import { dailyBars, weeklyBars, type Bars } from '../../src/server/equity/engine/bars';
-import { runBacktest, type StockCandles } from '../../src/server/equity/engine/backtest';
-import { orderCharges } from '../../src/server/equity/engine/charges';
+import { coarsePriceNotes, runBacktest, type StockCandles } from '../../src/server/equity/engine/backtest';
+import { orderCharges, saleCharges } from '../../src/server/equity/engine/charges';
 
-type Row = [date: string, open: number, high: number, low: number, close: number];
+type Row = [date: string, open: number, high: number, low: number, close: number, volume?: number];
 
-const toBars = (rows: Row[]): Bars => dailyBars(rows.map(([d, open, high, low, close]) => ({ time: Date.parse(`${d}T00:00:00+05:30`) / 1000, open, high, low, close, volume: 1000 })));
+const toBars = (rows: Row[]): Bars => dailyBars(rows.map(([d, open, high, low, close, volume = 1000]) => ({ time: Date.parse(`${d}T00:00:00+05:30`) / 1000, open, high, low, close, volume })));
 
 /** Weekdays from `start` (a Monday), one row per close; open = previous close + `gap`, high/low = ±1 around open/close. */
 function daily(start: string, closes: number[], gap = 0): Row[] {
@@ -48,6 +48,8 @@ const run = (def: EqStrategyDefinition, stocks: Array<[string, Row[]]>, patch: P
 };
 
 const SMA = (period: number) => ind('SMA', { period });
+/** Results list trades newest first; these tests read them in order. */
+const oldestFirst = <T extends { entryDate: string }>(ts: T[]) => [...ts].sort((a, b) => a.entryDate.localeCompare(b.entryDate));
 
 describe('crossovers and fills', () => {
   // SMA(2) crosses above SMA(3) at the 7th close (12): 10.5 > 9.67 after 8.5 ≤ 8.67; back below at the 10th (9): 10 < 11 after 12 ≥ 12.
@@ -79,8 +81,8 @@ describe('crossovers and fills', () => {
   it('a real backtest: next open, 0.1 % slippage shown with the open in each order, Zerodha charges', () => {
     const r = run(def, [['AAA', rows]], {}, EQ_ORDER_RULES);
     const [buy, sell] = r.trades[0]!.fills;
-    // Bought at the 8th open (13) + 0.1 %; sold at the 11th open (10) − 0.1 %.
-    expect(buy).toMatchObject({ date: rows[7]![0], price: 13.01, charges: orderCharges('BUY', 130.13) });
+    // Bought at the 8th open (13) + 0.1 % = 13.013 → 13.02 (whole paise, rounded up); sold at the 11th open (10) − 0.1 %.
+    expect(buy).toMatchObject({ date: rows[7]![0], price: 13.02, charges: orderCharges('BUY', 130.2) });
     expect(buy!.reason).toMatch(/— bought at the next open \(₹13\.00 \+ 0\.1% slippage\)$/);
     expect(sell).toMatchObject({ date: rows[10]![0], price: 9.99, charges: orderCharges('SELL', 99.9) });
     expect(sell!.reason).toMatch(/— sold at the next open \(₹10\.00 − 0\.1% slippage\)$/);
@@ -210,9 +212,9 @@ describe('money', () => {
   });
 
   it('Zerodha delivery charges per order', () => {
-    expect(orderCharges('BUY', 100_000)).toBe(118.62); // STT 100 + exchange 2.97 + SEBI 0.10 + stamp 15 + GST 0.55
-    expect(orderCharges('SELL', 100_000)).toBe(118.96); // STT 100 + exchange 2.97 + SEBI 0.10 + GST 0.55 + DP 15.34 (GST included)
-    expect(orderCharges('SELL', 13_786.2)).toBe(29.63); // the MARUTI sale that showed ₹32.39 when GST was added to the DP charge twice
+    expect(orderCharges('BUY', 100_000)).toBe(118.74); // STT 100 + exchange 3.07 + SEBI 0.10 + stamp 15 + GST 0.57
+    expect(orderCharges('SELL', 100_000)).toBe(119.08); // STT 100 + exchange 3.07 + SEBI 0.10 + GST 0.57 + DP 15.34 (GST included)
+    expect(orderCharges('SELL', 13_786.2)).toBe(29.64); // the MARUTI sale that showed ₹32.39 when GST was added to the DP charge twice
   });
 
   it('charges and slippage come off the P&L', () => {
@@ -230,8 +232,38 @@ describe('entry trigger, time exit and the end of the test', () => {
 
   it('WHEN_TRUE re-enters after an exit; BECOMES_TRUE only when it turns true', () => {
     const exit = { targetPct: 10, stopLossPct: null, trailingStopPct: null, priceBase: 'AVERAGE' as const, when: null, maxBars: null };
-    expect(run(plain({ entry: { when: always, trigger: 'WHEN_TRUE' }, exit }), [['AAA', rows]]).trades.length).toBe(3);
+    // Bought at 100; day 2's high reaches the 110 target → sold there, and bought again at day 2's close (120).
+    const again = oldestFirst(run(plain({ entry: { when: always, trigger: 'WHEN_TRUE' }, exit }), [['AAA', rows]]).trades);
+    expect(again.map((t) => [t.entryDate, t.exitDate, t.exitReason])).toEqual([
+      [rows[0]![0], rows[1]![0], 'TARGET'],
+      [rows[1]![0], rows[4]![0], 'END'],
+    ]);
     expect(run(plain({ entry: { when: always, trigger: 'BECOMES_TRUE' }, exit }), [['AAA', rows]]).trades.length).toBe(1);
+  });
+
+  it('a stock sold at the open can signal again that evening and buy at the next open', () => {
+    // Close crosses above 105 at day 2 (110) → bought day 3's open; close < 105 at day 3 → sold day 4's open;
+    // close crosses above 105 again at day 4 (108) → bought day 5's open (a crossing is never repeated, so
+    // skipping it would lose the trade).
+    const r = daily('2025-01-06', [100, 110, 104, 108, 109, 109]);
+    const def = plain({
+      entry: { when: all('e', cond('e1', price('close'), 'CROSSES_ABOVE', num(105))), trigger: 'WHEN_TRUE' },
+      exit: { targetPct: null, stopLossPct: null, trailingStopPct: null, priceBase: 'AVERAGE', when: any('x', cond('x1', price('close'), 'LT', num(105))), maxBars: null },
+    });
+    const t = oldestFirst(run(def, [['AAA', r]], {}, { ...SIMPLE, fill: 'NEXT_OPEN' }).trades);
+    expect(t.map((x) => [x.entryDate, x.exitDate])).toEqual([
+      [r[2]![0], r[3]![0]],
+      [r[4]![0], r[5]![0]],
+    ]);
+  });
+
+  it('a sale AT a close blocks a re-buy at that same close', () => {
+    // Fills at the close: day 1 buys at 100, the 2-day time exit sells at day 3's close — no buy at that close.
+    const t = oldestFirst(run(plain({ entry: { when: always, trigger: 'WHEN_TRUE' }, exit: { targetPct: null, stopLossPct: null, trailingStopPct: null, priceBase: 'AVERAGE', when: null, maxBars: 2 } }), [['AAA', rows]]).trades);
+    expect(t.map((x) => [x.entryDate, x.exitDate, x.exitReason])).toEqual([
+      [rows[0]![0], rows[2]![0], 'TIME'],
+      [rows[3]![0], rows[4]![0], 'END'],
+    ]);
   });
 
   it('time exit after N checks', () => {
@@ -243,6 +275,140 @@ describe('entry trigger, time exit and the end of the test', () => {
     const r = run(plain({ entry: { when: always, trigger: 'BECOMES_TRUE' } }), [['AAA', daily('2025-01-06', [100])]], {}, { ...SIMPLE, fill: 'NEXT_OPEN' });
     expect(r.trades).toEqual([]);
     expect(r.skipped).toEqual([{ symbol: 'AAA', date: '2025-01-06', kind: 'ENTRY', reason: 'Signal at the last check — it would buy at the next open, after the period' }]);
+  });
+});
+
+describe('real-market limits', () => {
+  const cross105 = all('e', cond('e1', price('close'), 'CROSSES_ABOVE', num(105)));
+  const below105 = any('x', cond('x1', price('close'), 'LT', num(105)));
+  const NEXT: EqOrderRules = { ...SIMPLE, fill: 'NEXT_OPEN' };
+  const noExit = { targetPct: null, stopLossPct: null, trailingStopPct: null, priceBase: 'AVERAGE' as const, when: null, maxBars: null };
+
+  it('repairs bad ticks: an open outside the high–low, a high below the low', () => {
+    const b = toBars([['2025-01-06', 67, 66, 64.15, 66], ['2025-01-07', 60.7, 59.35, 60, 60.98]]);
+    expect([b.open[0], b.high[0], b.low[0], b.close[0]]).toEqual([67, 67, 64.15, 66]);
+    expect([b.high[1], b.low[1]]).toEqual([60.98, 59.35]);
+  });
+
+  it('a zero-volume day trades nothing: the buy lapses, a queued sale waits', () => {
+    const def = plain({ entry: { when: cross105, trigger: 'WHEN_TRUE' }, exit: { ...noExit, when: below105 } });
+    const quiet: Row[] = [['2025-01-06', 100, 101, 99, 100], ['2025-01-07', 100, 111, 99, 110], ['2025-01-08', 110, 110, 110, 110, 0]];
+    const r1 = run(def, [['AAA', quiet]], {}, NEXT);
+    expect(r1.trades).toEqual([]);
+    expect(r1.skipped[0]).toMatchObject({ kind: 'ENTRY', reason: 'No trades in AAA that day (zero volume)' });
+    const waits: Row[] = [
+      ['2025-01-06', 100, 101, 99, 100],
+      ['2025-01-07', 100, 111, 99, 110],
+      ['2025-01-08', 110, 112, 109, 110],
+      ['2025-01-09', 110, 111, 99, 100],
+      ['2025-01-10', 100, 100, 100, 100, 0],
+      ['2025-01-13', 98, 99, 97, 98],
+    ];
+    expect(run(def, [['AAA', waits]], {}, NEXT).trades[0]).toMatchObject({ entryDate: '2025-01-08', exitDate: '2025-01-13', exitPrice: 98 });
+  });
+
+  it('a lot bought and sold the same day pays intraday charges (no DP charge)', () => {
+    // Close crosses above 105 on day 2 → bought at day 3's open (110); day 3's low reaches the 2 % stop (107.80).
+    const rows: Row[] = [
+      ['2025-01-06', 100, 101, 99, 100],
+      ['2025-01-07', 100, 111, 99, 110],
+      ['2025-01-08', 110, 111, 100, 104],
+    ];
+    const def = plain({ entry: { when: cross105, trigger: 'WHEN_TRUE' }, exit: { ...noExit, stopLossPct: 2 }, sizing: { mode: 'QUANTITY', value: 100 } });
+    const r = run(def, [['AAA', rows]], {}, { ...NEXT, charges: true });
+    const [buy, sell] = r.trades[0]!.fills;
+    expect(buy).toMatchObject({ date: '2025-01-08', price: 110, charges: orderCharges('BUY', 11_000, true) });
+    expect(sell).toMatchObject({ date: '2025-01-08', price: 107.8, charges: orderCharges('SELL', 10_780, true) });
+    expect(sell!.charges).toBeLessThan(15.34); // no DP charge
+    expect(r.trades[0]!.charges).toBeCloseTo(buy!.charges + sell!.charges, 6);
+    expect(r.finalEquity).toBeCloseTo(1_000_000 + r.trades[0]!.netPnl, 2);
+    // One sale order of shares bought today and earlier: intraday on the first, delivery (with DP) on the rest.
+    expect(saleCharges(100, 10, 5)).toBe(Math.round((orderCharges('SELL', 1000, true) + orderCharges('SELL', 500)) * 100) / 100);
+  });
+
+  it('“max stocks held” doesn’t count a stock already being sold at the next open', () => {
+    // AAA: bought day 3, exit signal day 4 (sold day 5's open). BBB signals on day 4 → bought day 5 after AAA's sale.
+    const aaa = daily('2025-01-06', [100, 110, 110, 100, 100, 100]);
+    const bbb = daily('2025-01-06', [100, 100, 100, 110, 110, 110]);
+    const def = plain({ entry: { when: cross105, trigger: 'WHEN_TRUE' }, exit: { ...noExit, when: below105 } });
+    const t = run(def, [['AAA', aaa], ['BBB', bbb]], { maxPositions: 1 }, NEXT).trades;
+    expect(oldestFirst(t).map((x) => [x.symbol, x.entryDate])).toEqual([
+      ['AAA', aaa[2]![0]],
+      ['BBB', bbb[4]![0]],
+    ]);
+  });
+
+  it('a pyramid add that would open at or below the stop it sets is not bought', () => {
+    // Bought at day 2's open (100). Day 2: SMA(2) 102 ≥ 100 → add at day 3's open (104), stop 102. Day 3: SMA(2) 105
+    // reaches the last buy (104), close 106 → a second add queued with stop 105 — but day 4 opens at 104: not bought.
+    const rows: Row[] = [
+      ['2025-01-06', 100, 101, 99, 100],
+      ['2025-01-07', 100, 105, 99, 104],
+      ['2025-01-08', 104, 107, 103, 106],
+      ['2025-01-09', 104, 105, 103, 104],
+      ['2025-01-10', 104, 105, 103, 104.5],
+    ];
+    const def = plain({ entry: { when: all('e', cond('e1', price('close'), 'GT', num(0))), trigger: 'BECOMES_TRUE' }, exit: noExit, pyramid: { enabled: true, maType: 'SMA', maPeriod: 2, maxAdds: null } });
+    const r = run(def, [['AAA', rows]], {}, NEXT);
+    expect(r.trades[0]).toMatchObject({ adds: 1, exitReason: 'END' });
+    expect(r.skipped[0]).toMatchObject({ kind: 'ADD', date: '2025-01-09', reason: 'Opened at ₹104.00, at or below the new stop ₹105.00 — no add' });
+    // Day 5: SMA(2) 104.25 ≥ 104 with the close at 104.5 → an add signalled at the last check, listed.
+    expect(r.skipped[1]).toMatchObject({ kind: 'ADD', date: '2025-01-10', reason: 'Signal at the last check — it would add at the next open, after the period' });
+  });
+
+  it('a next-open order lapses when the stock doesn’t trade on the next market day', () => {
+    const aaa = daily('2025-01-06', [100, 100, 100, 100]);
+    const bbb: Row[] = [aaa[0]!, ['2025-01-07', 100, 111, 99, 110], ['2025-01-09', 110, 111, 109, 110]].map((r, i) => (i === 0 ? ['2025-01-06', 100, 101, 99, 100] : r)) as Row[];
+    const def = plain({ entry: { when: cross105, trigger: 'WHEN_TRUE' }, exit: noExit });
+    const r = run(def, [['AAA', aaa], ['BBB', bbb]], {}, NEXT);
+    expect(r.trades).toEqual([]);
+    expect(r.skipped).toEqual([{ symbol: 'BBB', date: '2025-01-09', kind: 'ENTRY', reason: 'No trade in BBB on 2025-01-08, the day after the signal — the next-open order lapsed' }]);
+  });
+
+  it('circuit locks: no buy at the upper circuit; a sale waits through the lower circuit', () => {
+    const def = plain({ entry: { when: cross105, trigger: 'WHEN_TRUE' }, exit: { ...noExit, when: below105 } });
+    // Signal day 2; day 3 is locked up at 115.50 (one price, above 110.05) → the buy lapses. (Paise prices: whole
+    // rupees on a ₹100 stock would look like Kite's rounded history, where one-price days aren't locks.)
+    const up: Row[] = [['2025-01-06', 100.05, 101.1, 99.15, 100.2], ['2025-01-07', 100.25, 111.3, 99.35, 110.05], ['2025-01-08', 115.5, 115.5, 115.5, 115.5]];
+    const r1 = run(def, [['AAA', up]], {}, NEXT);
+    expect(r1.trades).toEqual([]);
+    expect(r1.skipped[0]).toMatchObject({ kind: 'ENTRY', reason: 'Locked at the upper circuit (₹115.50 all day) — no sellers to buy from' });
+    // Bought day 3; exit signal day 4 (100.15 < 105); day 5 locked down at 95.15 → no sale; sold at day 6's open.
+    const down: Row[] = [
+      ['2025-01-06', 100.05, 101.1, 99.15, 100.2],
+      ['2025-01-07', 100.25, 111.3, 99.35, 110.05],
+      ['2025-01-08', 110.1, 112.15, 109.2, 110.35],
+      ['2025-01-09', 110.4, 111.45, 99.55, 100.15],
+      ['2025-01-10', 95.15, 95.15, 95.15, 95.15],
+      ['2025-01-13', 96.35, 97.4, 94.45, 95.6],
+    ];
+    const t = run(def, [['AAA', down]], {}, NEXT).trades[0]!;
+    expect(t).toMatchObject({ entryDate: '2025-01-08', exitDate: '2025-01-13', exitPrice: 96.35, exitReason: 'EXIT_RULE' });
+    // The same days in rounded (coarse) history: a one-price day isn't taken as a lock — the sale fills at day 5's open.
+    const rounded = down.map(([d, o, h, l, c]): Row => [d, Math.round(o), Math.round(h), Math.round(l), Math.round(c)]);
+    expect(run(def, [['AAA', rounded]], {}, NEXT).trades[0]).toMatchObject({ exitDate: '2025-01-10', exitPrice: 95 });
+  });
+
+  it('pyramiding on a flat stock: an MA equal to the last buy counts (floating-point noise doesn’t decide)', () => {
+    const rows = daily('2025-01-06', Array(12).fill(6.05));
+    const def = plain({ entry: { when: all('e', cond('e1', price('close'), 'GT', num(0))), trigger: 'BECOMES_TRUE' }, exit: noExit, pyramid: { enabled: true, maType: 'WMA', maPeriod: 5, maxAdds: 1 } });
+    expect(run(def, [['AAA', rows]]).trades[0]!.adds).toBe(1);
+  });
+
+  it('flags orders that were large against the day’s traded volume', () => {
+    // 1,000 shares per buy against 1,000 traded a day (the helper's volume) → 100 % of the day.
+    const rows = daily('2025-01-06', [100.05, 110.15, 110.25, 100.35, 100.45]);
+    const def = plain({ entry: { when: cross105, trigger: 'WHEN_TRUE' }, exit: { ...noExit, when: below105 }, sizing: { mode: 'QUANTITY', value: 1000 } });
+    const r = run(def, [['AAA', rows]], {}, NEXT);
+    expect(r.perSymbol[0]!.notes).toContain("2 orders were over 10% of that day's traded volume (up to 100%) — a real order that size would likely fill worse than the 0.1% slippage assumed");
+  });
+
+  it('flags stretches where Kite’s adjusted prices move in coarse steps', () => {
+    const steps = Array.from({ length: 80 }, (_, i) => 6 + 0.5 * (i % 4));
+    const coarse = toBars(daily('2012-01-02', steps));
+    expect(coarsePriceNotes(coarse, '2012-01-01', '2012-12-31')[0]).toMatch(/^Kite's prices from 2012-01-02 to 2012-04-20 move in coarse steps \(up to \d+\.\d% of the price\)/);
+    const fine = toBars(daily('2012-01-02', steps.map((x, i) => x + 0.05 * (i % 3))));
+    expect(coarsePriceNotes(fine, '2012-01-01', '2012-12-31')).toEqual([]);
   });
 });
 

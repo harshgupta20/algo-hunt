@@ -8,6 +8,7 @@
  *   Daily strategy   a check per trading day.
  *   Weekly strategy  a check per completed week, on its last trading day (no half weeks).
  *   Crossings        compare this check with the previous one (TradingView ta.crossover / ta.crossunder).
+ *   Equal            values within 1 part in 10⁹ are equal (floating-point noise never decides a signal).
  */
 import type { EqCondition, EqLeafValue, EqNode, EqOperand, EqTimeframe } from '@/shared/equity';
 import { EQ_OPERATOR, conditionText, fmtNum, operandText } from '@/shared/equity';
@@ -158,26 +159,37 @@ export class Evaluator {
   }
 }
 
+/**
+ * Values within 1 part in 10⁹ are EQUAL: floating-point noise must never decide a signal. (A flat stock's RSI is
+ * constant, so it equals its own SMA — but a rolling sum's last binary digit can land either side.)
+ */
+const tol = (a: number, b: number) => 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+export const above = (a: number, b: number) => a - b > tol(a, b);
+export const below = (a: number, b: number) => b - a > tol(a, b);
+/** a ≥ b / a ≤ b with the same tolerance — for the simulator's price rules (stops, targets, pyramiding). */
+export const atLeast = (a: number, b: number) => !below(a, b);
+export const atMost = (a: number, b: number) => !above(a, b);
+
 function compare(op: EqCondition['op'], L: Float64Array, R: Float64Array, k: number): number {
   const l = L[k]!;
   const r = R[k]!;
   if (!Number.isFinite(l) || !Number.isFinite(r)) return UNKNOWN;
   switch (op) {
     case 'GT':
-      return l > r ? TRUE : FALSE;
+      return above(l, r) ? TRUE : FALSE;
     case 'GTE':
-      return l >= r ? TRUE : FALSE;
+      return below(l, r) ? FALSE : TRUE;
     case 'LT':
-      return l < r ? TRUE : FALSE;
+      return below(l, r) ? TRUE : FALSE;
     case 'LTE':
-      return l <= r ? TRUE : FALSE;
+      return above(l, r) ? FALSE : TRUE;
     case 'CROSSES_ABOVE':
     case 'CROSSES_BELOW': {
       if (k < 1) return UNKNOWN;
       const pl = L[k - 1]!;
       const pr = R[k - 1]!;
       if (!Number.isFinite(pl) || !Number.isFinite(pr)) return UNKNOWN;
-      return op === 'CROSSES_ABOVE' ? (l > r && pl <= pr ? TRUE : FALSE) : l < r && pl >= pr ? TRUE : FALSE;
+      return op === 'CROSSES_ABOVE' ? (above(l, r) && !above(pl, pr) ? TRUE : FALSE) : below(l, r) && !below(pl, pr) ? TRUE : FALSE;
     }
   }
 }

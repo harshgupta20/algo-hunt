@@ -79,6 +79,57 @@ export function requiredBars(d: EqStrategyDefinition): number {
   return need;
 }
 
+/** Candles a recursive average (smoothing factor `alpha`) needs to forget where it started, to 1 part in 10⁷. */
+const forget = (alpha: number) => Math.ceil(Math.log(1e-7) / Math.log(1 - alpha));
+const emaSettle = (n: number) => n + forget(2 / (n + 1));
+const rmaSettle = (n: number) => n + forget(1 / n);
+
+/**
+ * Candles before an operand's value equals — to 1 part in 10⁷ — the value TradingView computes from the stock's
+ * first candle. Plain windows (SMA, WMA, Bollinger, highest / lowest, ROC) are exact after their period; recursive
+ * ones (EMA, Wilder's RSI / ATR / DMI / ADX, MACD, Supertrend) carry their start forward and need far more.
+ */
+export function operandSettleBars(o: EqOperand): number {
+  if (o.kind === 'NUMBER') return 0;
+  const back = (o.barsAgo ?? 0) + 1;
+  if (o.kind === 'PRICE') return back;
+  const p = (name: string, def: number) => o.params[name] ?? EQ_INDICATOR[o.indicator]?.params.find((x) => x.name === name)?.default ?? def;
+  const period = p('period', 14);
+  let need: number;
+  switch (o.indicator) {
+    case 'EMA':
+      need = emaSettle(period);
+      break;
+    case 'RSI':
+    case 'ATR':
+    case 'DMI':
+      need = rmaSettle(period) + 1;
+      break;
+    case 'SUPERTREND':
+      // ATR settles like any Wilder average; the bands ratchet until the trend flips, so allow a year of flips.
+      need = rmaSettle(period) + 250;
+      break;
+    case 'ADX':
+      need = rmaSettle(period) + rmaSettle(p('smoothing', 14)) + 1;
+      break;
+    case 'MACD':
+      need = emaSettle(p('slow', 26)) + emaSettle(p('signal', 9));
+      break;
+    default:
+      need = period + 1;
+  }
+  if (o.ma) need += o.ma.type === 'EMA' ? emaSettle(o.ma.period) : o.ma.period;
+  return need + back;
+}
+
+/** Candles of the strategy's timeframe to fetch before the period so every value matches TradingView's. */
+export function settleBars(d: EqStrategyDefinition): number {
+  let need = 0;
+  for (const c of [...leavesOf(d.entry.when), ...leavesOf(d.exit.when)]) for (const o of [c.left, c.right]) need = Math.max(need, operandSettleBars(o));
+  if (d.pyramid.enabled) need = Math.max(need, operandSettleBars({ kind: 'INDICATOR', indicator: d.pyramid.maType, params: { period: d.pyramid.maPeriod } }));
+  return need;
+}
+
 function checkOperand(o: EqOperand, path: string, issues: ValidationIssue[]) {
   if (o.kind === 'NUMBER') {
     if (!Number.isFinite(o.value)) issues.push({ path, message: 'Enter a number', severity: 'error' });
@@ -141,6 +192,8 @@ export function validateDefinition(d: EqStrategyDefinition): ValidationIssue[] {
   if (d.exit.maxBars !== null && (!Number.isInteger(d.exit.maxBars) || d.exit.maxBars < 1 || d.exit.maxBars > EQ_LIMITS.maxHoldingBars)) issues.push({ path: 'exit.maxBars', message: `Time exit must be a whole number of candles from 1 to ${EQ_LIMITS.maxHoldingBars}`, severity: 'error' });
   const hasExit = d.exit.targetPct !== null || d.exit.stopLossPct !== null || d.exit.trailingStopPct !== null || leavesOf(d.exit.when).length > 0 || d.exit.maxBars !== null || d.pyramid.enabled;
   if (!hasExit) issues.push({ path: 'exit', message: 'No exit: positions only close at the end of a backtest — add a target, a stop or an exit condition', severity: 'warning' });
+  else if (d.pyramid.enabled && d.exit.targetPct === null && d.exit.stopLossPct === null && d.exit.trailingStopPct === null && !leavesOf(d.exit.when).length && d.exit.maxBars === null)
+    issues.push({ path: 'exit', message: 'Pyramiding is the only exit: the first lot has no stop until the first add, so a stock whose MA never reaches the buy price is held to the end — add a stop-loss or an exit condition', severity: 'warning' });
   if (d.pyramid.enabled) {
     if (!Number.isInteger(d.pyramid.maPeriod) || d.pyramid.maPeriod < 2 || d.pyramid.maPeriod > 500) issues.push({ path: 'pyramid.maPeriod', message: 'Pyramiding MA period must be a whole number from 2 to 500', severity: 'error' });
     if (d.pyramid.maxAdds !== null && (!Number.isInteger(d.pyramid.maxAdds) || d.pyramid.maxAdds < 1 || d.pyramid.maxAdds > EQ_LIMITS.maxAdds)) issues.push({ path: 'pyramid.maxAdds', message: `Max adds must be a whole number from 1 to ${EQ_LIMITS.maxAdds}`, severity: 'error' });

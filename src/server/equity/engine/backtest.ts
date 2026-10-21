@@ -30,12 +30,54 @@ export function prepareStock(def: EqStrategyDefinition, symbol: string, name: st
     name,
     daily,
     timeline,
+    coarse: coarseMask(daily),
     entry: ev.node(def.entry.when),
     exit: exitGroup ? ev.node(exitGroup) : null,
     ma: def.pyramid.enabled ? ev.read({ kind: 'INDICATOR', indicator: def.pyramid.maType, params: { period: def.pyramid.maPeriod } }) : null,
     why: (kind, k) => ev.describe(kind === 'ENTRY' ? def.entry.when : exitGroup!, k),
   };
   return { stock, evaluator: ev };
+}
+
+/**
+ * Kite back-adjusts history for splits and bonuses but rounds the result, so long before a big split prices can
+ * move in coarse steps (Bajaj Finance in 2012: ₹0.50 steps on a ₹7 price). In blocks of 40 candles from the first,
+ * a block is COARSE when every price is a multiple of a step of ₹0.10 or more that is at least 0.2 % of the
+ * (median) close — far coarser than the exchange's real tick — and it has at least 5 different prices.
+ * Per candle: the step's % of the price (0 = fine).
+ */
+export function coarseMask(d: Bars): Float64Array {
+  const STEPS = [5, 1, 0.5, 0.25, 0.1];
+  const BLOCK = 40;
+  const on = (x: number, step: number) => Math.abs(x / step - Math.round(x / step)) < 1e-6;
+  const mask = new Float64Array(d.length);
+  for (let i = 0; i < d.length; i += BLOCK) {
+    const z = Math.min(i + BLOCK, d.length);
+    const values: number[] = [];
+    for (let j = i; j < z; j++) values.push(d.open[j]!, d.high[j]!, d.low[j]!, d.close[j]!);
+    if (new Set(values).size < 5) continue; // a flat, barely traded stretch says nothing about rounding
+    const step = STEPS.find((st) => values.every((x) => on(x, st)));
+    if (!step) continue;
+    const closes = values.filter((_, k) => k % 4 === 3).sort((a, b) => a - b);
+    const pct = (step / closes[Math.floor(closes.length / 2)]!) * 100;
+    if (pct >= 0.2) mask.fill(pct, i, z);
+  }
+  return mask;
+}
+
+/** The coarse stretches of [from, to], in words (with the step: every price in them is a multiple of it). */
+export function coarsePriceNotes(d: Bars, from: string, to: string, mask = coarseMask(d)): string[] {
+  const out: Array<{ from: string; to: string; pct: number; i: number }> = [];
+  for (let i = 0; i < d.length; i++) {
+    if (!mask[i] || d.date[i]! < from || d.date[i]! > to) continue;
+    const last = out.at(-1);
+    if (last && last.i === i - 1) {
+      last.to = d.date[i]!;
+      last.pct = Math.max(last.pct, mask[i]!);
+      last.i = i;
+    } else out.push({ from: d.date[i]!, to: d.date[i]!, pct: mask[i]!, i });
+  }
+  return out.map((r) => `Kite's prices from ${r.from} to ${r.to} move in coarse steps (up to ${r.pct.toFixed(1)}% of the price) — history adjusted for a later split or bonus and rounded by Kite, so signals and P&L there are approximate`);
 }
 
 /** Data limits worth telling the trader: late listing, too little history to decide early in the period. */
@@ -45,6 +87,7 @@ function dataNotes(def: EqStrategyDefinition, stock: SimStock, from: string, to:
   const firstIn = d.date.findIndex((x) => x >= from);
   if (firstIn < 0 || d.date[firstIn]! > to) return ['No candles in the period'];
   if (firstIn === 0 && d.date[0]! > from) notes.push(`Candles start on ${d.date[0]} (listed or first traded then)`);
+  notes.push(...coarsePriceNotes(d, from, to, stock.coarse));
   const t = stock.timeline;
   let firstCheck = -1;
   for (let k = 0; k < t.daily.length; k++) {
@@ -93,7 +136,8 @@ export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, c
     stocks.push(stock);
   }
 
-  const sim = simulate(def, stocks, { from: req.from, to: req.to, capital: req.capital, maxPositions: req.maxPositions, rules });
+  // The market's calendar (every stock's days and NIFTY 50's) decides when a next-open order lapses.
+  const sim = simulate(def, stocks, { from: req.from, to: req.to, capital: req.capital, maxPositions: req.maxPositions, rules, ...(bench ? { marketDates: bench.date } : {}) });
   const start = req.capital ?? 0;
   const values = sim.curve.map((p) => p.equity);
   const dd = drawdowns(values, start);
@@ -111,6 +155,26 @@ export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, c
       const s = req.capital ?? 100_000;
       benchmark = { name: 'NIFTY 50', returnPct: round2((b.at(-1)! / s - 1) * 100), cagrPct: cagr(s, b.at(-1)!, first, last), maxDrawdownPct: drawdowns(b, s).maxPct };
     }
+  }
+
+  // Orders large against the day's traded volume: the backtest fills them at the open / stop price (+0.1 %), but a
+  // real order that size would move the price more — said per stock, results unchanged.
+  for (const st of stocks) {
+    const at = new Map(st.daily.date.map((d, i) => [d, i]));
+    let big = 0;
+    let worst = 0;
+    for (const t of sim.trades) {
+      if (t.symbol !== st.symbol) continue;
+      for (const f of t.fills) {
+        const i = at.get(f.date);
+        const share = i === undefined ? 0 : f.quantity / st.daily.volume[i]!;
+        if (share > 0.1 && t.exitReason !== 'END') {
+          big++;
+          worst = Math.max(worst, share);
+        }
+      }
+    }
+    if (big) notes.get(st.symbol)?.push(`${big} order${big === 1 ? ' was' : 's were'} over 10% of that day's traded volume (up to ${worst > 9.99 ? '>999' : Math.round(worst * 100)}%) — a real order that size would likely fill worse than the 0.1% slippage assumed`);
   }
 
   const perSymbol: EqSymbolResult[] = candles.map((c) => {
@@ -136,10 +200,12 @@ export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, c
       ? 'Stops sell when a day’s low reaches them (at the open if it opened below); targets when a day’s high reaches them. Both in one day → the stop counts.'
       : 'Stops sell when a check’s close is below them; targets when a day’s high reaches them.',
     'Sells before buys each day; when money is short, same-day buys are taken in alphabetical order.',
-    rules.charges ? 'Zerodha delivery charges on every order (STT, exchange, SEBI, stamp, GST, ₹15.34 DP charge on sells).' : 'No charges.',
+    'Fill prices are whole paise (buys rounded up, sales down). A next-open order lapses if the stock doesn’t trade on the next market day; a candle locked at a circuit (one price all day) can’t be bought at the upper circuit or sold at the lower one; an add that would open at or below the stop it sets isn’t bought.',
+    rules.charges ? 'Zerodha charges on every order: delivery (STT, exchange, SEBI, stamp, GST, ₹15.34 DP charge on sells); a lot bought and sold the same day pays intraday charges instead.' : 'No charges.',
     ...(rules.slippagePct ? [`${rules.slippagePct}% slippage on every market order (not on targets).`] : []),
     ...(def.pyramid.enabled ? [`Pyramiding: one more lot when ${def.pyramid.maType}(${def.pyramid.maPeriod}) reaches the last buy price with the close at or above it; the stop for all lots moves to that MA value once the lot is bought.`] : []),
     'Positions still open at the end are valued at the last close (reason END).',
+    ...(bench ? ['NIFTY 50 comparison: the price index bought with the same money at the first day’s close — index dividends (≈1–1.5 % a year) aren’t included.'] : []),
     'Stock lists are today’s members — stocks that left an index or were delisted aren’t included (survivorship bias).',
   ];
 
