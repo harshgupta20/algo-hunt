@@ -9,7 +9,7 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected yyyy-mm-dd');
 const barsAgo = z.number().int().min(0).max(500).optional();
 
 const operand = z.union([
-  z.object({ kind: z.literal('PRICE'), field: priceField, timeframe: timeframe.optional(), barsAgo }),
+  z.object({ kind: z.literal('PRICE'), field: priceField, barsAgo }),
   z.object({
     kind: z.literal('INDICATOR'),
     indicator: z.enum(['SMA', 'EMA', 'WMA', 'RSI', 'MACD', 'BB', 'ATR', 'SUPERTREND', 'ADX', 'DMI', 'HIGHEST', 'LOWEST', 'ROC']),
@@ -18,7 +18,6 @@ const operand = z.union([
     output: z.string().optional(),
     ma: z.object({ type: maType, period: z.number().int().min(1).max(500) }).optional(),
     multiplier: z.number().finite().positive().optional(),
-    timeframe: timeframe.optional(),
     barsAgo,
   }),
   z.object({ kind: z.literal('NUMBER'), value: z.number().finite() }),
@@ -58,8 +57,6 @@ export const eqDefinitionSchema = z.object({
   }),
   pyramid: z.object({ enabled: z.boolean(), maType, maPeriod: z.number().int().min(2).max(500), maxAdds: z.number().int().min(1).max(100).nullable() }),
   sizing: z.object({ mode: z.enum(['AMOUNT', 'QUANTITY', 'PERCENT']), value: z.number().positive().max(1e10) }),
-  execution: z.object({ fill: z.enum(['CLOSE', 'NEXT_OPEN']), stopTrigger: z.enum(['TOUCH', 'CLOSE']) }),
-  costs: z.object({ charges: z.boolean(), slippagePct: z.number().min(0).max(5) }),
 }) as z.ZodType<EqStrategyDefinition>;
 
 export const eqWatchlistInputSchema = z.object({

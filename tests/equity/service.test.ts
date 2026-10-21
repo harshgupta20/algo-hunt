@@ -1,14 +1,14 @@
 /**
  * The equity service end to end on fake Kite data: the stock list (equity series only, presets), strategies
- * checked before saving, watchlists, backtests and screens as jobs (progress, candle cache, cancel), and the
- * data rules (warm-up history, only finished sessions).
+ * checked before saving, old saved strategies upgraded to one timeframe, watchlists, backtests and screens as jobs
+ * (progress, candle cache, cancel), and the data rules (warm-up history, only finished sessions).
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { EqBacktestJob, EqScreenJob, EqStrategyDefinition } from '../../src/shared/equity';
-import { EQ_TEMPLATES, all, cond, defaultDefinition, ind, num, price } from '../../src/shared/equity';
+import type { EqBacktestJob, EqOperand, EqScreenJob, EqStrategyDefinition } from '../../src/shared/equity';
+import { EQ_TEMPLATES, all, any, cond, defaultDefinition, ind, normalizeDefinition, num, price } from '../../src/shared/equity';
 import { CandleCache, lastFinishedSession, type DailySource } from '../../src/server/equity/data/candles';
 import { Universe, stocksFromKite } from '../../src/server/equity/data/universe';
 import { EquityService, warmupDays } from '../../src/server/equity/EquityService';
@@ -59,7 +59,6 @@ const cross: EqStrategyDefinition = {
   entry: { when: all('e', cond('e1', ind('SMA', { period: 5 }), 'CROSSES_ABOVE', ind('SMA', { period: 10 }))), trigger: 'WHEN_TRUE' },
   exit: { targetPct: null, stopLossPct: null, trailingStopPct: null, priceBase: 'AVERAGE', when: all('x', cond('x1', ind('SMA', { period: 5 }), 'CROSSES_BELOW', ind('SMA', { period: 10 }))), maxBars: null },
   sizing: { mode: 'QUANTITY', value: 10 },
-  costs: { charges: false, slippagePct: 0 },
 };
 
 async function settle<T extends { status: string }>(get: () => T): Promise<T> {
@@ -73,6 +72,7 @@ async function settle<T extends { status: string }>(get: () => T): Promise<T> {
 
 describe('equity service', () => {
   let kite: FakeKite;
+  let store: MemoryEquityStore;
   let svc: EquityService;
   let connected: boolean;
   const clock = { now: ist('2025-04-01', '18:00') };
@@ -90,7 +90,8 @@ describe('equity service', () => {
       file: join(mkdtempSync(join(tmpdir(), 'eq-')), 'equity-instruments.json'),
       now: () => clock.now,
     });
-    svc = new EquityService({ store: new MemoryEquityStore(() => clock.now), universe, candles: new CandleCache(kite, () => clock.now), kiteConnected: async () => connected, now: () => clock.now });
+    store = new MemoryEquityStore(() => clock.now);
+    svc = new EquityService({ store, universe, candles: new CandleCache(kite, () => clock.now), kiteConnected: async () => connected, now: () => clock.now });
   });
 
   it('the stock list keeps NSE equity series only (BAJAJ-AUTO yes, -BE / bonds no) with presets and sectors', async () => {
@@ -115,6 +116,29 @@ describe('equity service', () => {
     expect((await svc.updateStrategy(s.id, { ...cross, name: 'Renamed' })).version).toBe(2);
     expect((await svc.duplicateStrategy(s.id)).name).toBe('Renamed (copy)');
     expect(await svc.listStrategies()).toHaveLength(2);
+  });
+
+  it('an old strategy — Daily with weekly entry values and its own order settings — opens as Weekly', async () => {
+    const weekly = (o: EqOperand) => ({ ...o, timeframe: '1w' }) as unknown as EqOperand; // the old per-value field
+    const legacy = {
+      ...cross,
+      timeframe: '1d',
+      entry: { when: all('e', cond('e1', weekly(price('close')), 'CROSSES_ABOVE', weekly(ind('SMA', { period: 20 })))), trigger: 'WHEN_TRUE' },
+      exit: { ...cross.exit, when: any('x', cond('x1', price('close'), 'CROSSES_BELOW', ind('SMA', { period: 20 }))) },
+      execution: { fill: 'CLOSE', stopTrigger: 'CLOSE' },
+      costs: { charges: false, slippagePct: 0 },
+    } as EqStrategyDefinition;
+    const saved = await store.strategies.create(legacy);
+    for (const s of [await svc.getStrategy(saved.id), (await svc.listStrategies())[0]!]) {
+      expect(s.definition.timeframe).toBe('1w'); // the entry as written; its exit and pyramiding now weekly too
+      expect(s.definition.entry.when.children[0]).toEqual(cond('e1', price('close'), 'CROSSES_ABOVE', ind('SMA', { period: 20 })));
+      expect(s.definition).not.toHaveProperty('execution');
+      expect(s.definition).not.toHaveProperty('costs');
+    }
+    // A mixed entry (weekly close, daily RSI) keeps the strategy's timeframe; current definitions are unchanged.
+    const mixed = normalizeDefinition({ ...legacy, entry: { ...legacy.entry, when: all('e', cond('e1', weekly(price('close')), 'GT', num(1)), cond('e2', ind('RSI', { period: 14 }), 'GT', num(60))) } });
+    expect(mixed.timeframe).toBe('1d');
+    expect(normalizeDefinition(cross)).toEqual(cross);
   });
 
   it('watchlists keep known NSE symbols (cleaned) and refuse unknown ones', async () => {

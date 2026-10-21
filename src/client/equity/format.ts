@@ -14,6 +14,11 @@ export const pct = (n: number | null | undefined, digits = 1) => {
 };
 export const num = (n: number | null | undefined, digits = 2) => (n === null || n === undefined || !Number.isFinite(n) ? '—' : n.toLocaleString('en-IN', { maximumFractionDigits: digits }));
 
+/** The stock's NSE chart on TradingView, on daily or weekly candles. TradingView writes NSE's “-” as “_”
+ *  (BAJAJ-AUTO → NSE:BAJAJ_AUTO) and keeps “&” (NSE:M&M). It always opens at today — there's no date link. */
+export const tradingViewUrl = (symbol: string, tf: '1d' | '1w') =>
+  `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(`NSE:${symbol.replace(/-/g, '_')}`)}&interval=${tf === '1w' ? 'W' : 'D'}`;
+
 const IST_MS = 5.5 * 3600_000;
 export const istToday = () => new Date(Date.now() + IST_MS).toISOString().slice(0, 10);
 export const yearsAgo = (n: number) => {

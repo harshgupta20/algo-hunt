@@ -8,10 +8,11 @@
 import { Fragment, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { ChevronDown, ChevronRight, Download } from 'lucide-react';
-import type { EqBacktestResult, EqExitReason, EqTrade } from '@/shared/equity';
+import type { EqBacktestResult, EqExitReason, EqTimeframe, EqTrade } from '@/shared/equity';
 import { EQ_TIMEFRAME } from '@/shared/equity';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { Badge, EmptyState, StatCard } from '../../components/ui';
+import { ChartLink } from '../ChartLink';
 import { downloadCsv, inr, num, pct, pnlClass, shortDate, signedInr } from '../format';
 import { E } from '../help';
 import { CurveCharts, MonthlyGrid, compactInr } from './charts';
@@ -68,16 +69,19 @@ function fillsCsv(r: EqBacktestResult) {
   );
 }
 
-function TradeRows({ t, open, onToggle }: { t: EqTrade; open: boolean; onToggle: () => void }) {
+function TradeRows({ t, tf, open, onToggle }: { t: EqTrade; tf: EqTimeframe; open: boolean; onToggle: () => void }) {
   const r = REASON[t.exitReason];
   return (
     <Fragment>
       <tr className="hover:bg-ink-800/40">
         <td className={td}>
-          <button type="button" aria-expanded={open} onClick={onToggle} className="flex items-center gap-1.5 text-left">
-            {open ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
-            <span className="font-medium text-slate-200">{t.symbol}</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button type="button" aria-expanded={open} onClick={onToggle} className="flex items-center gap-1.5 text-left">
+              {open ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
+              <span className="font-medium text-slate-200">{t.symbol}</span>
+            </button>
+            <ChartLink symbol={t.symbol} tf={tf} when={`${shortDate(t.entryDate)} – ${shortDate(t.exitDate)}`} />
+          </div>
         </td>
         <td className={clsx(td, 'text-slate-400')}>{shortDate(t.entryDate)}</td>
         <td className={clsx(td, 'text-slate-400')}>{shortDate(t.exitDate)}</td>
@@ -261,7 +265,7 @@ export function Results({ r }: { r: EqBacktestResult }) {
               </thead>
               <tbody className="divide-y divide-ink-700/50">
                 {r.trades.slice(0, rows).map((t) => (
-                  <TradeRows key={t.id} t={t} open={openTrade === t.id} onToggle={() => setOpenTrade(openTrade === t.id ? null : t.id)} />
+                  <TradeRows key={t.id} t={t} tf={r.definition.timeframe} open={openTrade === t.id} onToggle={() => setOpenTrade(openTrade === t.id ? null : t.id)} />
                 ))}
               </tbody>
             </table>
@@ -310,11 +314,14 @@ export function Results({ r }: { r: EqBacktestResult }) {
                   <Fragment key={p.symbol}>
                     <tr className="hover:bg-ink-800/40">
                       <td className={td}>
-                        <button type="button" aria-expanded={isOpen} onClick={() => setOpenStock(isOpen ? null : p.symbol)} className="flex items-center gap-1.5 text-left">
-                          {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
-                          <span className="font-medium text-slate-200">{p.symbol}</span>
-                          {(p.notes.length > 0 || p.errors.length > 0) && <span className={clsx('h-1.5 w-1.5 rounded-full', p.errors.length ? 'bg-warn' : 'bg-slate-500')} />}
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button type="button" aria-expanded={isOpen} onClick={() => setOpenStock(isOpen ? null : p.symbol)} className="flex items-center gap-1.5 text-left">
+                            {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
+                            <span className="font-medium text-slate-200">{p.symbol}</span>
+                            {(p.notes.length > 0 || p.errors.length > 0) && <span className={clsx('h-1.5 w-1.5 rounded-full', p.errors.length ? 'bg-warn' : 'bg-slate-500')} />}
+                          </button>
+                          <ChartLink symbol={p.symbol} tf={r.definition.timeframe} />
+                        </div>
                       </td>
                       <td className={clsx(td, 'tabular-nums text-right')}>{p.trades}</td>
                       <td className={clsx(td, 'tabular-nums text-right text-slate-400')}>{p.trades ? `${p.wins}/${p.trades}` : '—'}</td>
@@ -384,7 +391,10 @@ export function Results({ r }: { r: EqBacktestResult }) {
               {r.skipped.slice(0, 300).map((x, i) => (
                 <li key={`${x.symbol}-${x.date}-${i}`} className="flex flex-wrap gap-3 px-4 py-2">
                   <span className="w-24 text-slate-400">{shortDate(x.date)}</span>
-                  <span className="w-28 font-medium text-slate-200">{x.symbol}</span>
+                  <span className="flex w-28 items-center gap-1.5 font-medium text-slate-200">
+                    {x.symbol}
+                    <ChartLink symbol={x.symbol} tf={r.definition.timeframe} when={shortDate(x.date)} />
+                  </span>
                   <Badge>{x.kind === 'ENTRY' ? 'Buy' : 'Add'}</Badge>
                   <span className="text-slate-300">{x.reason}</span>
                 </li>

@@ -19,11 +19,13 @@
  *      With fills at the close these happen now (sells, then adds, then buys); with fills at the next open
  *      they wait for step 1 of the next trading day.
  *   4. The account is valued at the close (cash + shares × close).
- * Slippage worsens every market order (not target limit orders). A buy that the cash can't cover, that buys
+ * How orders fill (next open or the close, stops on the low or the close, charges, slippage) comes from the order
+ * rules — EQ_ORDER_RULES in every backtest. Slippage worsens every market order (not target limit orders) and the
+ * order's text shows the price before it. A buy that the cash can't cover, that buys
  * 0 shares, or that exceeds the max stocks held is skipped and listed. Positions open at the end are closed
  * at the last close (reason END, charges counted).
  */
-import type { EqExitReason, EqFill, EqSkip, EqStrategyDefinition, EqTrade } from '@/shared/equity';
+import type { EqExitReason, EqFill, EqOrderRules, EqSkip, EqStrategyDefinition, EqTrade } from '@/shared/equity';
 import { fmtNum } from '@/shared/equity';
 import type { Bars } from './bars';
 import { orderCharges } from './charges';
@@ -48,6 +50,7 @@ export interface SimOptions {
   to: string;
   capital: number | null;
   maxPositions: number | null;
+  rules: EqOrderRules;
 }
 
 export interface SimOutput {
@@ -103,6 +106,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 const DAY = 86_400_000;
 const daysBetween = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / DAY);
 const inr = (n: number) => `₹${fmtNum(n)}`;
+const fmtPct = (n: number) => `${Math.round(n * 1e4) / 1e4}%`;
 
 export function simulate(def: EqStrategyDefinition, stocks: SimStock[], opt: SimOptions): SimOutput {
   const slots: Slot[] = [...stocks]
@@ -116,9 +120,11 @@ export function simulate(def: EqStrategyDefinition, stocks: SimStock[], opt: Sim
   for (const s of slots) for (let i = s.ptr; i < s.stock.daily.length && s.stock.daily.date[i]! <= opt.to; i++) dateSet.add(s.stock.daily.date[i]!);
   const dates = [...dateSet].sort();
 
-  const slip = def.costs.slippagePct / 100;
-  const chargesOn = def.costs.charges;
-  const charge = (side: 'BUY' | 'SELL', value: number) => (chargesOn ? orderCharges(side, value) : 0);
+  const rules = opt.rules;
+  const slip = rules.slippagePct / 100;
+  const charge = (side: 'BUY' | 'SELL', value: number) => (rules.charges ? orderCharges(side, value) : 0);
+  /** The price before slippage, for the order's text. */
+  const slipped = (raw: number, sign: '+' | '−') => (slip ? ` (${inr(raw)} ${sign} ${fmtPct(rules.slippagePct)} slippage)` : '');
   const limited = opt.capital !== null;
   let cash = opt.capital ?? 0;
   let tradeNo = 0;
@@ -189,7 +195,7 @@ export function simulate(def: EqStrategyDefinition, stocks: SimStock[], opt: Sim
     p.buyValue += value;
     p.charges += ch;
     const stop = activeStop(p);
-    p.fills.push({ date, side: 'BUY', kind: o.kind, quantity: qty, price: round2(px), charges: ch, reason: o.reason, signalDate: o.signalDate, stopAfter: stop ? round2(stop.price) : null });
+    p.fills.push({ date, side: 'BUY', kind: o.kind, quantity: qty, price: round2(px), charges: ch, reason: `${o.reason}${slipped(raw, '+')}`, signalDate: o.signalDate, stopAfter: stop ? round2(stop.price) : null });
     return true;
   }
 
@@ -200,7 +206,7 @@ export function simulate(def: EqStrategyDefinition, stocks: SimStock[], opt: Sim
     const ch = charge('SELL', value);
     cash += value - ch;
     p.charges += ch;
-    p.fills.push({ date, side: 'SELL', kind: 'EXIT', quantity: p.qty, price: round2(px), charges: ch, reason: o.text, signalDate: o.signalDate, stopAfter: null });
+    p.fills.push({ date, side: 'SELL', kind: 'EXIT', quantity: p.qty, price: round2(px), charges: ch, reason: `${o.text}${o.slippage ? slipped(raw, '−') : ''}`, signalDate: o.signalDate, stopAfter: null });
     const gross = value - p.buyValue;
     const net = gross - p.charges;
     trades.push({
@@ -258,7 +264,7 @@ export function simulate(def: EqStrategyDefinition, stocks: SimStock[], opt: Sim
       const b = bar(s);
       const stop = activeStop(p);
       const target = targetPrice(p);
-      const touch = def.execution.stopTrigger === 'TOUCH';
+      const touch = rules.stopTrigger === 'TOUCH';
       if (touch && stop && b.open <= stop.price) sell(s, b.open, date, { reason: stop.reason, text: `Opened at ${inr(b.open)}, at or below the ${stop.label} ${inr(stop.price)}`, signalDate: date, slippage: true });
       else if (target !== null && b.open >= target) sell(s, b.open, date, { reason: 'TARGET', text: `Opened at ${inr(b.open)}, at or above the target ${inr(target)}`, signalDate: date, slippage: false });
       else if (touch && stop && b.low <= stop.price) sell(s, stop.price, date, { reason: stop.reason, text: `Low ${inr(b.low)} reached the ${stop.label} ${inr(stop.price)}${target !== null && b.high >= target ? ' (the target was touched the same day — the stop counts)' : ''}`, signalDate: date, slippage: true });
@@ -269,7 +275,7 @@ export function simulate(def: EqStrategyDefinition, stocks: SimStock[], opt: Sim
     // 3. Checks at the close.
     for (const s of today) s.lastClose = bar(s).close;
     const checks = today.map((s) => ({ s, k: s.stock.timeline.checkAt[s.ptr]! })).filter((x) => x.k >= 0);
-    const atClose = def.execution.fill === 'CLOSE';
+    const atClose = rules.fill === 'CLOSE';
     // a. exits
     for (const { s, k } of checks) {
       const p = s.pos;
@@ -278,7 +284,7 @@ export function simulate(def: EqStrategyDefinition, stocks: SimStock[], opt: Sim
       const stop = activeStop(p);
       let reason: EqExitReason | null = null;
       let text = '';
-      if (def.execution.stopTrigger === 'CLOSE' && stop && b.close < stop.price) {
+      if (rules.stopTrigger === 'CLOSE' && stop && b.close < stop.price) {
         reason = stop.reason;
         text = `Closed at ${inr(b.close)}, below the ${stop.label} ${inr(stop.price)}`;
       } else if (s.stock.exit && s.stock.exit[k] === TRUE) {

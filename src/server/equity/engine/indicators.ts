@@ -278,5 +278,5 @@ function stable(v: unknown): string {
 
 /** Memo key of an operand's column on a timeframe (bars-ago only shifts the read, so it's not part of it). */
 export function columnKey(tf: string, o: Exclude<EqOperand, { kind: 'NUMBER' }>): string {
-  return `${tf}|${stable({ ...o, barsAgo: undefined, timeframe: undefined })}`;
+  return `${tf}|${stable({ ...o, barsAgo: undefined })}`;
 }

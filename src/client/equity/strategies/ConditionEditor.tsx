@@ -34,7 +34,7 @@ function defaultIndicator(id: Indicator['indicator']): Indicator {
 }
 
 function OperandEditor({ value, onChange, tf, side }: { value: EqOperand; onChange: (o: EqOperand) => void; tf: EqTimeframe; side: 'Left' | 'Right' }) {
-  const hasExtras = value.kind !== 'NUMBER' && (value.timeframe !== undefined || !!value.barsAgo || (value.kind === 'INDICATOR' && value.multiplier !== undefined));
+  const hasExtras = value.kind !== 'NUMBER' && (!!value.barsAgo || (value.kind === 'INDICATOR' && value.multiplier !== undefined));
   const [more, setMore] = useState(hasExtras);
   const setKind = (k: EqOperand['kind']) => {
     if (k === value.kind) return;
@@ -70,19 +70,7 @@ function OperandEditor({ value, onChange, tf, side }: { value: EqOperand; onChan
         <>
           {more ? (
             <>
-              <Cell label="Candles" help={E.cond.timeframe}>
-                <select
-                  aria-label={`${side} candles`}
-                  className={sel}
-                  value={value.timeframe ?? ''}
-                  onChange={(e) => onChange({ ...value, timeframe: (e.target.value || undefined) as EqTimeframe | undefined })}
-                >
-                  <option value="">Same ({tf === '1w' ? 'weekly' : 'daily'})</option>
-                  <option value="1d">Daily</option>
-                  <option value="1w">Weekly</option>
-                </select>
-              </Cell>
-              <Cell label="Candles ago" help={E.cond.barsAgo}>
+              <Cell label={tf === '1w' ? 'Weeks ago' : 'Days ago'} help={E.cond.barsAgo}>
                 <NumberInput label={`${side} candles ago`} min={0} max={500} step={1} className={numBox} value={value.barsAgo ?? 0} onChange={(n) => onChange({ ...value, barsAgo: Math.round(n) || undefined })} />
               </Cell>
               {value.kind === 'INDICATOR' && (
@@ -92,7 +80,7 @@ function OperandEditor({ value, onChange, tf, side }: { value: EqOperand; onChan
               )}
             </>
           ) : null}
-          <Tooltip content={{ title: more ? 'Fewer settings' : 'More settings', body: 'Candles (daily / weekly), candles ago and a multiplier for this value.' }}>
+          <Tooltip content={{ title: more ? 'Fewer settings' : 'More settings', body: `${tf === '1w' ? 'Weeks' : 'Days'} ago and a multiplier for this value.` }}>
             <button type="button" className="mb-0.5 inline-flex items-center gap-0.5 text-[11px] text-slate-500 hover:text-slate-300" onClick={() => setMore(!more)}>
               {more ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />} {more ? 'less' : 'more'}
             </button>
@@ -114,7 +102,7 @@ function IndicatorFields({ value, onChange, side }: { value: Indicator; onChange
           value={value.indicator}
           onChange={(e) => {
             const next = defaultIndicator(e.target.value as Indicator['indicator']);
-            onChange({ ...next, timeframe: value.timeframe, barsAgo: value.barsAgo });
+            onChange({ ...next, barsAgo: value.barsAgo });
           }}
         >
           {EQ_INDICATORS.map((i) => (

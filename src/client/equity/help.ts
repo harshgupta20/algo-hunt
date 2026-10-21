@@ -27,7 +27,7 @@ export const E = {
     duplicate: { title: 'Duplicate', body: 'Save a copy (“… (copy)”) to try changes without touching the original.' },
     remove: { title: 'Delete', body: 'Delete this strategy. Click twice to confirm.' },
     version: { title: 'Version', body: 'Goes up by one every time the strategy is saved.' },
-    timeframe: { title: 'Timeframe', body: 'Daily: checked at every daily close. Weekly: checked when each week completes (its last trading day).' },
+    timeframe: { title: 'Timeframe', body: 'Daily: daily candles, checked at every daily close. Weekly: weekly candles, checked when each week completes (its last trading day).' },
   },
 
   editor: {
@@ -35,8 +35,8 @@ export const E = {
     description: { title: 'Notes', body: 'Optional — the idea behind the strategy.' },
     timeframe: {
       title: 'Checked on',
-      body: 'When the strategy looks at the market: every daily close, or once a week when the week’s candle completes. Each condition can still read the other timeframe (e.g. a weekly MA on a daily strategy).',
-      note: 'A weekly value read on a daily close is the last COMPLETED week — never a half-built one.',
+      body: 'Choose once: Daily or Weekly. Every buy condition, exit condition and the pyramiding MA then use those candles, and the strategy is checked at each of their closes.',
+      note: 'Weekly = the week’s candle once it completes (its last trading day) — never a half-built week.',
     },
     entry: { title: 'Buy when', body: 'The conditions that open a position. Group them with ALL (every one must be true) / ANY (one is enough); groups can be nested.' },
     trigger: {
@@ -45,7 +45,7 @@ export const E = {
     },
     exits: { title: 'Sell when', body: 'Everything is sold at the FIRST of these: target, stop-loss, trailing stop, an exit condition, the time limit or the pyramiding stop.' },
     target: { title: 'Target', body: 'Sell everything when the price reaches the base × (1 + target %). A limit order — checked on every day’s high (at the open if it opens above).' },
-    stopLoss: { title: 'Stop-loss', body: 'Sell everything when the price falls to the base × (1 − stop %).', note: 'How it triggers (any day’s low, or a closing basis) is set under Orders.' },
+    stopLoss: { title: 'Stop-loss', body: 'Sell everything when the price falls to the base × (1 − stop %).', note: 'Like a stop-loss order: sells when any day’s low reaches it (at the open on a gap down).' },
     trailing: { title: 'Trailing stop', body: 'Sell everything when the price falls this % below the highest high since the first buy. It only moves up.' },
     priceBase: { title: 'Measured from', body: 'Average price: target and stop-loss move with each pyramid add. First buy: they stay where the first buy put them.' },
     exitWhen: { title: 'Exit conditions', body: 'Sell everything when these are true at a check — e.g. SMA 50 crosses below SMA 100. With ANY, each condition is its own exit rule.' },
@@ -57,16 +57,14 @@ export const E = {
       body: 'Add to a winner: each time the rising MA reaches the price of your last buy (with the close at or above the MA), buy one more lot — and move the stop-loss for ALL lots to that MA value. Repeats until the stop (or any other exit) sells everything.',
       example: 'Buy @100 · MA reaches 100 → add @118, stop 100 · MA reaches 118 → add @131, stop 118 · low hits 118 → sell all 3 lots',
     },
-    pyramidMa: { title: 'MA', body: 'The moving average that triggers adds and becomes the stop — on the strategy’s timeframe, of the close.' },
+    pyramidMa: { title: 'MA', body: 'The moving average that triggers adds and becomes the stop — of the close, on the strategy’s candles (daily or weekly, set in Basics).' },
     maxAdds: { title: 'Max adds', body: 'Stop adding after this many lots (off = keep adding until stopped out).' },
     sizing: { title: 'Money per buy', body: 'How much each buy (the first and every add) puts in: a fixed ₹ amount (whole shares), a fixed number of shares, or a % of the account’s value at the time.' },
-    fill: {
-      title: 'Orders fill at',
-      body: 'Next open: a signal at today’s close is bought / sold at the next trading day’s open — what you can actually do from an end-of-day alert (recommended). Signal close: at the close that signalled.',
+    orders: {
+      title: 'Orders',
+      body: 'The same for every strategy, so a backtest trades the way an end-of-day alert lets you: a signal at a close is bought / sold at the next trading day’s open with 0.1% slippage; stops act like stop-loss orders (any day’s low, at the open on a gap); targets like limit orders.',
+      note: 'Zerodha delivery charges on every order: STT 0.1% on buys and sells, exchange and SEBI fees, stamp duty on buys, GST, and the ₹15.34 DP charge on each sell.',
     },
-    stopTrigger: { title: 'Stops trigger on', body: 'Any day’s low: like a stop-loss order — sells the moment the price reaches it (at the open on a gap). Closing basis: only when a check’s close is below the stop (then it fills like any exit).' },
-    charges: { title: 'Charges', body: 'Zerodha delivery charges on every order: STT 0.1% on buys and sells, exchange and SEBI fees, stamp duty on buys, GST, and the DP charge (~₹18) on each sell.' },
-    slippage: { title: 'Slippage', body: 'Fills this % worse than the price on every market order (buys, adds, stop and signal sells) — not on target limit orders.' },
     readsAs: { title: 'Reads as', body: 'The whole strategy in plain words — check it says exactly what you mean.' },
     issues: { title: 'Checks', body: 'Errors (red) must be fixed before saving; warnings (amber) are worth a look.' },
     save: { title: 'Save', body: 'Save the strategy (a new version if it already exists).' },
@@ -96,10 +94,15 @@ export const E = {
     output: { title: 'Line', body: 'Which line of a multi-line indicator.' },
     ma: { title: 'MA of it', body: 'A moving average of this indicator’s own values — e.g. RSI(14) with SMA(9) is TradingView’s “RSI-based MA”.' },
     multiplier: { title: '× Mult.', body: 'Scales the value, e.g. 2 × SMA(volume, 20) for “volume at least twice its average”.' },
-    timeframe: { title: 'Candles', body: 'Read this value on daily or weekly candles. “Same” follows the strategy’s timeframe.', note: 'Weekly values are from completed weeks only.' },
-    barsAgo: { title: 'Candles ago', body: 'Read the value this many candles back (0 = now) — e.g. close > close 1 candle ago.' },
+    barsAgo: { title: 'Days / weeks ago', body: 'Read the value this many candles back on the strategy’s timeframe (0 = now) — e.g. close > close 1 day ago.' },
     number: { title: 'Number', body: 'A fixed level, e.g. 60 for RSI.' },
     readsAs: { title: 'Reads as', body: 'This condition in plain words.' },
+  },
+
+  chart: {
+    title: 'TradingView chart',
+    body: 'Open this stock’s NSE chart on TradingView in a new tab, on the strategy’s candles (daily or weekly).',
+    note: 'TradingView opens at today — scroll back to the dates you want. Add the same indicators (e.g. SMA 20) to compare the values.',
   },
 
   picker: {

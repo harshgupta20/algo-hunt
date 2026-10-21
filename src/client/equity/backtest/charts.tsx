@@ -53,6 +53,9 @@ function ticks(min: number, max: number, count = 5): number[] {
 
 const PAD = { left: 64, right: 84, top: 10, bottom: 22 };
 
+/** Drawdown axis label with the tick's own precision (−0.5%, not a second “−1%”). */
+const ddTick = (v: number) => (v === 0 ? '0%' : `−${Number(Math.abs(v).toFixed(2))}%`);
+
 export function CurveCharts({ points, capital }: { points: EqCurvePoint[]; capital: number | null }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
@@ -176,7 +179,7 @@ export function CurveCharts({ points, capital }: { points: EqCurvePoint[]; capit
               <g key={`d${v}`}>
                 <line x1={PAD.left} x2={PAD.left + w} y1={geo.yd(v)} y2={geo.yd(v)} className="stroke-ink-700" strokeWidth={1} />
                 <text x={PAD.left - 8} y={geo.yd(v)} dy="0.32em" textAnchor="end" className="fill-slate-500 text-[10px] tabular-nums">
-                  {v === 0 ? '0%' : `${v.toFixed(0)}%`}
+                  {ddTick(v)}
                 </text>
               </g>
             ))}

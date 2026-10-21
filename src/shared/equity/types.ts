@@ -2,12 +2,11 @@
  * Equity (NSE cash stocks) — its own strategy model, separate from F&O (V2). A strategy reads one stock's own
  * candles: entry conditions, exits (target / stop-loss / trailing stop / exit conditions / time), pyramiding
  * (add a lot each time the rising MA reaches the last buy price; the MA becomes the stop for every lot), the
- * money per buy, and how orders fill. Long only (delivery).
+ * money per buy. How orders fill is the same for every strategy (EQ_ORDER_RULES). Long only (delivery).
  *
  * Precision rules (the engine follows these exactly — see server/equity/engine/simulate.ts):
- *   - Conditions are checked at each CLOSE of the strategy's timeframe (Daily: every trading day; Weekly: the
- *     last trading day of each completed week). A weekly value read on a daily close is the last COMPLETED
- *     week; a daily value read on a weekly close is that week's last day.
+ *   - ONE timeframe per strategy: every value, exit and the pyramiding MA reads its candles, and conditions are
+ *     checked at each of its CLOSES (Daily: every trading day; Weekly: the last trading day of each completed week).
  *   - "Crosses above" = above now AND at or below at the previous check (TradingView ta.crossover).
  *   - Too little history for an indicator → the condition is unknown → it neither enters nor exits.
  */
@@ -22,10 +21,8 @@ export type EqIndicatorId = 'SMA' | 'EMA' | 'WMA' | 'RSI' | 'MACD' | 'BB' | 'ATR
 /** What a value measures — only like can be compared (a number compares with anything). */
 export type EqUnit = 'price' | 'oscillator' | 'macd' | 'volume' | 'percent' | 'ratio' | 'direction' | 'range';
 
-/** Shared by price and indicator operands. */
+/** Shared by price and indicator operands (always read on the strategy's timeframe). */
 interface SeriesRef {
-  /** Candle size this value is read on; omitted = the strategy's timeframe. */
-  timeframe?: EqTimeframe;
   /** Read the value this many candles back (0 / omitted = the latest). */
   barsAgo?: number;
 }
@@ -67,7 +64,7 @@ export type EqNode = EqCondition | EqGroup;
 export interface EqStrategyDefinition {
   name: string;
   description?: string;
-  /** Conditions, exits and pyramiding are checked at each close of this timeframe. */
+  /** The strategy's candles: every condition, exit and the pyramiding MA reads them, at each of their closes. */
   timeframe: EqTimeframe;
   entry: {
     when: EqGroup;
@@ -106,20 +103,21 @@ export interface EqStrategyDefinition {
     mode: 'AMOUNT' | 'QUANTITY' | 'PERCENT';
     value: number;
   };
-  execution: {
-    /** CLOSE: orders fill at the close of the candle that signalled. NEXT_OPEN: at the next trading day's open
-     *  (what an end-of-day alert lets you do). */
-    fill: 'CLOSE' | 'NEXT_OPEN';
-    /** TOUCH: a stop-loss sells when any day's low reaches it (a stop order). CLOSE: only when a check's close is
-     *  below it (then fills like any exit signal). */
-    stopTrigger: 'TOUCH' | 'CLOSE';
-  };
-  costs: {
-    /** Zerodha delivery charges per order: STT, exchange, SEBI, stamp duty, GST and the DP charge on sells. */
-    charges: boolean;
-    /** % worse fill on every market order (not on target limit orders). */
-    slippagePct: number;
-  };
+}
+
+/**
+ * How the simulation fills orders. Not part of a strategy — every backtest uses EQ_ORDER_RULES (what an end-of-day
+ * alert lets the trader do); the engine takes others only for its own tests.
+ */
+export interface EqOrderRules {
+  /** NEXT_OPEN: a signal at a close fills at the next trading day's open. CLOSE: at the close that signalled. */
+  fill: 'CLOSE' | 'NEXT_OPEN';
+  /** TOUCH: a stop sells when any day's low reaches it (a stop-loss order). CLOSE: only when a check's close is below it. */
+  stopTrigger: 'TOUCH' | 'CLOSE';
+  /** Zerodha delivery charges per order: STT, exchange, SEBI, stamp duty, GST and the DP charge on sells. */
+  charges: boolean;
+  /** % worse fill on every market order (not on target limit orders). */
+  slippagePct: number;
 }
 
 export interface EqStrategy {

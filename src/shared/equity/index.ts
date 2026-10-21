@@ -5,3 +5,4 @@ export * from './schema';
 export * from './validate';
 export * from './text';
 export * from './templates';
+export * from './normalize';

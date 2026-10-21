@@ -4,9 +4,9 @@
  *   STT          0.1 % of the buy value and of the sell value
  *   exchange     0.00297 % of the order value (NSE)
  *   SEBI         ₹10 per crore
- *   GST          18 % of exchange + SEBI (+ DP) charges
+ *   GST          18 % of exchange + SEBI charges
  *   stamp duty   0.015 % of the buy value
- *   DP charge    ₹15.34 + GST per stock sold (per scrip per day)
+ *   DP charge    ₹15.34 per stock sold (per scrip per day) — GST included (₹3.50 CDSL + ₹9.50 Zerodha + ₹2.34 GST)
  * Each buy and each add is its own order, so pyramiding pays per order.
  */
 export const DELIVERY = {
@@ -27,6 +27,6 @@ export function orderCharges(side: 'BUY' | 'SELL', value: number): number {
   const sebi = value * DELIVERY.sebi;
   const stamp = side === 'BUY' ? value * DELIVERY.stamp : 0;
   const dp = side === 'SELL' ? DELIVERY.dp : 0;
-  const gst = DELIVERY.gst * (exchange + sebi + dp);
+  const gst = DELIVERY.gst * (exchange + sebi);
   return round2(stt + exchange + sebi + stamp + dp + gst);
 }

@@ -3,13 +3,15 @@
  * strategy's timeframe), every condition / group becomes one tri-state value per check (1 true, 0 false,
  * −1 unknown = too little history).
  *
- *   Daily strategy   a check per trading day; a weekly operand reads the last COMPLETED week (no half weeks).
- *   Weekly strategy  a check per completed week, on its last trading day; a daily operand reads that day.
+ * Every operand reads the strategy's own candles.
+ *
+ *   Daily strategy   a check per trading day.
+ *   Weekly strategy  a check per completed week, on its last trading day (no half weeks).
  *   Crossings        compare this check with the previous one (TradingView ta.crossover / ta.crossunder).
  */
 import type { EqCondition, EqLeafValue, EqNode, EqOperand, EqTimeframe } from '@/shared/equity';
 import { EQ_OPERATOR, conditionText, fmtNum, operandText } from '@/shared/equity';
-import { weeklyAsOf, weeklyBars, type Bars, type WeeklyBars } from './bars';
+import { weeklyBars, type Bars, type WeeklyBars } from './bars';
 import { columnKey, operandColumn } from './indicators';
 
 export const TRUE = 1;
@@ -19,13 +21,10 @@ export const UNKNOWN = -1;
 export interface StockSeries {
   daily: Bars;
   weekly: WeeklyBars;
-  /** Daily index → last completed week (−1 = none). */
-  asOf: Int32Array;
 }
 
 export function stockSeries(daily: Bars, endDate: string): StockSeries {
-  const weekly = weeklyBars(daily, endDate);
-  return { daily, weekly, asOf: weeklyAsOf(daily, weekly) };
+  return { daily, weekly: weeklyBars(daily, endDate) };
 }
 
 export interface Timeline {
@@ -69,11 +68,11 @@ export class Evaluator {
     return this.t.daily.length;
   }
 
-  private column(tf: EqTimeframe, o: Series): Float64Array {
-    const key = columnKey(tf, o);
+  private column(o: Series): Float64Array {
+    const key = columnKey(this.t.tf, o);
     let col = this.cols.get(key);
     if (!col) {
-      col = operandColumn(tf === '1d' ? this.s.daily : this.s.weekly, o);
+      col = operandColumn(this.t.tf === '1d' ? this.s.daily : this.s.weekly, o);
       this.cols.set(key, col);
     }
     return col;
@@ -83,17 +82,15 @@ export class Evaluator {
   read(o: EqOperand): Float64Array {
     const n = this.checks;
     if (o.kind === 'NUMBER') return new Float64Array(n).fill(o.value);
-    const tf = o.timeframe ?? this.t.tf;
     const back = o.barsAgo ?? 0;
-    const key = `${columnKey(tf, o)}|${back}`;
+    const key = `${columnKey(this.t.tf, o)}|${back}`;
     const hit = this.reads.get(key);
     if (hit) return hit;
-    const col = this.column(tf, o);
+    const col = this.column(o);
     const out = new Float64Array(n).fill(NaN);
     for (let k = 0; k < n; k++) {
-      const at = tf === this.t.tf ? this.t.own[k]! : tf === '1d' ? this.t.daily[k]! : this.s.asOf[this.t.daily[k]!]!;
-      const i = at - back;
-      if (at >= 0 && i >= 0 && i < col.length) out[k] = col[i]!;
+      const i = this.t.own[k]! - back;
+      if (i >= 0 && i < col.length) out[k] = col[i]!;
     }
     this.reads.set(key, out);
     return out;

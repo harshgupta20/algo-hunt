@@ -2,7 +2,7 @@
  * Equity catalog: indicators (parameters, outputs, units), operators, timeframes and stock-list presets.
  * The maths matches TradingView (Wilder RSI / ATR / ADX, EMA seeded with an SMA) — see server/equity/engine.
  */
-import type { EqIndicatorId, EqMaType, EqOperator, EqPreset, EqTimeframe, EqUnit, PriceField } from './types';
+import type { EqIndicatorId, EqMaType, EqOperator, EqOrderRules, EqPreset, EqTimeframe, EqUnit, PriceField } from './types';
 
 export interface EqParamSpec {
   name: string;
@@ -160,10 +160,13 @@ export const EQ_LIMITS = {
   maxDepth: 4,
   maxBarsAgo: 500,
   maxPct: 1000,
-  maxSlippagePct: 5,
   maxHoldingBars: 5000,
   maxAdds: 100,
 } as const;
+
+/** How every backtest fills orders: bought / sold at the next open after the signal (what an end-of-day alert
+ *  allows), stops as stop-loss orders on any day's low, Zerodha delivery charges and 0.1 % slippage. */
+export const EQ_ORDER_RULES: EqOrderRules = { fill: 'NEXT_OPEN', stopTrigger: 'TOUCH', charges: true, slippagePct: 0.1 };
 
 /** Starting money in the backtest form. */
 export const EQ_DEFAULT_CAPITAL = 500_000;

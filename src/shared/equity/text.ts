@@ -1,8 +1,8 @@
 /**
  * Plain-language text for equity strategies — the builder's "Reads as", trade reasons and summaries.
- *   Close · SMA(50) · SMA(20, volume) · SMA(9) of RSI(14) · MACD(12, 26, 9) signal · W · RSI(14) · Close [1 ago]
+ *   Close · SMA(50) · SMA(20, volume) · SMA(9) of RSI(14) · MACD(12, 26, 9) signal · Close [1 day ago]
  */
-import { EQ_INDICATOR, EQ_OPERATOR, EQ_TIMEFRAME, PRICE_FIELDS } from './catalog';
+import { EQ_INDICATOR, EQ_OPERATOR, EQ_ORDER_RULES, EQ_TIMEFRAME, PRICE_FIELDS } from './catalog';
 import type { EqCondition, EqGroup, EqNode, EqOperand, EqStrategyDefinition, EqTimeframe } from './types';
 
 const fieldLabel = (f: string) => PRICE_FIELDS.find((p) => p.value === f)?.label ?? f;
@@ -14,7 +14,7 @@ export function fmtNum(n: number | null | undefined, digits = 2): string {
   return n.toLocaleString('en-IN', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
-/** The operand without its timeframe / bars-ago decorations. */
+/** The operand without its bars-ago decoration. */
 function operandCore(o: EqOperand): string {
   if (o.kind === 'NUMBER') return trim(o.value);
   if (o.kind === 'PRICE') return fieldLabel(o.field);
@@ -34,14 +34,17 @@ function operandCore(o: EqOperand): string {
   return text;
 }
 
-/** Operand as read in a strategy of timeframe `tf` — the timeframe is shown only when it differs. */
+/** Operand as read in a strategy of timeframe `tf` (its candles are the strategy's). */
 export function operandText(o: EqOperand, tf: EqTimeframe): string {
   if (o.kind === 'NUMBER') return operandCore(o);
-  const own = o.timeframe ?? tf;
-  let text = operandCore(o);
-  if (own !== tf) text = `${EQ_TIMEFRAME[own].label} ${text}`;
-  if (o.barsAgo) text += ` [${o.barsAgo} ${own === '1w' ? 'week' : 'day'}${o.barsAgo === 1 ? '' : 's'} ago]`;
-  return text;
+  const text = operandCore(o);
+  return o.barsAgo ? `${text} [${o.barsAgo} ${tf === '1w' ? 'week' : 'day'}${o.barsAgo === 1 ? '' : 's'} ago]` : text;
+}
+
+/** How every backtest fills orders, in one line (EQ_ORDER_RULES). */
+export function orderRulesText(): string {
+  const r = EQ_ORDER_RULES;
+  return `${r.fill === 'NEXT_OPEN' ? 'bought / sold at the next day’s open' : 'filled at the signal close'}${r.slippagePct ? ` (${trim(r.slippagePct)}% slippage)` : ''} · stops ${r.stopTrigger === 'TOUCH' ? 'on any day’s low' : 'on a closing basis'}${r.charges ? ' · Zerodha delivery charges' : ''}`;
 }
 
 export function conditionText(c: EqCondition, tf: EqTimeframe): string {
@@ -59,7 +62,7 @@ export function nodeText(n: EqNode, tf: EqTimeframe, depth = 0): string {
 
 const pct = (n: number) => `${trim(n)}%`;
 
-/** One line per part: when it buys, how it exits, pyramiding, money and fills. */
+/** One line per part: when it buys, how it exits, pyramiding, money and how orders fill. */
 export function strategySummary(d: EqStrategyDefinition): string[] {
   const tf = d.timeframe;
   const lines = [`${EQ_TIMEFRAME[tf].label}: buy when ${nodeText(d.entry.when, tf)}${d.entry.trigger === 'BECOMES_TRUE' ? ' (only when it turns true)' : ''}`];
@@ -77,7 +80,7 @@ export function strategySummary(d: EqStrategyDefinition): string[] {
     lines.push(`Pyramiding: when ${ma} rises to the last buy price, buy one more lot; the stop for all lots becomes ${ma}${d.pyramid.maxAdds !== null ? ` (at most ${d.pyramid.maxAdds} add${d.pyramid.maxAdds === 1 ? '' : 's'})` : ''}`);
   }
   const size = d.sizing.mode === 'AMOUNT' ? `₹${fmtNum(d.sizing.value, 0)} per buy` : d.sizing.mode === 'QUANTITY' ? `${trim(d.sizing.value)} share${d.sizing.value === 1 ? '' : 's'} per buy` : `${pct(d.sizing.value)} of the account per buy`;
-  lines.push(`${size} · fills at ${d.execution.fill === 'CLOSE' ? 'the signal candle’s close' : 'the next day’s open'} · stops ${d.execution.stopTrigger === 'TOUCH' ? 'on any day’s low' : 'on a closing basis'}${d.costs.charges ? ' · delivery charges' : ''}${d.costs.slippagePct ? ` · ${pct(d.costs.slippagePct)} slippage` : ''}`);
+  lines.push(`${size} · ${orderRulesText()}`);
   return lines;
 }
 

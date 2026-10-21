@@ -16,7 +16,7 @@ import type {
   EqWatchlist,
   ValidationIssue,
 } from '@/shared/equity';
-import { EQ_TEMPLATES, hasErrors, requiredBars, validateDefinition } from '@/shared/equity';
+import { EQ_TEMPLATES, hasErrors, normalizeDefinition, requiredBars, validateDefinition } from '@/shared/equity';
 import { addDays, type Bars } from './engine/bars';
 import { runBacktest, type StockCandles } from './engine/backtest';
 import { screenStock } from './engine/screen';
@@ -49,9 +49,8 @@ const msg = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
 /** Calendar days of daily candles to fetch before the period so every indicator has settled. */
 export function warmupDays(d: EqStrategyDefinition): number {
-  const need = requiredBars(d);
   // ~250 trading days a year; weekly candles need 7 calendar days each.
-  return Math.max(60, Math.ceil(need['1d'] * 1.5) + need['1w'] * 7 + 30);
+  return Math.max(60, Math.ceil(requiredBars(d) * (d.timeframe === '1w' ? 7 : 1.5)) + 30);
 }
 
 export class EquityService {
@@ -82,23 +81,30 @@ export class EquityService {
   }
 
   validate(d: EqStrategyDefinition): ValidationIssue[] {
-    return validateDefinition(d);
+    return validateDefinition(normalizeDefinition(d));
   }
 
+  /** Upgraded to the current model (one timeframe, fixed order rules), then checked. */
   private checked(d: EqStrategyDefinition): EqStrategyDefinition {
-    const issues = validateDefinition(d);
+    const def = normalizeDefinition(d);
+    const issues = validateDefinition(def);
     if (hasErrors(issues)) throw new EquityError(400, issues.find((i) => i.severity === 'error')!.message, issues);
-    return d;
+    return def;
   }
 
-  listStrategies(): Promise<EqStrategy[]> {
-    return this.deps.store.strategies.list();
+  /** Saved rows may predate the current model — they're upgraded as they're read (and on their next save). */
+  private current(s: EqStrategy): EqStrategy {
+    return { ...s, definition: normalizeDefinition(s.definition) };
+  }
+
+  async listStrategies(): Promise<EqStrategy[]> {
+    return (await this.deps.store.strategies.list()).map((s) => this.current(s));
   }
 
   async getStrategy(id: string): Promise<EqStrategy> {
     const s = await this.deps.store.strategies.get(id);
     if (!s) throw new EquityError(404, 'Strategy not found');
-    return s;
+    return this.current(s);
   }
 
   async createStrategy(d: EqStrategyDefinition) {

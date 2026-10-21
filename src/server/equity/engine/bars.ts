@@ -117,14 +117,3 @@ export function weeklyBars(d: Bars, endDate: string): WeeklyBars {
   }
   return w;
 }
-
-/** For each daily candle: the last COMPLETE week that had closed by that day's close (−1 = none yet). */
-export function weeklyAsOf(d: Bars, w: WeeklyBars): Int32Array {
-  const out = new Int32Array(d.length).fill(-1);
-  let k = -1;
-  for (let i = 0; i < d.length; i++) {
-    while (k + 1 < w.length && w.lastDaily[k + 1]! <= i && w.complete[k + 1]) k++;
-    out[i] = k;
-  }
-  return out;
-}

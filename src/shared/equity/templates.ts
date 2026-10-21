@@ -2,16 +2,16 @@
  * Ready-made equity strategies — the trader's three, written exactly as described, plus well-known setups.
  * Numbers the trader didn't give (target %, money per buy) are set to common values; change them in the builder.
  */
-import type { EqCondition, EqGroup, EqNode, EqOperand, EqOperator, EqStrategyDefinition, EqTimeframe } from './types';
+import type { EqCondition, EqGroup, EqNode, EqOperand, EqOperator, EqStrategyDefinition } from './types';
 
-export const price = (field: 'open' | 'high' | 'low' | 'close' | 'volume' = 'close', timeframe?: EqTimeframe): EqOperand => ({ kind: 'PRICE', field, ...(timeframe ? { timeframe } : {}) });
+export const price = (field: 'open' | 'high' | 'low' | 'close' | 'volume' = 'close'): EqOperand => ({ kind: 'PRICE', field });
 export const num = (value: number): EqOperand => ({ kind: 'NUMBER', value });
 export const ind = (indicator: Extract<EqOperand, { kind: 'INDICATOR' }>['indicator'], params: Record<string, number>, extra: Partial<Extract<EqOperand, { kind: 'INDICATOR' }>> = {}): EqOperand => ({ kind: 'INDICATOR', indicator, params, ...extra });
 export const cond = (id: string, left: EqOperand, op: EqOperator, right: EqOperand): EqCondition => ({ type: 'CONDITION', id, left, op, right });
 export const all = (id: string, ...children: EqNode[]): EqGroup => ({ type: 'AND', id, children });
 export const any = (id: string, ...children: EqNode[]): EqGroup => ({ type: 'OR', id, children });
 
-/** A fresh strategy for the builder: one condition, sensible money and fills. */
+/** A fresh strategy for the builder: one condition and sensible money per buy. */
 export function defaultDefinition(): EqStrategyDefinition {
   return {
     name: '',
@@ -20,8 +20,6 @@ export function defaultDefinition(): EqStrategyDefinition {
     exit: { targetPct: 20, stopLossPct: null, trailingStopPct: null, priceBase: 'AVERAGE', when: null, maxBars: null },
     pyramid: { enabled: false, maType: 'SMA', maPeriod: 20, maxAdds: null },
     sizing: { mode: 'AMOUNT', value: 50_000 },
-    execution: { fill: 'NEXT_OPEN', stopTrigger: 'TOUCH' },
-    costs: { charges: true, slippagePct: 0.1 },
   };
 }
 

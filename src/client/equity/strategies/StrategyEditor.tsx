@@ -1,16 +1,16 @@
 'use client';
 
 /**
- * The equity strategy builder: basics, buy conditions, every way out (target, stop-loss, trailing stop, exit
- * conditions, time), pyramiding, money per buy and how orders fill — with the strategy read back in plain words
- * and checked as you type.
+ * The equity strategy builder: basics (one timeframe for everything), buy conditions, every way out (target,
+ * stop-loss, trailing stop, exit conditions, time), pyramiding and money per buy — with the strategy read back in
+ * plain words and checked as you type. How orders fill is the same for every strategy (shown, not chosen).
  */
 import { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { FlaskConical, LogOut, Play, Save, X } from 'lucide-react';
 import type { EqStrategy, EqStrategyDefinition } from '@/shared/equity';
-import { EQ_MA_TYPES, hasErrors, strategySummary, validateDefinition } from '@/shared/equity';
+import { EQ_MA_TYPES, hasErrors, orderRulesText, strategySummary, validateDefinition } from '@/shared/equity';
 import { Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { Section, Segmented, Toggle } from '../../components/ui';
 import { Cell, NumberInput } from '../../components/form';
@@ -20,6 +20,8 @@ import { E } from '../help';
 import { GroupEditor, newGroup } from './ConditionEditor';
 
 const numBox = 'input py-1 text-xs w-20 tabular-nums disabled:opacity-40';
+const rules = orderRulesText();
+const ordersLine = rules.charAt(0).toUpperCase() + rules.slice(1);
 
 /** An optional number: a checkbox switches it on (at its last / default value) or off (null). */
 function Optional({ label, help, value, fallback, min, max, step, suffix, onChange }: { label: string; help: TooltipContent; value: number | null; fallback: number; min: number; max: number; step: number; suffix?: string; onChange: (v: number | null) => void }) {
@@ -108,8 +110,8 @@ export function StrategyEditor({
               value={d.timeframe}
               onChange={(timeframe) => set({ timeframe })}
               options={[
-                { value: '1d', label: 'Daily close', help: { title: 'Daily', body: 'Check the strategy at every daily close.' } },
-                { value: '1w', label: 'Weekly close', help: { title: 'Weekly', body: 'Check the strategy once a week, when the week’s candle completes (its last trading day).' } },
+                { value: '1d', label: 'Daily close', help: { title: 'Daily', body: 'Every condition, exit and the pyramiding MA use daily candles, checked at every daily close.' } },
+                { value: '1w', label: 'Weekly close', help: { title: 'Weekly', body: 'Every condition, exit and the pyramiding MA use weekly candles, checked once a week when the week’s candle completes (its last trading day).' } },
               ]}
             />
           </Cell>
@@ -225,34 +227,8 @@ export function StrategyEditor({
             />
             <span className="text-xs text-slate-500">{d.sizing.mode === 'AMOUNT' ? '₹' : d.sizing.mode === 'QUANTITY' ? 'shares' : '%'}</span>
           </Cell>
-          <Cell label="Orders fill at" help={E.editor.fill}>
-            <Segmented
-              label="Fill"
-              value={d.execution.fill}
-              onChange={(fill) => set({ execution: { ...d.execution, fill } })}
-              options={[
-                { value: 'NEXT_OPEN', label: 'Next open', help: { title: 'Next open', body: 'Signals at a close are filled at the next trading day’s open (what an end-of-day alert allows).' } },
-                { value: 'CLOSE', label: 'Signal close', help: { title: 'Signal close', body: 'Filled at the close that signalled.' } },
-              ]}
-            />
-          </Cell>
-          <Cell label="Stops trigger on" help={E.editor.stopTrigger}>
-            <Segmented
-              label="Stop trigger"
-              value={d.execution.stopTrigger}
-              onChange={(stopTrigger) => set({ execution: { ...d.execution, stopTrigger } })}
-              options={[
-                { value: 'TOUCH', label: 'Any day’s low', help: { title: 'Any day’s low', body: 'Like a stop-loss order: sells when a day’s low reaches the stop (at the open on a gap).' } },
-                { value: 'CLOSE', label: 'Closing basis', help: { title: 'Closing basis', body: 'Sells only when a check’s close is below the stop.' } },
-              ]}
-            />
-          </Cell>
-          <Cell label="Costs" help={E.editor.charges}>
-            <Toggle checked={d.costs.charges} onChange={(charges) => set({ costs: { ...d.costs, charges } })} label="Delivery charges" help={E.editor.charges} />
-            <NumberInput label="Slippage %" min={0} max={5} step={0.05} className={numBox} value={d.costs.slippagePct} onChange={(slippagePct) => set({ costs: { ...d.costs, slippagePct } })} />
-            <Tooltip content={E.editor.slippage}>
-              <span className="text-xs text-slate-500">% slippage</span>
-            </Tooltip>
+          <Cell label="Orders" help={E.editor.orders}>
+            <span className="py-1 text-xs text-slate-400">{ordersLine}</span>
           </Cell>
         </div>
       </Section>

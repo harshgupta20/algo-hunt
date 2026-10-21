@@ -1,12 +1,12 @@
 /**
  * The equity engine, hand-checked: crossovers, fills at the close / next open, target and stop-loss (touch,
- * gaps, both in one day), the trader's pyramiding rule with exact prices, weekly values on daily checks,
- * shared cash, time exits, charges, and the figures.
+ * gaps, both in one day), the trader's pyramiding rule with exact prices, weekly candles, shared cash, time exits,
+ * charges, the app's fixed order rules (next open + slippage shown in the order), and the figures.
  */
 import { describe, expect, it } from 'vitest';
-import type { EqBacktestRequest, EqStrategyDefinition } from '../../src/shared/equity';
-import { all, any, cond, defaultDefinition, ind, num, price } from '../../src/shared/equity';
-import { dailyBars, weeklyAsOf, weeklyBars, type Bars } from '../../src/server/equity/engine/bars';
+import type { EqBacktestRequest, EqOrderRules, EqStrategyDefinition } from '../../src/shared/equity';
+import { EQ_ORDER_RULES, all, any, cond, defaultDefinition, ind, num, price } from '../../src/shared/equity';
+import { dailyBars, weeklyBars, type Bars } from '../../src/server/equity/engine/bars';
 import { runBacktest, type StockCandles } from '../../src/server/equity/engine/backtest';
 import { orderCharges } from '../../src/server/equity/engine/charges';
 
@@ -34,16 +34,17 @@ const plain = (patch: Partial<EqStrategyDefinition>): EqStrategyDefinition => ({
   name: 'Test',
   exit: { targetPct: null, stopLossPct: null, trailingStopPct: null, priceBase: 'AVERAGE', when: null, maxBars: null },
   sizing: { mode: 'QUANTITY', value: 10 },
-  execution: { fill: 'CLOSE', stopTrigger: 'TOUCH' },
-  costs: { charges: false, slippagePct: 0 },
   ...patch,
 });
 
+/** Hand-checkable fills: at the signal close, no charges, no slippage (real backtests use EQ_ORDER_RULES). */
+const SIMPLE: EqOrderRules = { fill: 'CLOSE', stopTrigger: 'TOUCH', charges: false, slippagePct: 0 };
+
 const request = (rows: Row[], patch: Partial<EqBacktestRequest> = {}): EqBacktestRequest => ({ symbols: ['AAA'], from: rows[0]![0], to: rows.at(-1)![0], capital: 1_000_000, maxPositions: null, ...patch });
-const run = (def: EqStrategyDefinition, stocks: Array<[string, Row[]]>, patch: Partial<EqBacktestRequest> = {}) => {
+const run = (def: EqStrategyDefinition, stocks: Array<[string, Row[]]>, patch: Partial<EqBacktestRequest> = {}, rules: EqOrderRules = SIMPLE) => {
   const candles: StockCandles[] = stocks.map(([symbol, rows]) => ({ symbol, name: symbol, daily: toBars(rows) }));
   const all = stocks.flatMap(([, r]) => r).map((r) => r[0]).sort();
-  return runBacktest(def, { ...request(stocks[0]![1]), from: all[0]!, to: all.at(-1)!, symbols: stocks.map(([s]) => s), ...patch }, candles, null, all.at(-1)!);
+  return runBacktest(def, { ...request(stocks[0]![1]), from: all[0]!, to: all.at(-1)!, symbols: stocks.map(([s]) => s), ...patch }, candles, null, all.at(-1)!, rules);
 };
 
 const SMA = (period: number) => ind('SMA', { period });
@@ -68,11 +69,21 @@ describe('crossovers and fills', () => {
   });
 
   it('fills at the next trading day’s open', () => {
-    const r = run({ ...def, execution: { fill: 'NEXT_OPEN', stopTrigger: 'TOUCH' } }, [['AAA', rows]]);
+    const r = run(def, [['AAA', rows]], {}, { ...SIMPLE, fill: 'NEXT_OPEN' });
     const t = r.trades[0]!;
     expect(t).toMatchObject({ entryDate: rows[7]![0], exitDate: rows[10]![0], avgPrice: rows[7]![1], exitPrice: rows[10]![1] });
     expect(t.fills[0]!).toMatchObject({ signalDate: rows[6]![0], date: rows[7]![0] });
     expect(t.fills[0]!.reason).toMatch(/— bought at the next open$/);
+  });
+
+  it('a real backtest: next open, 0.1 % slippage shown with the open in each order, Zerodha charges', () => {
+    const r = run(def, [['AAA', rows]], {}, EQ_ORDER_RULES);
+    const [buy, sell] = r.trades[0]!.fills;
+    // Bought at the 8th open (13) + 0.1 %; sold at the 11th open (10) − 0.1 %.
+    expect(buy).toMatchObject({ date: rows[7]![0], price: 13.01, charges: orderCharges('BUY', 130.13) });
+    expect(buy!.reason).toMatch(/— bought at the next open \(₹13\.00 \+ 0\.1% slippage\)$/);
+    expect(sell).toMatchObject({ date: rows[10]![0], price: 9.99, charges: orderCharges('SELL', 99.9) });
+    expect(sell!.reason).toMatch(/— sold at the next open \(₹10\.00 − 0\.1% slippage\)$/);
   });
 });
 
@@ -157,14 +168,14 @@ describe('pyramiding — the trader’s rule', () => {
   });
 });
 
-describe('weekly values on a daily strategy', () => {
-  it('reads the last COMPLETED week — a weekly close is known only on the week’s last day', () => {
-    // Week 1 closes at 104 (Fri); week 2 closes at 110 every day. Weekly close > 105 turns true at week 2's Friday close.
+describe('weekly candles', () => {
+  it('a weekly strategy reads every value on weekly candles, checked on the week’s last day', () => {
+    // Week 1 closes at 104 (Fri); week 2 closes at 110 every day. Close > 105 turns true at week 2's Friday close.
     const rows = daily('2025-01-06', [100, 101, 102, 103, 104, 110, 110, 110, 110, 110, 110]);
-    const def = plain({ entry: { when: all('e', cond('e1', price('close', '1w'), 'GT', num(105))), trigger: 'WHEN_TRUE' } });
+    const def = plain({ timeframe: '1w', entry: { when: all('e', cond('e1', price('close'), 'GT', num(105))), trigger: 'WHEN_TRUE' } });
     const t = run(def, [['AAA', rows]]).trades[0]!;
     expect(t.entryDate).toBe('2025-01-17'); // week 2's Friday, not Monday 13th
-    expect(t.fills[0]!.reason).toBe('Entry: Weekly Close 110.00 > 105');
+    expect(t.fills[0]!.reason).toBe('Entry: Close 110.00 > 105');
   });
 
   it('weekly candles: high / low / volume of the week, the last week complete only if Friday is in the data range', () => {
@@ -174,7 +185,6 @@ describe('weekly values on a daily strategy', () => {
     expect([w.date[0], w.open[0], w.close[0], w.high[0], w.low[0], w.volume[0]]).toEqual(['2025-01-10', 100, 104, 105, 99, 5000]);
     expect(w.complete).toEqual([true, false]);
     expect(weeklyBars(b, '2025-01-17').complete).toEqual([true, true]);
-    expect([...weeklyAsOf(b, w)]).toEqual([-1, -1, -1, -1, 0, 0, 0, 0]);
   });
 });
 
@@ -201,11 +211,12 @@ describe('money', () => {
 
   it('Zerodha delivery charges per order', () => {
     expect(orderCharges('BUY', 100_000)).toBe(118.62); // STT 100 + exchange 2.97 + SEBI 0.10 + stamp 15 + GST 0.55
-    expect(orderCharges('SELL', 100_000)).toBe(121.72); // STT 100 + exchange 2.97 + SEBI 0.10 + DP 15.34 + GST 3.31
+    expect(orderCharges('SELL', 100_000)).toBe(118.96); // STT 100 + exchange 2.97 + SEBI 0.10 + GST 0.55 + DP 15.34 (GST included)
+    expect(orderCharges('SELL', 13_786.2)).toBe(29.63); // the MARUTI sale that showed ₹32.39 when GST was added to the DP charge twice
   });
 
   it('charges and slippage come off the P&L', () => {
-    const r = run({ ...def, sizing: { mode: 'QUANTITY', value: 100 }, costs: { charges: true, slippagePct: 1 } }, [['AAA', rows]]);
+    const r = run({ ...def, sizing: { mode: 'QUANTITY', value: 100 } }, [['AAA', rows]], {}, { ...SIMPLE, charges: true, slippagePct: 1 });
     const t = r.trades[0]!;
     // Bought at 101 (1 % slippage); valued at the last close 100 (END: no slippage).
     expect(t).toMatchObject({ avgPrice: 101, exitPrice: 100, grossPnl: -100, charges: orderCharges('BUY', 10_100) + orderCharges('SELL', 10_000) });
@@ -229,7 +240,7 @@ describe('entry trigger, time exit and the end of the test', () => {
   });
 
   it('a signal at the last check is listed (it would fill after the period)', () => {
-    const r = run(plain({ entry: { when: always, trigger: 'BECOMES_TRUE' }, execution: { fill: 'NEXT_OPEN', stopTrigger: 'TOUCH' } }), [['AAA', daily('2025-01-06', [100])]]);
+    const r = run(plain({ entry: { when: always, trigger: 'BECOMES_TRUE' } }), [['AAA', daily('2025-01-06', [100])]], {}, { ...SIMPLE, fill: 'NEXT_OPEN' });
     expect(r.trades).toEqual([]);
     expect(r.skipped).toEqual([{ symbol: 'AAA', date: '2025-01-06', kind: 'ENTRY', reason: 'Signal at the last check — it would buy at the next open, after the period' }]);
   });

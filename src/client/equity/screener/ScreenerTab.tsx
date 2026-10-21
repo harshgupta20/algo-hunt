@@ -12,6 +12,7 @@ import { Badge, EmptyState, Section, Segmented } from '../../components/ui';
 import { Cell } from '../../components/form';
 import { InlineSpinner } from '../../components/loaders';
 import { eqApi } from '../api';
+import { ChartLink } from '../ChartLink';
 import { downloadCsv, duration, num, pct, pnlClass, shortDate } from '../format';
 import { E } from '../help';
 import { JobProgress } from '../JobProgress';
@@ -175,9 +176,12 @@ export function ScreenerTab({ initialStrategyId, draft }: { initialStrategyId?: 
                   {rows.map((r) => (
                     <tr key={r.symbol} className="hover:bg-ink-800/40">
                       <td className={td}>
-                        <Tooltip content={{ title: r.symbol, body: r.name }}>
-                          <span className="font-medium text-slate-200">{r.symbol}</span>
-                        </Tooltip>
+                        <div className="flex items-center gap-1.5">
+                          <Tooltip content={{ title: r.symbol, body: r.name }}>
+                            <span className="font-medium text-slate-200">{r.symbol}</span>
+                          </Tooltip>
+                          <ChartLink symbol={r.symbol} tf={result.timeframe} />
+                        </div>
                       </td>
                       <td className={clsx(td, 'text-slate-400')}>{shortDate(r.asOf)}</td>
                       <td className={clsx(td, 'text-right tabular-nums')}>{num(r.close)}</td>

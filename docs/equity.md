@@ -1,7 +1,9 @@
 # Equity — stock strategies (`/equity`)
 
 Strategies for **NSE cash stocks**, separate from F&O (`/v2`): their own builder, engine, backtester, screener,
-watchlists, database tables and API. **Equity** in the sidebar. Every control and number on the page has a tooltip.
+watchlists, database tables and API. **Equity** in the sidebar. Every control and number on the page has a tooltip, and
+every stock in the trades, by-stock, signals-not-taken and screener lists has a **TradingView chart link** (NSE, on the
+strategy's daily / weekly candles; TradingView has no date link, so the tooltip says which dates to scroll to).
 
 > Related: [status.md](status.md) · [database.md](database.md) · [api.md](api.md) · [v2-architecture.md](v2-architecture.md)
 
@@ -18,19 +20,22 @@ watchlists, database tables and API. **Equity** in the sidebar. Every control an
 
 | Part | Options |
 | --- | --- |
-| Checked on | **Daily close** or **Weekly close** (when the week completes, on its last trading day) |
-| Buy when | Conditions in nested ALL / ANY groups. A value is a price field (open / high / low / close / volume), an indicator (SMA, EMA, WMA, RSI, MACD, Bollinger, ATR, Supertrend, ADX, DMI, highest / lowest of the previous N, ROC) or a number. Each value can read daily or weekly candles, N candles ago, × a multiplier; RSI / ATR / ADX / ROC can take a **moving average of themselves** (RSI(14) with SMA(9) = TradingView's "RSI-based MA"). Operators: crosses above / below, >, ≥, <, ≤. **Buy on**: conditions true, or only when they turn true |
+| Checked on | **Daily close** or **Weekly close** (when the week completes, on its last trading day) — chosen **once**: every buy condition, exit condition and the pyramiding MA use those candles |
+| Buy when | Conditions in nested ALL / ANY groups. A value is a price field (open / high / low / close / volume), an indicator (SMA, EMA, WMA, RSI, MACD, Bollinger, ATR, Supertrend, ADX, DMI, highest / lowest of the previous N, ROC) or a number. Each value can be read N days / weeks ago, × a multiplier; RSI / ATR / ADX / ROC can take a **moving average of themselves** (RSI(14) with SMA(9) = TradingView's "RSI-based MA"). Operators: crosses above / below, >, ≥, <, ≤. **Buy on**: conditions true, or only when they turn true |
 | Sell when (first of) | Target % · stop-loss % · trailing stop % (below the highest high since the first buy) · exit conditions (a group) · time exit (N checks) · the pyramiding stop. Target and stop-loss measured from the average price (moves with adds) or the first buy |
 | Pyramiding | When the MA (SMA / EMA / WMA, period N, on the strategy's timeframe) **rises to the last buy price** and the close is at or above it → buy one more lot; **the stop for ALL lots becomes that MA value**. Repeats until a stop or any other exit sells everything. Optional max adds |
 | Money per buy | ₹ per buy (whole shares) · shares per buy · % of the account's value. The same for the first buy and every add |
-| Orders | Fill at the **next trading day's open** (what an end-of-day alert lets you do) or at the signal close. Stops trigger on **any day's low** (a stop order) or on a closing basis |
-| Costs | Zerodha delivery charges per order; slippage % on market orders |
+| Orders | **Not a choice** — the same for every strategy (`EQ_ORDER_RULES`): fill at the **next trading day's open** (what an end-of-day alert lets you do) with 0.1 % slippage, stops on **any day's low** (a stop-loss order), Zerodha delivery charges. The builder shows them in one line |
 
 ## 3. Exact rules (the engine follows these — `src/server/equity/engine/`)
 
 - **Checks.** Daily: every trading day's close. Weekly: the last trading day of each completed week (Monday–Sunday,
-  IST); the last week counts only when no weekday of it is left in the data. A weekly value read at a daily check is
-  the **last completed week**; a daily value read at a weekly check is that week's last day.
+  IST); the last week counts only when no weekday of it is left in the data. Every value reads the strategy's own
+  candles — there are no per-value timeframes.
+- **Old saved strategies** (from when a value could pick its own daily / weekly candles, and orders were set per
+  strategy) are upgraded as they're read and on their next save (`shared/equity/normalize.ts`): when every entry
+  value read one timeframe, the strategy takes it (a Daily strategy with "weekly close crosses above weekly SMA(20)"
+  becomes Weekly, so its exits and pyramiding MA turn weekly too); the old order settings are dropped.
 - **Crossings** compare this check with the previous one: *crosses above* = above now **and** at or below before
   (TradingView `ta.crossover`).
 - **Too little history** → the condition is unknown → it neither buys nor sells. Extra history before the period is
@@ -49,8 +54,9 @@ watchlists, database tables and API. **Equity** in the sidebar. Every control an
 - **End of the period:** positions still held are valued at the last close (reason END, sell charges counted).
 - **Only finished sessions:** today's candle counts after 15:40 IST on a weekday; Kite's forming candle is dropped.
 - **Charges (delivery, per order):** STT 0.1 % on buys and sells, exchange 0.00297 %, SEBI ₹10 / crore, stamp
-  0.015 % on buys, GST 18 % on exchange + SEBI + DP, DP ₹15.34 per sell. Slippage worsens buys, adds, stop and signal
-  sells — not target limit orders.
+  0.015 % on buys, GST 18 % on exchange + SEBI, DP ₹15.34 per sell (GST already included — ₹3.50 CDSL + ₹9.50
+  Zerodha + ₹2.34 GST). Slippage worsens buys, adds, stop and signal sells — not target limit orders — and each
+  order's text shows the price before it (e.g. "bought at the next open (₹13,740.00 + 0.1% slippage)").
 - **Survivorship bias:** stock lists are today's members.
 
 ## 4. Data
@@ -81,10 +87,11 @@ logger, database pool and config.
 ## 6. Tests
 
 `tests/equity/`: indicators vs the library (candle by candle) and hand-checked; the engine on hand-built candles
-(crossings, fills at close / next open, stop / target / gaps / same-day, trailing stop, the pyramiding example with
-exact prices, max adds, any-exit-closes-all, weekly values on daily checks, shared cash, max stocks held, charges,
-slippage, time exit, END, figures); the service (stock list filter, presets, checks before saving, watchlists, jobs,
-cache, cancel, finished sessions, screener).
+(crossings, fills at close / next open, the app's order rules with slippage in the order text, stop / target / gaps /
+same-day, trailing stop, the pyramiding example with exact prices, max adds, any-exit-closes-all, weekly candles,
+shared cash, max stocks held, charges, slippage, time exit, END, figures); the service (stock list filter, presets,
+checks before saving, upgrading old strategies, watchlists, jobs, cache, cancel, finished sessions, screener);
+TradingView links (`format.test.ts`).
 
 ## 7. Next
 

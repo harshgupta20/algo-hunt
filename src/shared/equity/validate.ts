@@ -4,7 +4,7 @@
  */
 import { EQ_INDICATOR, EQ_LIMITS } from './catalog';
 import { conditionText, groupDepth, leavesOf } from './text';
-import type { EqGroup, EqOperand, EqStrategyDefinition, EqTimeframe, EqUnit, ValidationIssue } from './types';
+import type { EqGroup, EqOperand, EqStrategyDefinition, EqUnit, ValidationIssue } from './types';
 
 /** What an operand measures; null for a plain number (comparable with anything). */
 export function operandUnit(o: EqOperand): EqUnit | null {
@@ -71,18 +71,12 @@ export function operandBars(o: EqOperand): number {
   return need + back;
 }
 
-/** Candles each timeframe needs before the first check can be decided (entry, exits and pyramiding MA). */
-export function requiredBars(d: EqStrategyDefinition): Record<EqTimeframe, number> {
-  const out: Record<EqTimeframe, number> = { '1d': 0, '1w': 0 };
-  for (const c of [...leavesOf(d.entry.when), ...leavesOf(d.exit.when)]) {
-    for (const o of [c.left, c.right]) {
-      if (o.kind === 'NUMBER') continue;
-      const tf = o.timeframe ?? d.timeframe;
-      out[tf] = Math.max(out[tf], operandBars(o));
-    }
-  }
-  if (d.pyramid.enabled) out[d.timeframe] = Math.max(out[d.timeframe], (d.pyramid.maType === 'EMA' ? d.pyramid.maPeriod * 3 : d.pyramid.maPeriod) + 1);
-  return out;
+/** Candles of the strategy's timeframe needed before the first check can be decided (entry, exits and pyramiding MA). */
+export function requiredBars(d: EqStrategyDefinition): number {
+  let need = 0;
+  for (const c of [...leavesOf(d.entry.when), ...leavesOf(d.exit.when)]) for (const o of [c.left, c.right]) need = Math.max(need, operandBars(o));
+  if (d.pyramid.enabled) need = Math.max(need, (d.pyramid.maType === 'EMA' ? d.pyramid.maPeriod * 3 : d.pyramid.maPeriod) + 1);
+  return need;
 }
 
 function checkOperand(o: EqOperand, path: string, issues: ValidationIssue[]) {
@@ -154,10 +148,9 @@ export function validateDefinition(d: EqStrategyDefinition): ValidationIssue[] {
   if (!(d.sizing.value > 0)) issues.push({ path: 'sizing', message: 'Money per buy must be above 0', severity: 'error' });
   if (d.sizing.mode === 'QUANTITY' && !Number.isInteger(d.sizing.value)) issues.push({ path: 'sizing', message: 'Shares per buy must be a whole number', severity: 'error' });
   if (d.sizing.mode === 'PERCENT' && d.sizing.value > 100) issues.push({ path: 'sizing', message: 'At most 100% of the account per buy', severity: 'error' });
-  if (!(d.costs.slippagePct >= 0 && d.costs.slippagePct <= EQ_LIMITS.maxSlippagePct)) issues.push({ path: 'costs.slippagePct', message: `Slippage must be from 0 to ${EQ_LIMITS.maxSlippagePct}%`, severity: 'error' });
   const need = requiredBars(d);
-  if (need['1w'] > 260) issues.push({ path: 'entry', message: `Needs ${need['1w']} weekly candles (~${Math.round(need['1w'] / 52)} years) of history before it can decide — newer stocks will be skipped until then`, severity: 'warning' });
-  if (need['1d'] > 750) issues.push({ path: 'entry', message: `Needs ${need['1d']} daily candles (~${Math.round(need['1d'] / 250)} years) of history before it can decide`, severity: 'warning' });
+  if (d.timeframe === '1w' && need > 260) issues.push({ path: 'entry', message: `Needs ${need} weekly candles (~${Math.round(need / 52)} years) of history before it can decide — newer stocks will be skipped until then`, severity: 'warning' });
+  if (d.timeframe === '1d' && need > 750) issues.push({ path: 'entry', message: `Needs ${need} daily candles (~${Math.round(need / 250)} years) of history before it can decide`, severity: 'warning' });
   return issues;
 }
 

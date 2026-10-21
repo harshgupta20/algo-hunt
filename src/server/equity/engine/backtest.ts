@@ -2,8 +2,8 @@
  * Backtest from candles already fetched: prepare each stock (weekly candles, checks, conditions), simulate
  * the portfolio, then the figures, the NIFTY 50 comparison and each stock's data notes. Pure — no I/O.
  */
-import type { EqBacktestRequest, EqBacktestResult, EqCurvePoint, EqStrategyDefinition, EqSymbolResult } from '@/shared/equity';
-import { EQ_TIMEFRAME, leavesOf } from '@/shared/equity';
+import type { EqBacktestRequest, EqBacktestResult, EqCurvePoint, EqOrderRules, EqStrategyDefinition, EqSymbolResult } from '@/shared/equity';
+import { EQ_ORDER_RULES, EQ_TIMEFRAME, leavesOf } from '@/shared/equity';
 import type { Bars } from './bars';
 import { Evaluator, UNKNOWN, buildTimeline, stockSeries } from './evaluate';
 import { simulate, type SimStock } from './simulate';
@@ -78,7 +78,8 @@ function benchmarkCurve(bench: Bars | null, dates: string[], start: number): num
   return out;
 }
 
-export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, candles: StockCandles[], bench: Bars | null, endDate: string): Omit<EqBacktestResult, 'requests'> {
+/** `rules` is EQ_ORDER_RULES for every real backtest; tests pass simpler ones (fills at the close, no costs). */
+export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, candles: StockCandles[], bench: Bars | null, endDate: string, rules: EqOrderRules = EQ_ORDER_RULES): Omit<EqBacktestResult, 'requests'> {
   const errors = new Map<string, string[]>();
   const notes = new Map<string, string[]>();
   const stocks: SimStock[] = [];
@@ -92,7 +93,7 @@ export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, c
     stocks.push(stock);
   }
 
-  const sim = simulate(def, stocks, { from: req.from, to: req.to, capital: req.capital, maxPositions: req.maxPositions });
+  const sim = simulate(def, stocks, { from: req.from, to: req.to, capital: req.capital, maxPositions: req.maxPositions, rules });
   const start = req.capital ?? 0;
   const values = sim.curve.map((p) => p.equity);
   const dd = drawdowns(values, start);
@@ -130,13 +131,13 @@ export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, c
   });
 
   const assumptions = [
-    `Checked at each ${def.timeframe === '1w' ? 'completed week’s last trading day' : 'daily close'}; ${def.execution.fill === 'CLOSE' ? 'orders fill at the close that signalled' : 'orders fill at the next trading day’s open'}.`,
-    def.execution.stopTrigger === 'TOUCH'
+    `Checked at each ${def.timeframe === '1w' ? 'completed week’s last trading day, on weekly candles' : 'daily close, on daily candles'}; ${rules.fill === 'CLOSE' ? 'orders fill at the close that signalled' : 'orders fill at the next trading day’s open'}.`,
+    rules.stopTrigger === 'TOUCH'
       ? 'Stops sell when a day’s low reaches them (at the open if it opened below); targets when a day’s high reaches them. Both in one day → the stop counts.'
       : 'Stops sell when a check’s close is below them; targets when a day’s high reaches them.',
     'Sells before buys each day; when money is short, same-day buys are taken in alphabetical order.',
-    def.costs.charges ? 'Zerodha delivery charges on every order (STT, exchange, SEBI, stamp, GST, DP charge on sells).' : 'No charges.',
-    ...(def.costs.slippagePct ? [`${def.costs.slippagePct}% slippage on every market order (not on targets).`] : []),
+    rules.charges ? 'Zerodha delivery charges on every order (STT, exchange, SEBI, stamp, GST, ₹15.34 DP charge on sells).' : 'No charges.',
+    ...(rules.slippagePct ? [`${rules.slippagePct}% slippage on every market order (not on targets).`] : []),
     ...(def.pyramid.enabled ? [`Pyramiding: one more lot when ${def.pyramid.maType}(${def.pyramid.maPeriod}) reaches the last buy price with the close at or above it; the stop for all lots moves to that MA value once the lot is bought.`] : []),
     'Positions still open at the end are valued at the last close (reason END).',
     'Stock lists are today’s members — stocks that left an index or were delisted aren’t included (survivorship bias).',
