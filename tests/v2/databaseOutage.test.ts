@@ -13,7 +13,7 @@ import { DEFAULT_V2_SETTINGS } from '../../src/shared/v2';
 import { ProductService } from '../../src/server/v2/data/ProductService';
 import { RuntimeV2Store, createRuntimeState } from '../../src/server/v2/persistence/RuntimeV2Store';
 import type { V2Store } from '../../src/server/v2/persistence/V2Store';
-import { WriteQueue, isPermanentWriteError } from '../../src/server/v2/persistence/writeQueue';
+import { WriteQueue, isPermanentWriteError, isSchemaWriteError } from '../../src/server/v2/persistence/writeQueue';
 import { V2Service } from '../../src/server/v2/V2Service';
 import { FixtureV2Provider, MemoryV2Store, NSE_SESSION, RecordingChannels, and, candlesAt, cond, config, field, fut, ind, ist, ladder, legSeries, momentumCloses, num, spot, strategy, timesEndingAt } from '../helpers/v2Fakes';
 
@@ -173,6 +173,41 @@ describe('database unreachable', () => {
     expect(isPermanentWriteError({ code: '23505' })).toBe(true);
     expect(isPermanentWriteError({ code: '57P01' })).toBe(false); // server restarting: retry
     expect(isPermanentWriteError(Object.assign(new Error('timeout exceeded when trying to connect'), {}))).toBe(false);
+  });
+
+  it('a write the database answers with a schema error is set aside (with what needs it); the rest keep saving; it saves once fixed', async () => {
+    // Like v2_paper_trades before migration 013: "column slot does not exist" — the database is up, the table isn't.
+    const db = new MemoryV2Store();
+    let migrated = false;
+    const outdated = new Proxy(db, {
+      get(target, prop, recv) {
+        const v = Reflect.get(target, prop, recv);
+        if (prop !== 'paper') return v;
+        return { ...v, insertTrade: (t: never) => (migrated ? v.insertTrade(t) : Promise.reject(Object.assign(new Error('column "slot" of relation "v2_paper_trades" does not exist'), { code: '42703' }))) };
+      },
+    }) as V2Store;
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'v2-blocked-'));
+    const file = path.join(dir, 'pending-writes.json');
+    let retryAt = 0;
+    const q = new WriteQueue(outdated, { file, blockedRetryMs: () => (retryAt = Date.now()) && 5 });
+    q.push({ op: 'paper.insertTrade', args: [{ id: 'T1', connectionId: 'c1', slot: 'shift:0', status: 'OPEN', alertId: null }], provides: 'T1' });
+    q.push({ op: 'paper.closeTrade', args: ['T1', { exitAt: '2026-10-07T09:50:00.000Z', exitPrice: 1, exitReason: 'SQUARE_OFF', grossPnl: 0, charges: 0, netPnl: 0, lastPrice: 1, lastPriceAt: '2026-10-07T09:50:00.000Z' }], dependsOn: ['T1'] });
+    q.push({ op: 'units.upsertMany', args: [[unitState('c1')]] });
+    await q.drain(); // returns once everything that CAN be saved is saved — readers never wait on a set-aside write
+    expect(db.data.units.size).toBe(1); // saved, not held up behind the paper trade
+    expect(q.pending()).toMatchObject({ count: 2, blocked: 2, failingSince: null, lastError: expect.stringContaining('slot') });
+    expect(JSON.parse(readFileSync(file, 'utf8')).map((w: { op: string }) => w.op)).toEqual(['paper.insertTrade', 'paper.closeTrade']); // kept for a restart
+    expect(retryAt).toBeGreaterThan(0);
+
+    migrated = true; // the migration runs: the next retry saves them, in order
+    await until(() => q.size === 0);
+    expect(db.data.paperTrades).toEqual([expect.objectContaining({ id: 'T1', status: 'CLOSED' })]);
+    expect(q.pending()).toMatchObject({ count: 0, blocked: 0, lastError: null });
+    expect(existsSync(file)).toBe(false);
+    expect(isSchemaWriteError({ code: '42703' })).toBe(true); // undefined column
+    expect(isSchemaWriteError({ code: '42P10' })).toBe(true); // ON CONFLICT without its index
+    expect(isSchemaWriteError({ code: '08006' })).toBe(false); // connection failure: wait and retry everything
+    await q.close();
   });
 });
 

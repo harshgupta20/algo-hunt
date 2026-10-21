@@ -441,6 +441,9 @@ export interface PendingWrites {
   lastError: string | null;
   /** Writes the database refused since the app started (given up on). */
   dropped: number;
+  /** Of `count`: writes the database answers with a schema error (a missing column / table — it needs the app's
+   *  database update), set aside so every other write keeps saving; retried every few minutes. */
+  blocked: number;
 }
 
 /** Settings → Database: size, the plan's limit when known, what's kept and what's waiting. */

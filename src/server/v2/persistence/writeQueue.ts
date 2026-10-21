@@ -7,6 +7,11 @@
  * Writes are plain data ({ op, args }), so they survive a restart. A write the database refuses for a reason
  * that retrying can't fix (a duplicate, a deleted connection) is dropped after a few tries, along with the
  * writes that depend on it (an alert whose signal wasn't saved, that alert's deliveries).
+ *
+ * A write the database answers with a SCHEMA error (a missing column or table — the database needs the app's
+ * migration) is set aside with the writes that depend on it, and everything else keeps saving: one table out of
+ * date must not hold up every alert and scan state behind it (it did, for days, before 013 fixed v2_paper_trades).
+ * Set-aside writes stay in the file and are retried every 30 s → 10 min, in their order, until they save.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -39,6 +44,8 @@ export interface WriteQueueOptions {
   clock?: () => number;
   /** Wait before retry number `attempt` (1, 2, …). */
   retryMs?: (attempt: number) => number;
+  /** Wait before retrying the writes set aside for a schema error, the `attempt`-th time. */
+  blockedRetryMs?: (attempt: number) => number;
   /** Where waiting writes are kept across restarts (none = memory only). */
   file?: string;
   log?: { warn(msg: string, data?: Record<string, unknown>): void; info(msg: string, data?: Record<string, unknown>): void };
@@ -46,6 +53,7 @@ export interface WriteQueueOptions {
 
 const PERMANENT_TRIES = 3;
 const defaultRetry = (attempt: number) => Math.min(30_000, 1000 * 2 ** (attempt - 1));
+const defaultBlockedRetry = (attempt: number) => Math.min(600_000, 30_000 * 2 ** (attempt - 1));
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 /**
@@ -56,6 +64,16 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
 export function isPermanentWriteError(err: unknown): boolean {
   const code = (err as { code?: unknown })?.code;
   return typeof code === 'string' && /^(22|23)[0-9A-Z]{3}$/.test(code);
+}
+
+/**
+ * True when the database answered that the write doesn't fit its SCHEMA (Postgres class 42: an undefined column /
+ * table, an ON CONFLICT without its index…). Only a migration fixes that — but it doesn't mean the database is
+ * down, so the other writes go on.
+ */
+export function isSchemaWriteError(err: unknown): boolean {
+  const code = (err as { code?: unknown })?.code;
+  return typeof code === 'string' && /^42[0-9A-Z]{3}$/.test(code);
 }
 
 async function run(db: V2Store, w: QueuedWrite): Promise<unknown> {
@@ -82,6 +100,11 @@ async function run(db: V2Store, w: QueuedWrite): Promise<unknown> {
 
 export class WriteQueue {
   private jobs: Array<QueuedWrite & { tries: number }> = [];
+  /** Set aside for a schema error (in order), and the records they'd create (their dependants wait with them). */
+  private blocked: Array<QueuedWrite & { tries: number }> = [];
+  private blockedIds = new Set<string>();
+  private blockedRetries = 0;
+  private blockedTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private waiters: Array<() => void> = [];
   private wake: (() => void) | null = null;
@@ -94,6 +117,7 @@ export class WriteQueue {
   private closed = false;
   private readonly clock: () => number;
   private readonly retryMs: (attempt: number) => number;
+  private readonly blockedRetryMs: (attempt: number) => number;
 
   constructor(
     private readonly db: V2Store,
@@ -101,6 +125,7 @@ export class WriteQueue {
   ) {
     this.clock = opts.clock ?? Date.now;
     this.retryMs = opts.retryMs ?? defaultRetry;
+    this.blockedRetryMs = opts.blockedRetryMs ?? defaultBlockedRetry;
     this.load();
   }
 
@@ -123,20 +148,56 @@ export class WriteQueue {
     await new Promise<void>((resolve) => this.waiters.push(resolve));
   }
 
-  /** Writes still waiting. */
+  /** Writes still waiting (set-aside ones included). */
   get size(): number {
-    return this.jobs.length;
+    return this.jobs.length + this.blocked.length;
   }
 
   pending(): PendingWrites {
     const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
-    return { count: this.jobs.length, oldestAt: iso(this.jobs[0]?.at ?? null), failingSince: iso(this.failingSince), lastError: this.lastError, dropped: this.dropped };
+    const oldest = Math.min(this.blocked[0]?.at ?? Infinity, this.jobs[0]?.at ?? Infinity);
+    return {
+      count: this.size,
+      oldestAt: iso(Number.isFinite(oldest) ? oldest : null),
+      failingSince: iso(this.failingSince),
+      lastError: this.lastError ?? this.blockedError,
+      dropped: this.dropped,
+      blocked: this.blocked.length,
+    };
+  }
+
+  private blockedError: string | null = null;
+
+  /** Set a write aside (a schema error, or it needs a record that's set aside) and keep going with the rest. */
+  private setAside(job: QueuedWrite & { tries: number }, err?: unknown): void {
+    this.blocked.push(job);
+    if (job.provides) this.blockedIds.add(job.provides);
+    if (err !== undefined) {
+      if (this.blockedError === null) this.opts.log?.warn('the database refuses a write for a schema reason (it needs the app’s migration) — set aside, the rest keep saving', { op: job.op, error: message(err) });
+      this.blockedError = message(err);
+    }
+    if (!this.blockedTimer && !this.closed) {
+      this.blockedTimer = setTimeout(() => this.retryBlocked(), this.blockedRetryMs(++this.blockedRetries));
+      this.blockedTimer.unref?.();
+    }
+  }
+
+  /** Put the set-aside writes back in front, in their order, and try them again. */
+  private retryBlocked(): void {
+    this.blockedTimer = null;
+    if (this.closed || !this.blocked.length) return;
+    this.jobs.unshift(...this.blocked);
+    this.blocked = [];
+    this.blockedIds.clear();
+    void this.pump();
   }
 
   /** On shutdown: try to save everything within `ms`, then stop and keep whatever is left in the file. */
   async close(ms = 3_000): Promise<void> {
     if (this.jobs.length && this.failingSince === null) await Promise.race([this.drain(), new Promise((r) => setTimeout(r, ms))]);
     this.closed = true;
+    if (this.blockedTimer) clearTimeout(this.blockedTimer);
+    this.blockedTimer = null;
     this.wake?.();
     this.save();
   }
@@ -153,6 +214,11 @@ export class WriteQueue {
     try {
       while (this.jobs.length && !this.closed) {
         const job = this.jobs[0]!;
+        if (job.dependsOn?.some((id) => this.blockedIds.has(id))) {
+          this.jobs.shift(); // it needs a record that's set aside: it waits with it
+          this.setAside(job);
+          continue;
+        }
         if (job.dependsOn?.some((id) => this.skipped.has(id))) {
           if (job.op === 'paper.insertTrade') {
             // The trade stands on its own — save it without the link to an alert that wasn't saved.
@@ -174,6 +240,11 @@ export class WriteQueue {
             this.failingSince = null;
             this.lastError = null;
           }
+          if (!this.blocked.length && this.blockedError !== null && !this.jobs.some((j) => j.tries > 0)) {
+            this.opts.log?.info('the writes set aside for a schema error are saving now', {});
+            this.blockedError = null;
+            this.blockedRetries = 0;
+          }
         } catch (err) {
           job.tries++;
           if (isPermanentWriteError(err)) {
@@ -185,6 +256,12 @@ export class WriteQueue {
             this.dropped++;
             if (job.provides) this.skipped.add(job.provides);
             this.opts.log?.warn('database refused a write — dropped', { op: job.op, error: message(err) });
+            continue;
+          }
+          if (isSchemaWriteError(err)) {
+            this.jobs.shift();
+            this.setAside(job, err);
+            this.save();
             continue;
           }
           if (this.closed) break;
@@ -218,13 +295,14 @@ export class WriteQueue {
     const file = this.opts.file;
     if (!file) return;
     try {
-      if (!this.jobs.length) {
+      if (!this.jobs.length && !this.blocked.length) {
         if (this.persisted || existsSync(file)) rmSync(file, { force: true });
         this.persisted = false;
         return;
       }
       mkdirSync(path.dirname(file), { recursive: true });
-      writeFileSync(file, JSON.stringify(this.jobs.map(({ tries: _t, ...w }) => w)));
+      // Set-aside writes first: they were queued before the rest still waiting.
+      writeFileSync(file, JSON.stringify([...this.blocked, ...this.jobs].map(({ tries: _t, ...w }) => w)));
       this.persisted = true;
     } catch (err) {
       this.opts.log?.warn('could not keep the waiting records in a file', { file, error: message(err) });

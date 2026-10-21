@@ -415,7 +415,11 @@ function DatabaseCard() {
                 {d.pending.count > 0 && (
                   <>
                     <b className="text-warn">{d.pending.count} record(s) waiting to be saved</b>
-                    {d.pending.failingSince ? ` — the database can’t be reached since ${istTime(d.pending.failingSince)}` : ' — saving now'}
+                    {d.pending.failingSince
+                      ? ` — the database can’t be reached since ${istTime(d.pending.failingSince)}`
+                      : d.pending.blocked > 0
+                        ? ` — ${d.pending.blocked} of them the database refuses because its tables are older than the app; restart the app (or run npm run db:migrate) to update them. Everything else is saving as usual; these are retried every few minutes`
+                        : ' — saving now'}
                     {d.pending.lastError ? ` (${d.pending.lastError})` : ''}.{' '}
                   </>
                 )}

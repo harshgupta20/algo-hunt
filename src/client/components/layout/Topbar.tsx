@@ -89,7 +89,9 @@ export function Topbar({ collapsed, onToggleSidebar }: { collapsed: boolean; onT
                 <Tooltip
                   content={{
                     ...HELP.topbar.savesWaiting,
-                    note: `${s.database.count} record(s) waiting${s.database.failingSince ? ` since ${new Date(s.database.failingSince).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })} IST` : ''}${s.database.lastError ? ` — ${s.database.lastError}` : ''}. Settings → Database shows the details.`,
+                    note: s.database.blocked > 0 && s.database.failingSince === null
+                      ? `${s.database.blocked} record(s) the database refuses because its tables are older than the app${s.database.lastError ? ` (${s.database.lastError})` : ''} — restart the app (or run npm run db:migrate) to update them. Everything else is saved as usual. Settings → Database shows the details.`
+                      : `${s.database.count} record(s) waiting${s.database.failingSince ? ` since ${new Date(s.database.failingSince).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })} IST` : ''}${s.database.lastError ? ` — ${s.database.lastError}` : ''}. Settings → Database shows the details.`,
                   }}
                   side="bottom"
                 >
