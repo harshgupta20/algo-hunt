@@ -38,4 +38,14 @@ export const AI = {
     title: 'Describe it to the AI',
     body: 'Say the strategy in your own words (“weekly close above 20 SMA and RSI above 55, exit below the 20 SMA”) — the AI writes it and opens it here for you to check.',
   },
+  create: {
+    title: 'Create with AI',
+    body: 'Describe a strategy in your own words. The AI asks if something essential is unclear, then builds it exactly — listing every assumption — for you to open in the builder or save.',
+    note: 'Only builds: it never backtests or saves by itself. Separate from the AI chat.',
+  },
+  creatorStartOver: { title: 'Start over', body: 'Forget this strategy conversation and describe a new one.' },
+  creatorClose: { title: 'Close', body: 'Close the window — the conversation stays here when you come back.' },
+  creatorSave: { title: 'Save as a new strategy', body: 'Saves it to your strategies as it is (version 1). You can still open and change it later.' },
+  creatorAssumed: { title: 'Assumed by the AI', body: 'Defaults and interpretations the AI chose where your words didn’t say. Check them — tell it to change any.' },
+  creatorExample: { title: 'Use this example', body: 'Puts the example in the box — edit it to your rules, then send.' },
 } satisfies Record<string, TooltipContent>;

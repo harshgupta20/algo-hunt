@@ -22,7 +22,7 @@ import { ai, restoreConversation, useAi } from './store';
 const fmtK = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
 
 function suggestions(page: ReturnType<typeof useAi>['page']): string[] {
-  if (page?.backtestId) return ['Analyse this backtest — what drove it and where is the risk?', 'Is it robust or curve-fitted? Check it.', 'Why did it do worse than NIFTY 50 in its bad years?'];
+  if (page?.backtestId) return ['Analyse this backtest — what drove it and where is the risk?', 'Is it robust or curve-fitted? Check it.', 'Why did it lag NIFTY 50 in its bad years?'];
   if (page?.page === 'equity-builder') return ['Explain this strategy and its weak points', 'Backtest it on NIFTY 50 for 5 years and give me a verdict', 'Suggest a better exit and test both'];
   return [
     'Build: weekly close crosses above the 20-week SMA and RSI(14) above 55; exit below the 20 SMA; pyramid on the 20 SMA',
@@ -142,10 +142,10 @@ export function AiPanel() {
   }, [conv.error]);
   const c: AiConversation | undefined = conversationId ? conv.data : undefined;
   const running = c?.status === 'RUNNING';
-  const list = useQuery({ queryKey: ['ai-conversations'], queryFn: aiApi.conversations, enabled: open && showList });
+  const list = useQuery({ queryKey: ['ai-conversations'], queryFn: () => aiApi.conversations('CHAT'), enabled: open && showList });
 
   const send = useMutation({
-    mutationFn: (message: string) => aiApi.send({ ...(conversationId ? { conversationId } : {}), message, ...(withPage && page ? { context: page } : {}) }),
+    mutationFn: (message: string) => aiApi.send({ mode: 'CHAT', ...(conversationId ? { conversationId } : {}), message, ...(withPage && page ? { context: page } : {}) }),
     onSuccess: (r) => {
       qc.setQueryData(['ai-conversation', r.id], r);
       ai.setConversation(r.id);

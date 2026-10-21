@@ -46,10 +46,15 @@ const PERIOD = {
 };
 const fn = (name: string, description: string, properties: Record<string, unknown> = {}, required: string[] = []): ToolSpec => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required } } });
 
-export const TOOLS: ToolSpec[] = [
+const TOOL_LIST: ToolSpec[] = [
   fn('list_strategies', "The trader's saved strategies: id, name, version, rules in words."),
   fn('get_strategy', 'A saved strategy in the compact format (to change it or test a variant).', { id: { type: 'string' } }, ['id']),
-  fn('propose_strategy', 'Show the trader a strategy you wrote; they open it in the builder (nothing is saved). Checked like the builder — fix errors and call again. Returns a draft id for run_backtest.', { strategy: { type: 'object', description: 'compact strategy' } }, ['strategy']),
+  fn(
+    'propose_strategy',
+    'Show the trader a strategy you wrote; they open it in the builder (nothing is saved). Checked like the builder — fix errors and call again. Returns a draft id for run_backtest.',
+    { strategy: { type: 'object', description: 'compact strategy' }, assumptions: { type: 'array', items: { type: 'string' }, description: 'every default or interpretation you chose, in plain words' } },
+    ['strategy'],
+  ),
   fn('list_stock_lists', 'Stock lists, index groups and the trader’s watchlists, with how many each has.'),
   fn('find_instruments', 'Search NSE stocks and NSE/BSE indices by symbol, name or F&O name (BANKNIFTY).', { query: { type: 'string' } }, ['query']),
   fn('run_backtest', 'Backtest a strategy (kept in the trader’s history). Returns the analysis: figures, NIFTY 50, each year, halves, concentration, exits, drawdown, data notes.', { strategy: STRATEGY, universe: UNIVERSE, ...PERIOD }, ['strategy', 'universe']),
@@ -57,6 +62,31 @@ export const TOOLS: ToolSpec[] = [
   fn('analyse_backtest', 'The analysis of a backtest in the history (e.g. the one on screen).', { id: { type: 'string', description: 'history id' } }, ['id']),
   fn('backtest_history', 'Recent backtests in the history with their figures (newest first).', { strategy_id: { type: 'string' }, limit: { type: 'integer', description: 'default 10' } }),
 ];
+
+/** Tools that run backtests — offered only when the trader asked for one (backtestAsked). */
+const RUNS = new Set(['run_backtest', 'robustness_check']);
+
+/** The chat's tools; without the ones that run backtests unless the trader asked. */
+export function chatTools(allowRuns: boolean): ToolSpec[] {
+  return TOOL_LIST.filter((t) => allowRuns || !RUNS.has(t.function.name));
+}
+
+/** The strategy creator only builds: write a strategy, read a saved one. */
+export const CREATOR_TOOLS: ToolSpec[] = TOOL_LIST.filter((t) => ['propose_strategy', 'get_strategy'].includes(t.function.name));
+
+/** Every tool (the chat's full set). */
+export const TOOLS: ToolSpec[] = TOOL_LIST;
+
+const ASKS_RUN = /\b((?<!\b(?:this|the|that|these|those|my|last|latest|which|of|from|open|opened)\s)back ?-?test(?:s|ing|ed)?|test (it|this|that|them|these|both|on|over|for)|run (it|this|that|them)|robust\w*|over-?fit\w*|curve-?fit\w*|how (did|does|do|would|will|has) (it|this|that|they|these|my)|perform\w*|cagr|compare|simulat\w*|verify|check (it|this|that|them|if|whether|how))\b/i;
+const YES = /^\s*(yes|yeah|yep|yup|sure|ok(ay)?|go ahead|go|do it|please( do)?|haan|han|ha|ji|run it|test it|proceed|y)\b/i;
+
+/**
+ * Did the trader ask for a backtest? Their words ("backtest it", "is it robust?", "how did it do?"), or a yes to the
+ * AI's own offer. Otherwise the AI isn't given the tools that run one — it can only offer.
+ */
+export function backtestAsked(text: string, lastAnswer: string | null): boolean {
+  return ASKS_RUN.test(text) || (YES.test(text) && !!lastAnswer && ASKS_RUN.test(lastAnswer));
+}
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const PRESETS = new Map(EQ_PRESETS.map((p) => [p.value, p]));
@@ -181,11 +211,12 @@ export async function runTool(name: string, args: Record<string, unknown>, c: To
       const draftId = `d${c.drafts.size + 1}`;
       c.drafts.set(draftId, def);
       const summary = strategySummary(def);
+      const assumptions = Array.isArray(args.assumptions) ? args.assumptions.map((a) => String(a).trim()).filter(Boolean).slice(0, 12) : [];
       return {
         content: JSON.stringify({ draft: draftId, ok: true, reads: summary, warnings: warnings.map((w) => w.message) }),
         brief: `Proposed ${draftId} “${def.name}”: ${summary[0]}`,
         title: `Wrote strategy “${def.name}”`,
-        proposal: { draftId, definition: def, summary, warnings },
+        proposal: { draftId, definition: def, summary, warnings, ...(assumptions.length ? { assumptions } : {}) },
       };
     }
     case 'list_stock_lists': {

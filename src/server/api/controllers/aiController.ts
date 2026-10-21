@@ -7,6 +7,7 @@ import type { Handler } from '../http';
 import { parse } from '../schemas';
 
 const sendSchema = z.object({
+  mode: z.enum(['CHAT', 'CREATOR']).optional(),
   conversationId: z.string().min(1).max(64).optional(),
   message: z.string().trim().min(1).max(4000),
   context: z
@@ -37,7 +38,7 @@ export function aiController(ctx: AppContext) {
   const svc = () => ctx.ai.service;
   const handlers = {
     status: () => svc().status(),
-    list: () => svc().list(),
+    list: (req) => svc().list(req.query.get('mode') === 'CREATOR' ? 'CREATOR' : 'CHAT'),
     send: (req) => {
       const body = parse(sendSchema, req.body);
       // The builder's strategy as typed so far: unnamed → "Unsaved strategy"; still not a strategy → left out.

@@ -38,7 +38,12 @@ export interface AiProposal {
   /** The builder's plain-language lines. */
   summary: string[];
   warnings: ValidationIssue[];
+  /** Defaults and interpretations the AI chose (shown so the trader can correct them). */
+  assumptions?: string[];
 }
+
+/** CHAT: the AI panel (ask anything). CREATOR: "Create with AI" on the Strategies page — builds strategies only. */
+export type AiMode = 'CHAT' | 'CREATOR';
 
 export interface AiMessage {
   id: string;
@@ -58,6 +63,7 @@ export interface AiMessage {
 
 export interface AiConversation {
   id: string;
+  mode: AiMode;
   title: string;
   status: 'IDLE' | 'RUNNING';
   /** What it's doing right now ("Waiting for Groq’s per-minute limit — 24 s"). */
@@ -70,6 +76,7 @@ export interface AiConversation {
 
 export interface AiConversationLine {
   id: string;
+  mode: AiMode;
   title: string;
   updatedAt: number;
   messages: number;
@@ -101,6 +108,8 @@ export interface AiStatus {
 }
 
 export interface AiSendRequest {
+  /** For a new conversation (default CHAT). */
+  mode?: AiMode;
   conversationId?: string;
   message: string;
   context?: AiPageContext;

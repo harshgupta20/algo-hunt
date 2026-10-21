@@ -99,7 +99,7 @@ function Row({ r, active, savedStrategy, onOpen, onRunAgain, onRemoved }: { r: E
               help={AI.analyse}
               onClick={() => {
                 ai.setPage({ page: 'equity-backtest', backtestId: r.id, label: `Backtest: ${r.strategyName} on ${r.stocksLabel}, ${r.from} → ${r.to}` });
-                ai.open({ text: 'Analyse this backtest — what drove the result, where is the risk, and is it robust?', send: true });
+                ai.open({ text: 'Analyse this backtest — what drove the result and where is the risk?', send: true });
               }}
               className={btn}
             >

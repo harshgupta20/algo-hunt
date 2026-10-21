@@ -161,7 +161,7 @@ export function Results({ r }: { r: EqBacktestResult }) {
                 className="btn-ghost py-1 text-xs"
                 onClick={() => {
                   ai.setPage({ page: 'equity-backtest', backtestId: r.historyId, label: `Backtest: ${r.strategyName}, ${r.from} → ${r.to}` });
-                  ai.open({ text: 'Analyse this backtest — what drove the result, where is the risk, and is it robust?', send: true });
+                  ai.open({ text: 'Analyse this backtest — what drove the result and where is the risk?', send: true });
                 }}
               >
                 <Sparkles className="w-3.5 h-3.5" /> Analyse with AI

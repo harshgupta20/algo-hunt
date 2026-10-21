@@ -14,6 +14,8 @@ import { ago } from '../format';
 import { E } from '../help';
 import { StrategyEditor } from './StrategyEditor';
 import { ai, useAi } from '../../ai/store';
+import { AI } from '../../ai/help';
+import { StrategyCreator } from '../../ai/StrategyCreator';
 
 export type GoTo = (tab: 'backtest' | 'screener', opts: { strategyId?: string; draft?: EqStrategyDefinition }) => void;
 
@@ -92,6 +94,8 @@ export function StrategiesTab({ editId, onGo }: { editId?: string; onGo: GoTo })
     if (!editing) ai.setPage({ page: 'equity-strategies', label: 'Equity → your strategies' });
   }, [editing]);
   useEffect(() => () => ai.setPage(null), []);
+  // "Create with AI": its own window and conversation.
+  const [creating, setCreating] = useState(false);
   // Opened with ?strategy=<id>: straight into its builder, once.
   const [opened, setOpened] = useState(false);
   useEffect(() => {
@@ -115,10 +119,24 @@ export function StrategiesTab({ editId, onGo }: { editId?: string; onGo: GoTo })
 
   return (
     <div className="flex flex-col gap-6">
+      {creating && (
+        <StrategyCreator
+          onClose={() => setCreating(false)}
+          onOpen={(d) => {
+            setCreating(false);
+            setEditing({ initial: structuredClone(d), n: Date.now() });
+          }}
+        />
+      )}
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-slate-200">Your strategies</h2>
-          <Tooltip content={E.list.new} className="ml-auto">
+          <Tooltip content={AI.create} className="ml-auto">
+            <button type="button" className="btn-ghost py-1.5 text-sm" onClick={() => setCreating(true)}>
+              <Sparkles className="w-4 h-4 text-accent-soft" /> Create with AI
+            </button>
+          </Tooltip>
+          <Tooltip content={E.list.new}>
             <button type="button" className="btn-primary py-1.5 text-sm" onClick={() => setEditing({ initial: defaultDefinition() })}>
               <Plus className="w-4 h-4" /> New strategy
             </button>

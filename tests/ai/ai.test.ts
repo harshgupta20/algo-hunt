@@ -9,6 +9,7 @@ import { EQ_TEMPLATES, normalizeDefinition, strategySummary } from '../../src/sh
 import { CompactError, fromDefinition, toDefinition } from '../../src/server/ai/compact';
 import { summarize, withExits, withPeriods } from '../../src/server/ai/analysis';
 import { GroqClient, parseDuration } from '../../src/server/ai/groq';
+import { backtestAsked } from '../../src/server/ai/tools';
 import { AiService } from '../../src/server/ai/AiService';
 import type { EquityService } from '../../src/server/equity';
 
@@ -117,10 +118,12 @@ describe('Groq limits', () => {
 
 type Scripted = { content?: string; tool_calls?: Array<{ name: string; args: unknown }> };
 
-function scriptedGroq(script: Scripted[], seen: unknown[][]) {
+function scriptedGroq(script: Scripted[], seen: unknown[][], tools: string[][] = []) {
   let i = 0;
   const fetcher = (async (_url: string, init: { body: string }) => {
-    seen.push((JSON.parse(init.body) as { messages: unknown[] }).messages);
+    const body = JSON.parse(init.body) as { messages: unknown[]; tools?: Array<{ function: { name: string } }> };
+    seen.push(body.messages);
+    tools.push((body.tools ?? []).map((t) => t.function.name));
     const step = script[i++] ?? { content: 'done' };
     const message = { content: step.content ?? null, ...(step.tool_calls ? { tool_calls: step.tool_calls.map((t, k) => ({ id: `c${i}-${k}`, type: 'function', function: { name: t.name, arguments: JSON.stringify(t.args) } })) } : {}) };
     return new Response(JSON.stringify({ choices: [{ message, finish_reason: step.tool_calls ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 20 } }), { status: 200, headers: { 'x-ratelimit-limit-tokens': '8000', 'x-ratelimit-remaining-tokens': '7900', 'x-ratelimit-reset-tokens': '1s' } });
@@ -240,6 +243,57 @@ describe('AI conversation', () => {
     expect(c.messages.at(-1)!.text).toBe('Robust enough.');
     // periods +20 % first (the longest history), base (kept), periods −20 %, exit levels ±20 %, Midcap 150.
     expect(runs.map((r) => r.history)).toEqual([false, true, false, false, false, false]);
+  });
+
+  it('does only what was asked: no backtest tools unless the trader asks (or says yes to the offer)', async () => {
+    const tools: string[][] = [];
+    const seen: unknown[][] = [];
+    const groq = scriptedGroq(
+      [
+        { tool_calls: [{ name: 'propose_strategy', args: { strategy: { name: 'RSI cross', entry: ['RSI(14)', 'crosses_above', 'SMA(9) of RSI(14)'], exit: { stop: 8 } } } }] },
+        { content: 'Built it. Shall I backtest it on NIFTY 50 for 5 years?' },
+        { tool_calls: [{ name: 'run_backtest', args: { strategy: { draft: 'd1' }, universe: { preset: 'NIFTY50' } } }] },
+        { content: 'Done.' },
+      ],
+      seen,
+      tools,
+    );
+    const runs: unknown[] = [];
+    const svc = new AiService({ groq, equity: fakeEquity(runs), now: () => Date.parse('2026-10-21T10:00:00Z') });
+    const c1 = await settle(svc, svc.send({ message: 'Create a strategy: RSI crosses above its 9 SMA, 8% stop' }).id);
+    expect(tools[0]).not.toContain('run_backtest');
+    expect(tools[0]).not.toContain('robustness_check');
+    expect(tools[0]).toContain('propose_strategy');
+    expect((seen[0] as Array<{ role: string; content: string }>).at(-1)!.content).toMatch(/doesn’t ask for a backtest/);
+    expect(runs).toEqual([]);
+    // "yes" to its own offer: now it may run one.
+    await settle(svc, svc.send({ conversationId: c1.id, message: 'yes' }).id);
+    expect(tools[2]).toContain('run_backtest');
+    expect(runs).toHaveLength(1);
+    expect(backtestAsked('Is it robust?', null)).toBe(true);
+    expect(backtestAsked('How did it do over 5 years?', null)).toBe(true);
+    expect(backtestAsked('Analyse this backtest — what drove the result and where is the risk?', null)).toBe(false);
+    expect(backtestAsked('ok', 'Want me to change the stop?')).toBe(false);
+    expect(backtestAsked('Which of my backtests did best?', null)).toBe(false);
+    expect(backtestAsked('Then backtest it on NIFTY 50', null)).toBe(true);
+    expect(backtestAsked('run a backtest on midcaps', null)).toBe(true);
+  });
+
+  it('the strategy creator only builds — its own instructions, its own tools, its own list', async () => {
+    const tools: string[][] = [];
+    const seen: unknown[][] = [];
+    const groq = scriptedGroq([{ content: '1. How should it exit? (a) … (b) …' }], seen, tools);
+    const svc = new AiService({ groq, equity: fakeEquity([]), now: () => Date.parse('2026-10-21T10:00:00Z') });
+    const c = await settle(svc, svc.send({ mode: 'CREATOR', message: 'Buy when price breaks the 52-week high, backtest it too', context: { page: 'equity-backtest', backtestId: 'h1', label: 'x' } }).id);
+    expect(c.mode).toBe('CREATOR');
+    expect(tools[0]!.sort()).toEqual(['get_strategy', 'propose_strategy']);
+    const msgs = seen[0] as Array<{ role: string; content: string }>;
+    expect(msgs[0]!.content).toMatch(/^You are Algo Hunt's strategy architect/);
+    expect(msgs[0]!.content).toContain('"d" (id s1)'); // the trader's saved strategies
+    expect(msgs[0]!.content).toContain('SUPERTREND(period 1–100'); // the whole catalogue
+    expect(msgs.find((m) => m.role === 'user')!.content).toBe('Buy when price breaks the 52-week high, backtest it too'); // no page context
+    expect(svc.list('CREATOR').map((l) => l.id)).toEqual([c.id]);
+    expect(svc.list('CHAT')).toEqual([]);
   });
 
   it('without a key it says how to set one up', () => {

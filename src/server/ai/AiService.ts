@@ -8,13 +8,13 @@
  * still shows them). Waits for the per-minute limit are shown, not failed.
  */
 import { randomUUID } from 'node:crypto';
-import type { AiConversation, AiConversationLine, AiMessage, AiPageContext, AiStatus, AiStep } from '@/shared/ai/types';
+import type { AiConversation, AiConversationLine, AiMessage, AiMode, AiPageContext, AiStatus, AiStep } from '@/shared/ai/types';
 import type { EqStrategyDefinition } from '@/shared/equity';
 import type { EquityService } from '../equity';
 import { childLogger } from '../utils/logger';
-import { AiError, estimateTokens, type ChatMessage, type GroqClient } from './groq';
-import { contextNote, systemPrompt } from './prompt';
-import { TOOLS, ToolError, runTool } from './tools';
+import { AiError, estimateTokens, type ChatMessage, type GroqClient, type ToolSpec } from './groq';
+import { contextNote, creatorPrompt, systemPrompt } from './prompt';
+import { CREATOR_TOOLS, ToolError, backtestAsked, chatTools, runTool } from './tools';
 
 const log = childLogger('ai');
 
@@ -101,8 +101,12 @@ export class AiService {
     this.usage.completionTokens += u.completion;
   }
 
-  list(): AiConversationLine[] {
-    return [...this.conversations.values()].map((c) => ({ id: c.view.id, title: c.view.title, updatedAt: c.view.updatedAt, messages: c.view.messages.length })).sort((a, b) => b.updatedAt - a.updatedAt);
+  /** Conversations of one kind (the chat's and the strategy creator's are kept apart), newest first. */
+  list(mode: AiMode = 'CHAT'): AiConversationLine[] {
+    return [...this.conversations.values()]
+      .filter((c) => c.view.mode === mode)
+      .map((c) => ({ id: c.view.id, mode: c.view.mode, title: c.view.title, updatedAt: c.view.updatedAt, messages: c.view.messages.length }))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   get(id: string): AiConversation {
@@ -125,7 +129,7 @@ export class AiService {
   }
 
   /** A question: answered in the background — poll get(id). */
-  send(req: { conversationId?: string; message: string; context?: AiPageContext }): AiConversation {
+  send(req: { mode?: AiMode; conversationId?: string; message: string; context?: AiPageContext }): AiConversation {
     this.groq();
     const text = req.message.trim();
     if (!text) throw new AiError('Ask something', 400);
@@ -135,7 +139,7 @@ export class AiService {
     const at = this.now();
     if (!c) {
       c = {
-        view: { id: randomUUID(), title: text.replace(/\s+/g, ' ').slice(0, 70), status: 'IDLE', activity: null, messages: [], createdAt: at, updatedAt: at, usage: { requests: 0, promptTokens: 0, completionTokens: 0 } },
+        view: { id: randomUUID(), mode: req.mode ?? 'CHAT', title: text.replace(/\s+/g, ' ').slice(0, 70), status: 'IDLE', activity: null, messages: [], createdAt: at, updatedAt: at, usage: { requests: 0, promptTokens: 0, completionTokens: 0 } },
         llm: [],
         turn: 0,
         drafts: new Map(),
@@ -147,7 +151,8 @@ export class AiService {
     c.turn++;
     c.stop = false;
     c.view.messages.push({ id: randomUUID(), role: 'user', text, at, ...(req.context?.label ? { context: req.context.label } : {}) });
-    c.llm.push({ msg: { role: 'user', content: `${contextNote(req.context)}${text}` }, turn: c.turn });
+    // The creator is independent of the page: it gets the trader's words only.
+    c.llm.push({ msg: { role: 'user', content: `${c.view.mode === 'CHAT' ? contextNote(req.context) : ''}${text}` }, turn: c.turn });
     const answer: AiMessage = { id: randomUUID(), role: 'assistant', text: '', at, steps: [] };
     c.view.messages.push(answer);
     Object.assign(c.view, { status: 'RUNNING', activity: 'Thinking…', updatedAt: at });
@@ -177,9 +182,9 @@ export class AiService {
   }
 
   /** What the model sees: the system prompt, then as much of the conversation as the per-minute budget allows. */
-  private window(c: Conversation, system: string): ChatMessage[] {
+  private window(c: Conversation, system: string, tools: ToolSpec[]): ChatMessage[] {
     const g = this.groq();
-    const budget = g.promptBudget(MAX_COMPLETION) - estimateTokens(system) - estimateTokens(JSON.stringify(TOOLS));
+    const budget = g.promptBudget(MAX_COMPLETION) - estimateTokens(system) - estimateTokens(JSON.stringify(tools));
     const size = () => c.llm.reduce((a, e) => a + estimateTokens(JSON.stringify(e.msg)) + 4, 0);
     // 1. Older tool results become one line (oldest first; the latest round stays whole).
     const lastCall = lastToolCalls(c.llm);
@@ -209,7 +214,16 @@ export class AiService {
   private async answer(c: Conversation, answer: AiMessage): Promise<void> {
     const g = this.groq();
     const today = istDate(this.now());
-    const system = systemPrompt(today);
+    const creator = c.view.mode === 'CREATOR';
+    // The creator knows the trader's strategies as they are now.
+    const system = creator ? creatorPrompt(today, await this.deps.equity.listStrategies().catch(() => [])) : systemPrompt(today);
+    // Do only what was asked: the tools that run backtests only when the trader asked for one (or said yes to it).
+    const msgs = c.view.messages;
+    const question = msgs.at(-2)?.text ?? '';
+    const before = msgs.length >= 3 ? msgs.at(-3) : undefined;
+    const allowRuns = !creator && backtestAsked(question, before?.role === 'assistant' ? before.text : null);
+    const tools = creator ? CREATOR_TOOLS : chatTools(allowRuns);
+    const guard = creator || allowRuns ? null : 'This question doesn’t ask for a backtest, so the tools that run one aren’t available. Answer only what was asked; if a backtest would help, end by asking whether they want one.';
     const touch = (activity: string | null) => Object.assign(c.view, { activity, updatedAt: this.now() });
     const cancelled = () => c.stop;
     let formatRetry: string | null = null;
@@ -217,13 +231,14 @@ export class AiService {
       if (c.stop) throw new AiError('Stopped', 499);
       const last = round >= MAX_ROUNDS;
       touch(round === 0 ? 'Thinking…' : 'Reading the results…');
-      const messages: ChatMessage[] = [{ role: 'system', content: system }, ...this.window(c, system)];
+      const messages: ChatMessage[] = [{ role: 'system', content: system }, ...this.window(c, system, tools)];
+      if (guard) messages.push({ role: 'system', content: guard });
       if (formatRetry) messages.push({ role: 'system', content: `Your last tool call was rejected: ${formatRetry}. Call the tool again with valid JSON arguments.` });
       if (last) messages.push({ role: 'system', content: 'No more tool calls: answer now with what you have, and say what is still unchecked.' });
       let res;
       try {
         res = await g.chat(
-          { messages, tools: last ? undefined : TOOLS, maxCompletion: MAX_COMPLETION },
+          { messages, tools: last ? undefined : tools, maxCompletion: MAX_COMPLETION },
           {
             cancelled,
             onWait: (ms, why) => touch(`Waiting for Groq’s ${why === 'tokens' ? 'per-minute token' : 'rate'} limit — ${Math.ceil(ms / 1000)} s (free plan: 8,000 tokens a minute)`),

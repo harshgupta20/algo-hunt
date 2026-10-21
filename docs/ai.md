@@ -10,6 +10,10 @@ screener and the market brief come later.
   service and reads a compact analysis computed in code (`server/ai/analysis.ts`).
 - **It proposes, the trader decides.** It can't save, delete or trade. A strategy it writes is a card with
   **Open in builder** (unsaved). Backtests it runs go into the history, marked "· by AI".
+- **Only what was asked.** It never takes a next step on its own; it ends by asking whether you want one. Enforced in
+  code: the tools that run backtests (`run_backtest`, `robustness_check`) are given to the model only when the
+  question asks for one ("backtest it", "is it robust?", "how did it do?") or answers yes to the AI's offer
+  (`backtestAsked`, tools.ts). Mentioning an existing backtest ("analyse this backtest") doesn't count.
 - **Robustness is judged in code-backed terms.** `robustness_check` runs the strategy as written, every period
   −20 % / +20 % and exit levels ±20 % (optionally on another list) and returns one comparison table (CAGR, drawdown,
   trades, profit factor, t-stat of the average trade, top-3-trade share), plus each year against NIFTY 50 and the two
@@ -25,6 +29,20 @@ screener and the market brief come later.
 | Panel | Steps as they happen (backtest progress, waits for Groq's limit), answers, strategy cards, links that open a backtest (`/equity?tab=backtest&history=<id>`) |
 
 Conversations live in the server's memory (never the database). A restart clears them; the panel then starts fresh.
+
+## Create with AI (Strategies page)
+
+Its own window and conversation (`mode: CREATOR`), separate from the chat. It only builds: its tools are
+`propose_strategy` and `get_strategy`, with no backtests. Its instructions (`creatorPrompt`) carry the whole builder:
+- every indicator with its parameter ranges, sources and outputs (generated from the catalogue);
+- how the app reads each rule (crossings, triggers, exits, pyramiding, sizing, orders);
+- the unit rules and limits;
+- the trader's saved strategies and their templates.
+
+It asks up to 3 questions when something essential is unclear (with suggested answers), otherwise builds exactly what
+was described. It replies with **Built** (their words → the rule), **Assumed** (shown on the card in amber to check),
+and **Worth considering (not applied)**, then asks what next. The card has **Open in builder** and
+**Save as new strategy**. Page context isn't sent: it works from the trader's words only.
 
 ## Tools (`server/ai/tools.ts`)
 
