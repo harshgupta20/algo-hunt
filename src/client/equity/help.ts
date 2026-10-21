@@ -115,6 +115,29 @@ export const E = {
     count: { title: 'Stocks', body: 'How many stocks this run covers. Each one is one Kite request (about 3 a second), unless its candles are already in memory.' },
   },
 
+  history: {
+    section: {
+      title: 'Backtest history',
+      body: 'Every backtest that finished: when it ran, which strategy (and its version), on which stocks, over which period with how much money — and how it did. Kept in the database, for good.',
+      note: 'Open one to see its full result exactly as it was then (every trade and order), even after the strategy changed or was deleted.',
+    },
+    filter: { title: 'Strategy', body: 'Show the backtests of one strategy only — what you tested with it and when.' },
+    ranAt: { title: 'Ran', body: 'When the backtest finished (IST), and how long it took.' },
+    strategy: { title: 'Strategy', body: 'The strategy, its version when it ran, and its timeframe. “Unsaved” = the builder’s strategy, tested before saving; “deleted” = removed since — its definition is still kept with the run.' },
+    stocks: { title: 'Stocks', body: 'What it ran on: an index list, a watchlist or picked stocks — and how many.' },
+    period: { title: 'Period', body: 'The dates tested (IST, inclusive).' },
+    capital: { title: 'Capital', body: 'Starting money (“no limit” = every signal taken), and the most stocks held at once if set.' },
+    result: { title: 'Return', body: 'Return on the starting capital (P&L when there was no limit), and CAGR.' },
+    drawdown: { title: 'Max drawdown', body: 'The deepest fall of the account below its high.' },
+    trades: { title: 'Trades', body: 'Trades made, and the share that made money.' },
+    benchmark: { title: 'NIFTY 50', body: 'NIFTY 50 bought and held with the same money over the same period.' },
+    open: { title: 'Open', body: 'Show this backtest’s full result exactly as it was then — figures, charts, every trade and order.' },
+    runAgain: { title: 'Run again', body: 'Fill the form above with this backtest’s strategy, stocks, period and money. The strategy as it is NOW is used (a deleted or unsaved one runs as it was then); press Backtest to run.' },
+    remove: { title: 'Delete', body: 'Remove this backtest from the history. Click twice to confirm.' },
+    viewing: { title: 'From the history', body: 'You’re looking at a saved backtest, exactly as it ran then. The latest run is one click away.' },
+    notKept: { title: 'Result not kept', body: 'This backtest’s full result was too large to keep (over 25 MB packed); its figures are in the history line. Run it again to see the trades.' },
+  },
+
   backtest: {
     section: { title: 'Backtest', body: 'Every check of the strategy over the period, on every stock, sharing one account: buys, pyramid adds, stops, targets and exits.', note: 'Runs in the background — switch tabs freely; the result waits here for an hour.' },
     strategy: { title: 'Strategy', body: 'A saved strategy, or the builder’s unsaved one.' },

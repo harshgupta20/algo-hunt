@@ -1,11 +1,14 @@
 /**
  * Equity application service — what /api/equity exposes: the stock universe and presets, strategies (checked
- * before saving), watchlists, and backtests / screens running as background jobs.
+ * before saving), watchlists, backtests / screens running as background jobs, and the backtest history (every
+ * finished backtest is kept: what, when, which strategy, the figures, the full result).
  */
 import type {
   EqBacktestJob,
+  EqBacktestRecord,
   EqBacktestRequest,
   EqBacktestResult,
+  EqBacktestRun,
   EqPreset,
   EqScreenJob,
   EqScreenRequest,
@@ -24,6 +27,9 @@ import type { CandleCache } from './data/candles';
 import type { Universe } from './data/universe';
 import { Jobs, type JobRun } from './jobs';
 import type { EquityStore, WatchlistInput } from './store/EquityStore';
+import { childLogger } from '../utils/logger';
+
+const log = childLogger('equity');
 
 export class EquityError extends Error {
   constructor(
@@ -202,6 +208,9 @@ export class EquityService {
 
   async startBacktest(req: EqBacktestRequest): Promise<EqBacktestJob> {
     const def = await this.definitionOf(req);
+    // For the history: the saved strategy and its version (a builder draft has neither).
+    const saved = !req.definition && req.strategyId ? await this.getStrategy(req.strategyId) : null;
+    const startedAt = this.now();
     if (req.from > req.to) throw new EquityError(400, '“From” must be on or before “to”');
     if (def.sizing.mode === 'PERCENT' && req.capital === null) throw new EquityError(400, '“% of the account” sizing needs a starting capital — set one or size by ₹ / shares');
     await this.requireKite('backtest on');
@@ -220,8 +229,64 @@ export class EquityService {
       const result = runBacktest(def, req, candles, bench, end);
       if (addDays(req.from, -warmupDays(def)) < HISTORY_START) result.notes.unshift('Some indicators here need history from before 2000, where Kite has none — early in the period their values can differ slightly from TradingView’s, which has older data.');
       if (unknown.length) result.notes.unshift(`Not NSE stocks (skipped): ${unknown.join(', ')}`);
-      return { ...result, requests: run.stats.fetched };
+      const full: EqBacktestResult = { ...result, requests: run.stats.fetched };
+      await this.keepInHistory(full, { def, req, strategyId: saved?.id ?? null, strategyVersion: saved?.version ?? null, startedAt });
+      return full;
     });
+  }
+
+  /** Every finished backtest goes into the history. Failing to save it never fails the backtest — it's noted. */
+  private async keepInHistory(result: EqBacktestResult, o: { def: EqStrategyDefinition; req: EqBacktestRequest; strategyId: string | null; strategyVersion: number | null; startedAt: number }): Promise<void> {
+    const now = this.now();
+    try {
+      await this.deps.store.backtests.add({
+        run: {
+          ranAt: new Date(now).toISOString(),
+          seconds: Math.max(0, Math.round((now - o.startedAt) / 1000)),
+          strategyId: o.strategyId,
+          strategyName: o.def.name,
+          strategyVersion: o.strategyVersion,
+          timeframe: o.def.timeframe,
+          stocksLabel: o.req.stocksLabel?.trim() || `${result.symbols} stock${result.symbols === 1 ? '' : 's'}`,
+          symbols: result.symbols,
+          from: o.req.from,
+          to: o.req.to,
+          capital: o.req.capital,
+          maxPositions: o.req.maxPositions,
+          finalEquity: result.finalEquity,
+          netPnl: result.netPnl,
+          returnPct: result.returnPct,
+          cagrPct: result.cagrPct,
+          maxDrawdownPct: result.maxDrawdownPct,
+          trades: result.stats.trades,
+          winRate: result.stats.winRate,
+          profitFactor: result.stats.profitFactor,
+          benchmarkReturnPct: result.benchmark?.returnPct ?? null,
+        },
+        request: { ...o.req, definition: o.def },
+        result,
+      });
+    } catch (err) {
+      log.warn({ err: msg(err) }, 'could not keep the backtest in the history');
+      result.notes.unshift(`Not kept in the backtest history — the database couldn’t save it (${msg(err)}).`);
+    }
+  }
+
+  // ---- backtest history ------------------------------------------------------------------------------
+
+  /** Every finished backtest, newest first (the lines — open one for its result). */
+  backtestHistory(): Promise<EqBacktestRun[]> {
+    return this.deps.store.backtests.list();
+  }
+
+  async backtestRecord(id: string): Promise<EqBacktestRecord> {
+    const r = await this.deps.store.backtests.get(id);
+    if (!r) throw new EquityError(404, 'This backtest is no longer in the history');
+    return r;
+  }
+
+  async removeBacktestRecord(id: string): Promise<void> {
+    if (!(await this.deps.store.backtests.remove(id))) throw new EquityError(404, 'This backtest is no longer in the history');
   }
 
   backtestJob(id: string): EqBacktestJob {

@@ -12,7 +12,7 @@ strategy's daily / weekly candles; TradingView has no date link, so the tooltip 
 | Tab | What it does |
 | --- | --- |
 | **Strategies** | Saved strategies (edit, backtest, screen, duplicate, delete) and the template gallery — the trader's three strategies first, then classic setups (52-week breakout, golden cross, Supertrend, uptrend pullback, volume breakout). Opens the builder |
-| **Backtest** | A strategy (saved, or the builder's unsaved one) on an index list / watchlist / picked stocks, over any period, with a starting capital (or none) and an optional maximum of stocks held. Runs in the background (progress, time left, cancel; survives tab switches). Results: final capital, return, CAGR, max drawdown, win rate, profit factor, trades, NIFTY 50 bought-and-held comparison, account value + drawdown chart, monthly returns, each trade with **every order and why** (indicator values at the signal), by stock with data notes, signals not taken, CSVs |
+| **Backtest** | A strategy (saved, or the builder's unsaved one) on an index list / watchlist / picked stocks, over any period, with a starting capital (or none) and an optional maximum of stocks held. Runs in the background (progress, time left, cancel; survives tab switches). Results: final capital, return, CAGR, max drawdown, win rate, profit factor, trades, NIFTY 50 bought-and-held comparison, account value + drawdown chart, monthly returns, each trade with **every order and why** (indicator values at the signal), by stock with data notes, signals not taken, CSVs. **Backtest history**: every finished backtest is kept — when it ran, which strategy (and version), stocks, period, money and its figures; filter by strategy, open one exactly as it was, run it again, delete it |
 | **Screener** | Each stock at its last completed check: entry true / **fresh signal** (true now, not at the check before) / exit true, with every condition's two values |
 | **Watchlists** | Your own stock lists; start from an index list (NIFTY 50 / Next 50 / 100 / Midcap 150 / Smallcap 250 / 500, F&O) or pick stocks |
 
@@ -94,6 +94,12 @@ strategy's daily / weekly candles; TradingView has no date link, so the tooltip 
   built from them, through the app's shared Kite queue (~3 requests a second). One data end per job (fixed before
   fetching). Kept in memory for the session they were fetched in (re-runs that day ask Kite for nothing) and fetched
   again after the next session finishes — which also picks up Kite's later corrections. Never in the database.
+- **Backtest history** (`eq_backtests`): every backtest that finishes is saved — a small line (when, how long, the
+  strategy's name / version / timeframe, how the stocks were chosen and how many, period, capital, max stocks, the
+  headline figures), what's needed to run it again (the strategy's definition as it was, the stocks, period, money)
+  and the full result as gzipped JSON (a typical run ≈ 50 KB, a busy 10-year run on 136 stocks ≈ 2.3 MB; over
+  25 MB isn't kept — the line still is). Deleting a strategy keeps its backtests. A failed save never fails the
+  backtest (it's noted in its result).
 - **Bad ticks** (an open / close outside the high–low, a high below the low — real in Kite's data for illiquid
   stocks) are repaired: high = the largest of the four prices, low = the smallest.
 - **What Kite's history is (measured against independent data, Oct 2026):** back-adjusted for splits, bonuses,
@@ -114,7 +120,7 @@ strategy's daily / weekly candles; TradingView has no date link, so the tooltip 
 | `src/server/equity/` | `data/universe` (stock list, presets), `data/candles` (Kite + cache), `store/` (Pg / memory), `jobs` (background runs), `EquityService` |
 | `src/client/equity/` | `EquityHub`, the builder (`strategies/`), `backtest/` (form, results, charts), `screener/`, `watchlists/`, `StockPicker`, `help.ts` |
 | API | `src/server/api/controllers/equityController.ts`, routes under `/api/equity` (see [api.md](api.md)) |
-| Database | `eq_strategies`, `eq_watchlists` (migration 012) — read once per process, then served from memory |
+| Database | `eq_strategies`, `eq_watchlists` (migration 012) and the backtest history `eq_backtests` (014) — strategies, watchlists and history lines read once per process, then served from memory; a history entry's packed result is read only when it's opened |
 
 `tests/v2/boundary.test.ts` enforces the separation: Equity never imports F&O (V2) code and V2 never imports Equity;
 `shared/equity` depends only on itself and zod; `server/equity` reaches outside itself only for the indicator maths,

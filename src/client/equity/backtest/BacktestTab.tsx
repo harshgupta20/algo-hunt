@@ -3,34 +3,43 @@
 /**
  * Equity backtest: strategy (saved or the builder's unsaved one) · stocks · period · money, run in the
  * background on the server (progress, time left, cancel), results below. The form and the running job survive
- * switching tabs.
+ * switching tabs. Every finished backtest goes into the history (History.tsx): open one to see it as it was, or
+ * run it again from the form.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { FlaskConical } from 'lucide-react';
-import type { EqBacktestJob, EqStrategyDefinition } from '@/shared/equity';
-import { EQ_DEFAULT_CAPITAL, EQ_TIMEFRAME, strategySummary } from '@/shared/equity';
+import { ArrowLeft, FlaskConical } from 'lucide-react';
+import type { EqBacktestJob, EqBacktestRun, EqStockSource, EqStrategyDefinition } from '@/shared/equity';
+import { EQ_DEFAULT_CAPITAL, EQ_PRESETS, EQ_TIMEFRAME, strategySummary } from '@/shared/equity';
 import { Tooltip } from '../../components/Tooltip';
 import { EmptyState, Section, Toggle } from '../../components/ui';
 import { Cell, NumberInput } from '../../components/form';
 import { InlineSpinner } from '../../components/loaders';
 import { eqApi } from '../api';
-import { duration, istToday, yearsAgo } from '../format';
+import { duration, istDateTime, istToday, shortDate, yearsAgo } from '../format';
 import { E } from '../help';
 import { JobProgress } from '../JobProgress';
 import { StockPicker, useSymbols, type StockSource } from '../StockPicker';
+import { History } from './History';
 import { Results } from './Results';
 
 interface Form {
-  strategy: string; // a strategy id, or 'draft'
+  strategy: string; // a strategy id, 'draft' (the builder's), or 'history' (a deleted / unsaved one, run again)
   source: StockSource;
   range: { from: string; to: string };
   capital: number | null;
   maxPositions: number | null;
 }
 
-/** Kept while the app is open, so leaving the tab and coming back restores the form and the job. */
-let remembered: { form: Form; jobId: string | null } | null = null;
+/** Kept while the app is open, so leaving the tab and coming back restores the form, the job and the history view. */
+let remembered: { form: Form; jobId: string | null; historyDef: EqStrategyDefinition | null; viewing: string | null } | null = null;
+
+/** How the stocks were chosen, in words, for the history line. */
+function stocksLabel(source: StockSource, label: string, count: number): string {
+  if (source.kind === 'PRESET') return EQ_PRESETS.find((p) => p.value === source.preset)?.label ?? label;
+  if (source.kind === 'WATCHLIST') return `${label} (watchlist)`;
+  return `${count} picked stock${count === 1 ? '' : 's'}`;
+}
 
 const QUICK = [1, 3, 5, 10];
 const SECONDS_PER_REQUEST = 0.36;
@@ -45,9 +54,13 @@ export function BacktestTab({ initialStrategyId, draft }: { initialStrategyId?: 
     return base;
   });
   const [jobId, setJobId] = useState<string | null>(remembered?.jobId ?? null);
+  /** A deleted / unsaved strategy's definition, from the history, to run again. */
+  const [historyDef, setHistoryDef] = useState<EqStrategyDefinition | null>(remembered?.historyDef ?? null);
+  /** A history entry shown instead of the latest run. */
+  const [viewing, setViewing] = useState<string | null>(remembered?.viewing ?? null);
   useEffect(() => {
-    remembered = { form, jobId };
-  }, [form, jobId]);
+    remembered = { form, jobId, historyDef, viewing };
+  }, [form, jobId, historyDef, viewing]);
   // After a page reload: pick up the server's latest backtest (its result, or its progress).
   useEffect(() => {
     if (jobId) return;
@@ -68,23 +81,50 @@ export function BacktestTab({ initialStrategyId, draft }: { initialStrategyId?: 
   });
   const j = job.data;
   const running = j?.status === 'RUNNING';
-  const { symbols, loading } = useSymbols(form.source);
-  const def = form.strategy === 'draft' ? draft : strategies.data?.find((s) => s.id === form.strategy)?.definition;
+  // A finished run is in the history now.
+  useEffect(() => {
+    if (j?.status === 'DONE') void qc.invalidateQueries({ queryKey: ['eq-backtest-history'] });
+  }, [j?.id, j?.status, qc]);
+  const record = useQuery({ queryKey: ['eq-backtest-record', viewing], queryFn: () => eqApi.backtestRecord(viewing!), enabled: viewing !== null, staleTime: Infinity, retry: false });
+  const savedIds = useMemo(() => (strategies.data ? new Set(strategies.data.map((s) => s.id)) : null), [strategies.data]);
+  const { symbols, loading, label } = useSymbols(form.source);
+  const def = form.strategy === 'draft' ? draft : form.strategy === 'history' ? historyDef : strategies.data?.find((s) => s.id === form.strategy)?.definition;
   const reversed = form.range.from > form.range.to;
+
+  /** Fill the form from a history entry: its strategy as it is now (or as it was, if deleted / unsaved), stocks, period, money. */
+  const runAgain = useMutation({
+    mutationFn: async (r: EqBacktestRun) => {
+      const [rec, lists] = await Promise.all([eqApi.backtestRecord(r.id), eqApi.watchlists()]);
+      return { rec, watchlists: new Set(lists.map((w) => w.id)) };
+    },
+    onSuccess: ({ rec, watchlists }) => {
+      qc.setQueryData(['eq-backtest-record', rec.run.id], rec);
+      const exists = rec.run.strategyId !== null && strategies.data?.some((s) => s.id === rec.run.strategyId);
+      if (!exists) setHistoryDef(rec.request.definition);
+      // The same choice again (an index list = its members today); a watchlist deleted since → the stocks it had.
+      const saved = rec.request.source;
+      const source: EqStockSource = saved && !(saved.kind === 'WATCHLIST' && !watchlists.has(saved.id)) ? saved : { kind: 'PICK', symbols: rec.request.symbols };
+      setForm({ strategy: exists ? rec.run.strategyId! : 'history', source, range: { from: rec.request.from, to: rec.request.to }, capital: rec.request.capital, maxPositions: rec.request.maxPositions });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+  });
 
   const run = useMutation({
     mutationFn: () =>
       eqApi.startBacktest({
-        ...(form.strategy === 'draft' ? { definition: draft! } : { strategyId: form.strategy }),
+        ...(form.strategy === 'draft' ? { definition: draft! } : form.strategy === 'history' ? { definition: historyDef! } : { strategyId: form.strategy }),
         symbols,
         from: form.range.from,
         to: form.range.to,
         capital: form.capital,
         maxPositions: form.maxPositions,
+        stocksLabel: stocksLabel(form.source, label, symbols.length),
+        source: form.source,
       }),
     onSuccess: (started: EqBacktestJob) => {
       qc.setQueryData(['eq-backtest-job', started.id], started);
       setJobId(started.id);
+      setViewing(null);
     },
   });
   const cancel = useMutation({ mutationFn: () => eqApi.cancelBacktest(jobId!), onSuccess: (c) => qc.setQueryData(['eq-backtest-job', c.id], c) });
@@ -99,6 +139,7 @@ export function BacktestTab({ initialStrategyId, draft }: { initialStrategyId?: 
               <select aria-label="Strategy" className="input py-1.5 text-sm min-w-[18rem]" value={form.strategy} onChange={(e) => set({ strategy: e.target.value })}>
                 {!strategies.data?.length && !draft && <option value="">No saved strategies yet</option>}
                 {draft && <option value="draft">Unsaved: {draft.name || 'new strategy'}</option>}
+                {historyDef && <option value="history">From the history: {historyDef.name}</option>}
                 {strategies.data?.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name} · {EQ_TIMEFRAME[s.definition.timeframe].label}
@@ -166,7 +207,34 @@ export function BacktestTab({ initialStrategyId, draft }: { initialStrategyId?: 
         </div>
       </Section>
 
-      {j?.status === 'DONE' && j.result && <Results r={j.result} />}
+      <History viewing={viewing} savedIds={savedIds} onOpen={(r) => setViewing(r.id)} onRunAgain={(r) => runAgain.mutate(r)} onRemoved={(r) => viewing === r.id && setViewing(null)} />
+      {runAgain.error && <p className="text-xs text-bear">{(runAgain.error as Error).message}</p>}
+
+      {viewing ? (
+        <>
+          <div className="card flex flex-wrap items-center gap-3 border-accent/40 p-3 text-xs">
+            <Tooltip content={E.history.viewing}>
+              <span className="font-semibold text-accent-soft">From the history</span>
+            </Tooltip>
+            {record.data && (
+              <span className="text-slate-300">
+                {record.data.run.strategyName}
+                {record.data.run.strategyVersion !== null ? ` v${record.data.run.strategyVersion}` : ''} · {record.data.run.stocksLabel} · {shortDate(record.data.run.from)} → {shortDate(record.data.run.to)} · ran {istDateTime(record.data.run.ranAt)}
+              </span>
+            )}
+            <Tooltip content={{ title: 'Back to the latest run', body: 'Close this saved backtest and show the latest run (if one finished in the last hour).' }} className="ml-auto">
+              <button type="button" className="btn-ghost py-1 text-xs" onClick={() => setViewing(null)}>
+                <ArrowLeft className="w-3.5 h-3.5" /> Latest run
+              </button>
+            </Tooltip>
+          </div>
+          {record.isLoading && <p className="text-xs text-slate-500">Opening the saved backtest…</p>}
+          {record.error && <p className="text-xs text-bear">{(record.error as Error).message}</p>}
+          {record.data && (record.data.result ? <Results r={record.data.result} /> : <EmptyState title={E.history.notKept.title} hint={String(E.history.notKept.body)} />)}
+        </>
+      ) : (
+        j?.status === 'DONE' && j.result && <Results r={j.result} />
+      )}
     </div>
   );
 }

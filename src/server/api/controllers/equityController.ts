@@ -61,6 +61,12 @@ export function equityController(ctx: AppContext) {
     latestBacktest: async () => svc().latestBacktest(),
     backtestJob: async (req) => svc().backtestJob(req.params.id!),
     cancelBacktest: async (req) => svc().cancelBacktest(req.params.id!),
+    backtestHistory: () => svc().backtestHistory(),
+    backtestRecord: (req) => svc().backtestRecord(req.params.id!),
+    removeBacktestRecord: async (req) => {
+      await svc().removeBacktestRecord(req.params.id!);
+      return undefined;
+    },
 
     startScreen: (req) => svc().startScreen(parse(eqScreenRequestSchema, req.body)),
     latestScreen: async () => svc().latestScreen(),

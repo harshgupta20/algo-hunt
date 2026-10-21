@@ -181,6 +181,58 @@ describe('equity service', () => {
     expect((await settle(() => svc.backtestJob(slow.id))).status).toBe('CANCELLED');
   });
 
+  it('every finished backtest goes into the history — what, when, which strategy — and opens exactly as it was', async () => {
+    const saved = await svc.createStrategy(cross);
+    const req = { strategyId: saved.id, symbols: ['AAA', 'BBB'], from: '2025-01-20', to: '2025-03-31', capital: 1_000_000, maxPositions: 2, stocksLabel: 'NIFTY 50', source: { kind: 'PRESET' as const, preset: 'NIFTY50' as const } };
+    const started = await svc.startBacktest(req);
+    const job = (await settle(() => svc.backtestJob(started.id))) as EqBacktestJob;
+    expect(job.status).toBe('DONE');
+    const [run] = await svc.backtestHistory();
+    expect(run).toMatchObject({
+      strategyId: saved.id,
+      strategyName: 'SMA 5 / 10',
+      strategyVersion: 1,
+      timeframe: '1d',
+      stocksLabel: 'NIFTY 50',
+      symbols: 2,
+      from: '2025-01-20',
+      to: '2025-03-31',
+      capital: 1_000_000,
+      maxPositions: 2,
+      ranAt: new Date(clock.now).toISOString(),
+      returnPct: job.result!.returnPct,
+      netPnl: job.result!.netPnl,
+      trades: job.result!.stats.trades,
+      kept: true,
+    });
+    expect(run!.bytes).toBeGreaterThan(0);
+    const rec = await svc.backtestRecord(run!.id);
+    expect(rec.result).toEqual(job.result); // the result exactly as it was shown
+    expect(rec.request).toMatchObject({ symbols: ['AAA', 'BBB'], source: { kind: 'PRESET', preset: 'NIFTY50' }, definition: { name: 'SMA 5 / 10' } });
+
+    // The builder's unsaved strategy: kept too, as "unsaved"; the stocks described by their count.
+    clock.now += 60_000;
+    await svc.startBacktest({ definition: { ...cross, name: 'Draft' }, symbols: ['AAA'], from: '2025-01-20', to: '2025-03-31', capital: null, maxPositions: null });
+    await settle(() => svc.latestBacktest()!);
+    const [draftRun] = await svc.backtestHistory();
+    expect(draftRun).toMatchObject({ strategyId: null, strategyVersion: null, strategyName: 'Draft', stocksLabel: '1 stock', capital: null });
+
+    // Deleting the strategy keeps its backtests (without the link); deleting a backtest removes it.
+    await svc.removeStrategy(saved.id);
+    expect((await svc.backtestHistory()).find((r) => r.id === run!.id)).toMatchObject({ strategyId: null, strategyName: 'SMA 5 / 10', strategyVersion: 1 });
+    await svc.removeBacktestRecord(draftRun!.id);
+    expect((await svc.backtestHistory()).map((r) => r.id)).toEqual([run!.id]);
+    await expect(svc.backtestRecord(draftRun!.id)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('a backtest whose history entry can’t be saved still finishes — with a note', async () => {
+    store.backtests.add = () => Promise.reject(new Error('database unreachable'));
+    await svc.startBacktest({ definition: cross, symbols: ['AAA'], from: '2025-01-20', to: '2025-03-31', capital: 1_000_000, maxPositions: null });
+    const job = (await settle(() => svc.latestBacktest()!)) as EqBacktestJob;
+    expect(job.status).toBe('DONE');
+    expect(job.result!.notes[0]).toBe('Not kept in the backtest history — the database couldn’t save it (database unreachable).');
+  });
+
   it('refuses without Kite, a reversed period, or % sizing without capital', async () => {
     const req = { definition: cross, symbols: ['AAA'], from: '2025-01-20', to: '2025-03-31', capital: 1_000_000, maxPositions: null };
     await expect(svc.startBacktest({ ...req, to: '2025-01-01' })).rejects.toMatchObject({ status: 400 });

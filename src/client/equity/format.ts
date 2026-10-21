@@ -26,6 +26,8 @@ export const yearsAgo = (n: number) => {
   d.setUTCFullYear(d.getUTCFullYear() - n);
   return d.toISOString().slice(0, 10);
 };
+/** "21 Oct 2026, 8:15 pm" (IST) from an ISO time. */
+export const istDateTime = (iso: string) => new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 /** "12 Mar 2025" from yyyy-mm-dd. */
 export const shortDate = (date: string | null | undefined) => (date ? new Date(`${date}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—');
 export const ago = (iso: string) => {

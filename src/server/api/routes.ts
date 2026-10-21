@@ -38,6 +38,9 @@ export function createRouter(ctx: AppContext): Router {
   r.get('/equity/backtests/latest', eq.latestBacktest); // before /equity/backtests/:id
   r.get('/equity/backtests/:id', eq.backtestJob);
   r.delete('/equity/backtests/:id', eq.cancelBacktest);
+  r.get('/equity/backtest-history', eq.backtestHistory);
+  r.get('/equity/backtest-history/:id', eq.backtestRecord);
+  r.delete('/equity/backtest-history/:id', eq.removeBacktestRecord);
   r.post('/equity/screens', eq.startScreen);
   r.get('/equity/screens/latest', eq.latestScreen); // before /equity/screens/:id
   r.get('/equity/screens/:id', eq.screenJob);

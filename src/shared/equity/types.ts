@@ -166,6 +166,9 @@ export interface ValidationIssue {
 
 // ---- backtest --------------------------------------------------------------------------------------------
 
+/** How the stocks of a backtest or screen were chosen (the stock picker). */
+export type EqStockSource = { kind: 'PRESET'; preset: EqPreset } | { kind: 'WATCHLIST'; id: string } | { kind: 'PICK'; symbols: string[] };
+
 export interface EqBacktestRequest {
   /** A saved strategy, or an unsaved `definition` straight from the builder. */
   strategyId?: string;
@@ -178,6 +181,57 @@ export interface EqBacktestRequest {
   capital: number | null;
   /** At most this many stocks held at once (null = no limit). */
   maxPositions: number | null;
+  /** How the stocks were chosen, for the history: "NIFTY 50", "Swing (watchlist)", "12 picked stocks". */
+  stocksLabel?: string;
+  /** The picker's choice, so the history can run it again the same way. */
+  source?: EqStockSource;
+}
+
+/**
+ * A finished backtest in the history (eq_backtests): what was tested, when, with which strategy — and how it did.
+ * Saved for every backtest that completes; the full result is kept too and opens from the history.
+ */
+export interface EqBacktestRun {
+  id: string;
+  /** When it finished (ISO). */
+  ranAt: string;
+  /** How long it took (seconds). */
+  seconds: number;
+  /** The saved strategy — null for the builder's unsaved one, or a strategy deleted since. */
+  strategyId: string | null;
+  strategyName: string;
+  /** The strategy's version when it ran (null for an unsaved one). */
+  strategyVersion: number | null;
+  timeframe: EqTimeframe;
+  /** What it ran on: "NIFTY 50", a watchlist's name, "12 picked stocks". */
+  stocksLabel: string;
+  symbols: number;
+  from: string;
+  to: string;
+  capital: number | null;
+  maxPositions: number | null;
+  finalEquity: number | null;
+  netPnl: number;
+  returnPct: number | null;
+  cagrPct: number | null;
+  maxDrawdownPct: number | null;
+  trades: number;
+  winRate: number;
+  profitFactor: number | null;
+  benchmarkReturnPct: number | null;
+  /** The full result (every trade and order) is kept and opens from the history — false when it was too large. */
+  kept: boolean;
+  /** Its size, compressed (bytes). */
+  bytes: number;
+}
+
+/** One history entry opened: the line, how to run it again, and the result exactly as it was shown. */
+export interface EqBacktestRecord {
+  run: EqBacktestRun;
+  /** The strategy as it was then, the stocks, period and money. */
+  request: EqBacktestRequest & { definition: EqStrategyDefinition };
+  /** null when the result was too large to keep. */
+  result: EqBacktestResult | null;
 }
 
 export type EqExitReason = 'TARGET' | 'STOP_LOSS' | 'TRAILING_STOP' | 'PYRAMID_STOP' | 'EXIT_RULE' | 'TIME' | 'END';

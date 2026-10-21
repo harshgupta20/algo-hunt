@@ -5,14 +5,15 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { X } from 'lucide-react';
-import type { EqPreset } from '@/shared/equity';
+import type { EqPreset, EqStockSource } from '@/shared/equity';
 import { Tooltip } from '../components/Tooltip';
 import { Segmented } from '../components/ui';
 import { Cell } from '../components/form';
 import { eqApi } from './api';
 import { E } from './help';
 
-export type StockSource = { kind: 'PRESET'; preset: EqPreset } | { kind: 'WATCHLIST'; id: string } | { kind: 'PICK'; symbols: string[] };
+/** How the stocks are chosen (the same shape the backtest request carries, so the history can run it again). */
+export type StockSource = EqStockSource;
 
 /** The symbols a source stands for (a preset / watchlist is looked up). */
 export function useSymbols(source: StockSource): { symbols: string[]; loading: boolean; label: string } {

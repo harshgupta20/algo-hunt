@@ -181,9 +181,11 @@ Independent of V2. Shapes: `src/shared/equity/types.ts`. Details: [equity.md](eq
 | POST | `/api/equity/strategies/:id/duplicate` | — | `201 EqStrategy` |
 | GET / POST | `/api/equity/watchlists` | POST: `{ name, symbols[] }` | `EqWatchlist[]` / `201` (`400` for non-NSE symbols) |
 | PUT / DELETE | `/api/equity/watchlists/:id` | PUT: `{ name, symbols[] }` | `EqWatchlist` / `204` |
-| POST | `/api/equity/backtests` | `EqBacktestRequest` (`strategyId` or `definition`, `symbols`, `from`, `to`, `capital` \| null, `maxPositions` \| null) | `EqBacktestJob` — `409` without a Kite login |
+| POST | `/api/equity/backtests` | `EqBacktestRequest` (`strategyId` or `definition`, `symbols`, `from`, `to`, `capital` \| null, `maxPositions` \| null, optional `stocksLabel` and `source` for the history) | `EqBacktestJob` — `409` without a Kite login; when it finishes it's saved to the history |
 | GET | `/api/equity/backtests/latest` | — | the latest job (finished within the hour) or `null` |
 | GET / DELETE | `/api/equity/backtests/:id` | — | `EqBacktestJob` (DELETE cancels) — `404` once it's gone from memory |
+| GET | `/api/equity/backtest-history` | — | `EqBacktestRun[]` — every finished backtest, newest first (the lines: when, strategy name / version, stocks, period, money, figures) |
+| GET / DELETE | `/api/equity/backtest-history/:id` | — | `EqBacktestRecord { run, request, result }` (`result` null when it was too large to keep) / `204` — `404` when it isn't in the history |
 | POST | `/api/equity/screens` | `EqScreenRequest` (`strategyId` or `definition`, `symbols`) | `EqScreenJob` |
 | GET | `/api/equity/screens/latest` | — | latest screen job or `null` |
 | GET / DELETE | `/api/equity/screens/:id` | — | `EqScreenJob` (DELETE cancels) |

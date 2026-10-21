@@ -75,6 +75,14 @@ export const eqBacktestRequestSchema = z
     to: isoDate,
     capital: z.number().min(1_000).max(1e11).nullable(),
     maxPositions: z.number().int().min(1).max(5000).nullable(),
+    stocksLabel: z.string().trim().max(120).optional(),
+    source: z
+      .union([
+        z.object({ kind: z.literal('PRESET'), preset: z.enum(['NIFTY50', 'NIFTYNEXT50', 'NIFTY100', 'MIDCAP150', 'SMALLCAP250', 'NIFTY500', 'FNO', 'ALL']) }),
+        z.object({ kind: z.literal('WATCHLIST'), id: z.string().min(1).max(64) }),
+        z.object({ kind: z.literal('PICK'), symbols }),
+      ])
+      .optional(),
   })
   .refine((r) => r.strategyId || r.definition, 'strategyId or definition is required') as z.ZodType<EqBacktestRequest>;
 

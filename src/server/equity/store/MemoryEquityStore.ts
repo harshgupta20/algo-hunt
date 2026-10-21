@@ -1,7 +1,8 @@
 /** In-memory equity store (tests, and a fallback when no database is configured). */
 import { randomUUID } from 'node:crypto';
-import type { EqStrategy, EqStrategyDefinition, EqWatchlist } from '@/shared/equity';
-import type { EquityStore, WatchlistInput } from './EquityStore';
+import type { EqBacktestRecord, EqBacktestRun, EqStrategy, EqStrategyDefinition, EqWatchlist } from '@/shared/equity';
+import type { BacktestInput, EquityStore, WatchlistInput } from './EquityStore';
+import { MAX_KEPT_BYTES, packResult, unpackResult } from './pack';
 
 const byNewest = <T extends { updatedAt: string; name: string }>(a: T, b: T) => b.updatedAt.localeCompare(a.updatedAt) || a.name.localeCompare(b.name);
 const clone = <T>(v: T): T => structuredClone(v);
@@ -9,6 +10,7 @@ const clone = <T>(v: T): T => structuredClone(v);
 export class MemoryEquityStore implements EquityStore {
   private readonly s = new Map<string, EqStrategy>();
   private readonly w = new Map<string, EqWatchlist>();
+  private readonly b = new Map<string, { run: EqBacktestRun; request: EqBacktestRecord['request']; packed: Buffer | null }>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -32,7 +34,10 @@ export class MemoryEquityStore implements EquityStore {
       this.s.set(id, row);
       return clone(row);
     },
-    remove: async (id: string) => this.s.delete(id),
+    remove: async (id: string) => {
+      for (const e of this.b.values()) if (e.run.strategyId === id) e.run.strategyId = null; // kept in the history
+      return this.s.delete(id);
+    },
   };
 
   watchlists = {
@@ -52,5 +57,22 @@ export class MemoryEquityStore implements EquityStore {
       return clone(row);
     },
     remove: async (id: string) => this.w.delete(id),
+  };
+
+  backtests = {
+    list: async () => [...this.b.values()].map((e) => clone(e.run)).sort((a, b) => b.ranAt.localeCompare(a.ranAt)),
+    get: async (id: string): Promise<EqBacktestRecord | null> => {
+      const e = this.b.get(id);
+      return e ? { run: clone(e.run), request: clone(e.request), result: e.packed ? await unpackResult(e.packed) : null } : null;
+    },
+    add: async (input: BacktestInput) => {
+      const packed = await packResult(input.result);
+      const kept = packed.length <= MAX_KEPT_BYTES;
+      const strategyId = input.run.strategyId && this.s.has(input.run.strategyId) ? input.run.strategyId : null;
+      const run: EqBacktestRun = { ...clone(input.run), strategyId, id: randomUUID(), kept, bytes: packed.length };
+      this.b.set(run.id, { run, request: clone(input.request), packed: kept ? packed : null });
+      return clone(run);
+    },
+    remove: async (id: string) => this.b.delete(id),
   };
 }

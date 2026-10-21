@@ -1,7 +1,9 @@
 /** Typed client for the Equity API (/api/equity/*). */
 import type {
   EqBacktestJob,
+  EqBacktestRecord,
   EqBacktestRequest,
+  EqBacktestRun,
   EqPreset,
   EqPresetInfo,
   EqScreenJob,
@@ -77,6 +79,9 @@ export const eqApi = {
   latestBacktest: () => request<EqBacktestJob | null>('/backtests/latest'),
   backtestJob: (id: string) => request<EqBacktestJob>(`/backtests/${id}`),
   cancelBacktest: (id: string) => send<EqBacktestJob>('DELETE', `/backtests/${id}`),
+  backtestHistory: () => request<EqBacktestRun[]>('/backtest-history'),
+  backtestRecord: (id: string) => request<EqBacktestRecord>(`/backtest-history/${id}`),
+  removeBacktestRecord: (id: string) => send<void>('DELETE', `/backtest-history/${id}`),
 
   startScreen: (r: EqScreenRequest) => send<EqScreenJob>('POST', '/screens', r),
   latestScreen: () => request<EqScreenJob | null>('/screens/latest'),

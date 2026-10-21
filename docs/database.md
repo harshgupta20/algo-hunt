@@ -59,9 +59,11 @@ through [PgV2Store](../src/server/v2/persistence/PgV2Store.ts).
 | --- | --- |
 | `eq_strategies` | Equity strategies: `name`, `definition` JSON (the full `EqStrategyDefinition`), `version` (+1 on every save) |
 | `eq_watchlists` | The trader's stock lists: `name`, `symbols` JSON (NSE symbols in the trader's order) |
+| `eq_backtests` | The backtest history: `strategy_id` (NULL for an unsaved strategy or one deleted since), `ran_at`, `run` JSON (the history line: strategy name / version, stocks, period, money, figures), `request` JSON (to run it again), `result` BYTEA (the full result, gzipped JSON; NULL when over 25 MB packed) |
 
-Both are read once per process and then served from memory (writes go to the database first). Equity candles,
-backtests and screens are never stored ([equity.md](equity.md)).
+Strategies, watchlists and the history lines are read once per process and then served from memory (writes go to
+the database first); a history entry's `result` is read only when it's opened. Equity candles and screens are never
+stored ([equity.md](equity.md)).
 
 ## 3. Retired tables (left untouched)
 
@@ -88,6 +90,8 @@ Dropping them is optional and irreversible — only add a migration for it if yo
 | [010_v2_paper.sql](../db/migrations/010_v2_paper.sql) | `v2_paper_plans`, `v2_paper_trades` (paper trading) |
 | [011_v2_paper_connections.sql](../db/migrations/011_v2_paper_connections.sql) | `v2_paper_overrides` (a connection's own paper values) |
 | [012_equity.sql](../db/migrations/012_equity.sql) | `eq_strategies`, `eq_watchlists` (the Equity section) |
+| [013_v2_paper_trades_slot.sql](../db/migrations/013_v2_paper_trades_slot.sql) | `v2_paper_trades` brought to 010 as committed on databases that ran an early draft (`slot`, the one-open index) |
+| [014_equity_backtests.sql](../db/migrations/014_equity_backtests.sql) | `eq_backtests` (the Equity backtest history) |
 
 Keep every migration file: the runner tracks applied files by name, and a fresh database is built by replaying them
 in order.
