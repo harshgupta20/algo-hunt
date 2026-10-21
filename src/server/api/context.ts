@@ -11,6 +11,7 @@ import { KiteAuthService } from '../services/kite/kiteAuth';
 import { KiteHistoricalProvider } from '../services/kite/KiteHistoricalProvider';
 import { createV2Module, type V2Module } from '../v2';
 import { createEquityModule, type EquityModule } from '../equity';
+import { createAiModule, type AiModule } from '../ai';
 import { getLists } from '../market/lists';
 
 export interface AppContext {
@@ -23,6 +24,8 @@ export interface AppContext {
   v2: V2Module;
   /** Equity: NSE cash-stock strategies, watchlists, backtests and screens (independent of V2). */
   equity: EquityModule;
+  /** The trading AI assistant (Groq): works through the Equity service's tools. */
+  ai: AiModule;
 }
 
 function build(): AppContext {
@@ -38,7 +41,8 @@ function build(): AppContext {
     lists: async () => (await getLists())?.all.map((s) => ({ symbol: s.symbol, sector: s.sector, groups: s.groups })),
     fno: async () => (await v2.service.products({ kind: 'STOCK', needs: ['FUT'], limit: 5000 })).map((p) => p.symbol),
   });
-  return { store, kiteAuth, historical, v2, equity };
+  const ai = createAiModule({ equity: equity.service });
+  return { store, kiteAuth, historical, v2, equity, ai };
 }
 
 /** New on every evaluation of this module — i.e. after a dev hot reload of any service it wires. */

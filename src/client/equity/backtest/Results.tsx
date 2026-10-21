@@ -7,12 +7,14 @@
  */
 import { Fragment, useMemo, useState } from 'react';
 import clsx from 'clsx';
-import { ChevronDown, ChevronRight, Download } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Sparkles } from 'lucide-react';
 import type { EqBacktestResult, EqExitReason, EqTimeframe, EqTrade } from '@/shared/equity';
 import { EQ_TIMEFRAME } from '@/shared/equity';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { Badge, EmptyState, StatCard } from '../../components/ui';
 import { ChartLink } from '../ChartLink';
+import { ai } from '../../ai/store';
+import { AI } from '../../ai/help';
 import { countLabel, downloadCsv, inr, num, pct, pnlClass, shortDate, signedInr } from '../format';
 import { E } from '../help';
 import { CurveCharts, MonthlyGrid, compactInr } from './charts';
@@ -152,6 +154,20 @@ export function Results({ r }: { r: EqBacktestResult }) {
           · {EQ_TIMEFRAME[r.definition.timeframe].label} · {countLabel(r.perSymbol.map((p) => p.symbol))} · {shortDate(r.from)} → {shortDate(r.to)} · {r.requests.toLocaleString('en-IN')} Kite request(s)
         </span>
         <div className="ml-auto flex gap-2">
+          {r.historyId && (
+            <Tooltip content={AI.analyse}>
+              <button
+                type="button"
+                className="btn-ghost py-1 text-xs"
+                onClick={() => {
+                  ai.setPage({ page: 'equity-backtest', backtestId: r.historyId, label: `Backtest: ${r.strategyName}, ${r.from} → ${r.to}` });
+                  ai.open({ text: 'Analyse this backtest — what drove the result, where is the risk, and is it robust?', send: true });
+                }}
+              >
+                <Sparkles className="w-3.5 h-3.5" /> Analyse with AI
+              </button>
+            </Tooltip>
+          )}
           <Tooltip content={E.backtest.csv}>
             <button type="button" className="btn-ghost py-1 text-xs" disabled={!r.trades.length} onClick={() => tradesCsv(r)}>
               <Download className="w-3.5 h-3.5" /> Trades CSV

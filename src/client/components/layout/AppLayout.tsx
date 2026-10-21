@@ -8,6 +8,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { ActivityBar } from '../loaders';
+import { AiPanel } from '../../ai/AiPanel';
 
 const KEY = 'algo-hunt.sidebar-collapsed';
 
@@ -40,6 +41,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <Sidebar collapsed={collapsed} />
         <main className="flex-1 min-w-0 overflow-y-auto p-6">{children}</main>
       </div>
+      <AiPanel />
     </div>
   );
 }

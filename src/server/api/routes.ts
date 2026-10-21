@@ -9,6 +9,7 @@ import { kiteController } from './controllers/kiteController';
 import { marketController } from './controllers/marketController';
 import { v2Controller } from './controllers/v2Controller';
 import { equityController } from './controllers/equityController';
+import { aiController } from './controllers/aiController';
 
 export function createRouter(ctx: AppContext): Router {
   const r = new Router();
@@ -45,6 +46,15 @@ export function createRouter(ctx: AppContext): Router {
   r.get('/equity/screens/latest', eq.latestScreen); // before /equity/screens/:id
   r.get('/equity/screens/:id', eq.screenJob);
   r.delete('/equity/screens/:id', eq.cancelScreen);
+
+  // The trading AI assistant (Groq) — works through the Equity service's tools
+  const ai = aiController(ctx);
+  r.get('/ai/status', ai.status);
+  r.get('/ai/conversations', ai.list);
+  r.post('/ai/conversations', ai.send);
+  r.get('/ai/conversations/:id', ai.get);
+  r.post('/ai/conversations/:id/stop', ai.stop);
+  r.delete('/ai/conversations/:id', ai.remove);
 
   // V2 — product-agnostic strategies + product connections
   const v2 = v2Controller(ctx);

@@ -25,6 +25,11 @@ const EnvSchema = z.object({
 
   /** Optional email delivery for MCX V2 alerts (Resend API key). */
   RESEND_API_KEY: z.string().optional(),
+
+  /** Optional: the trading AI assistant (Groq, console.groq.com). Server only. */
+  GROQ_API_KEY: z.string().optional(),
+  /** Groq model with tool calling (default openai/gpt-oss-120b). */
+  GROQ_MODEL: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -56,6 +61,7 @@ function load() {
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
     telegramChatId: env.TELEGRAM_CHAT_ID,
     resendApiKey: env.RESEND_API_KEY,
+    groq: { apiKey: env.GROQ_API_KEY?.trim() || undefined, model: env.GROQ_MODEL?.trim() || 'openai/gpt-oss-120b' },
   } as const;
 }
 

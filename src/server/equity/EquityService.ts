@@ -25,7 +25,7 @@ import { runBacktest, usesVolume, type StockCandles } from './engine/backtest';
 import { screenStock } from './engine/screen';
 import type { CandleCache } from './data/candles';
 import type { Universe } from './data/universe';
-import { Jobs, type JobRun } from './jobs';
+import { JobCancelled, Jobs, type JobRun } from './jobs';
 import type { EquityStore, WatchlistInput } from './store/EquityStore';
 import { childLogger } from '../utils/logger';
 
@@ -218,39 +218,68 @@ export class EquityService {
     return out;
   }
 
-  async startBacktest(req: EqBacktestRequest): Promise<EqBacktestJob> {
+  /** Checks a backtest request and resolves its stocks (before anything is fetched). */
+  private async prepareBacktest(req: EqBacktestRequest) {
     const def = await this.definitionOf(req);
     // For the history: the saved strategy and its version (a builder draft has neither).
     const saved = !req.definition && req.strategyId ? await this.getStrategy(req.strategyId) : null;
-    const startedAt = this.now();
     if (req.from > req.to) throw new EquityError(400, '“From” must be on or before “to”');
     if (def.sizing.mode === 'PERCENT' && req.capital === null) throw new EquityError(400, '“% of the account” sizing needs a starting capital — set one or size by ₹ / shares');
     await this.requireKite('backtest on');
     const { found, unknown } = await this.deps.universe.resolve(req.symbols);
     if (!found.length) throw new EquityError(400, `None of these are NSE stocks or indices: ${unknown.slice(0, 10).join(', ')}`);
-    // One data end for the whole job, fixed before fetching: a run crossing the 15:40 cut-off must not give some
+    // One data end for the whole run, fixed before fetching: a run crossing the 15:40 cut-off must not give some
     // stocks today's candle and others not.
     const end = this.deps.candles.endDate(req.to);
-    const fetchFrom = historyFrom(def, req.from, end);
-    return this.backtests.start({ strategyName: def.name, request: req, total: found.length }, async (run) => {
-      // NIFTY 50 from the warm-up's start: the benchmark, the market's calendar, and the days an index's candles are kept.
-      const bench = await this.marketDays(fetchFrom, end, run);
-      const candles = await this.fetchAll(found, fetchFrom, end, run, bench);
-      run.checkpoint();
-      const result = runBacktest(def, req, candles, bench, end);
-      if (addDays(req.from, -warmupDays(def)) < HISTORY_START) result.notes.unshift('Some indicators here need history from before 2000, where Kite has none — early in the period their values can differ slightly from TradingView’s, which has older data.');
-      if (unknown.length) result.notes.unshift(`Not NSE stocks or indices (skipped): ${unknown.join(', ')}`);
-      const full: EqBacktestResult = { ...result, requests: run.stats.fetched };
-      await this.keepInHistory(full, { def, req, strategyId: saved?.id ?? null, strategyVersion: saved?.version ?? null, startedAt });
-      return full;
-    });
+    return { def, saved, found, unknown, end, fetchFrom: historyFrom(def, req.from, end) };
   }
 
-  /** Every finished backtest goes into the history. Failing to save it never fails the backtest — it's noted. */
-  private async keepInHistory(result: EqBacktestResult, o: { def: EqStrategyDefinition; req: EqBacktestRequest; strategyId: string | null; strategyVersion: number | null; startedAt: number }): Promise<void> {
+  /** Fetch, simulate, notes — and the history (unless `history` is false: the AI's variants of one test). */
+  private async computeBacktest(p: Awaited<ReturnType<EquityService['prepareBacktest']>>, req: EqBacktestRequest, run: JobRun, o: { history: boolean; startedAt: number }): Promise<EqBacktestResult> {
+    const { def, saved, found, unknown, end, fetchFrom } = p;
+    // NIFTY 50 from the warm-up's start: the benchmark, the market's calendar, and the days an index's candles are kept.
+    const bench = await this.marketDays(fetchFrom, end, run);
+    const candles = await this.fetchAll(found, fetchFrom, end, run, bench);
+    run.checkpoint();
+    const result = runBacktest(def, req, candles, bench, end);
+    if (addDays(req.from, -warmupDays(def)) < HISTORY_START) result.notes.unshift('Some indicators here need history from before 2000, where Kite has none — early in the period their values can differ slightly from TradingView’s, which has older data.');
+    if (unknown.length) result.notes.unshift(`Not NSE stocks or indices (skipped): ${unknown.join(', ')}`);
+    const full: EqBacktestResult = { ...result, requests: run.stats.fetched };
+    if (o.history) {
+      const id = await this.keepInHistory(full, { def, req, strategyId: saved?.id ?? null, strategyVersion: saved?.version ?? null, startedAt: o.startedAt });
+      if (id) full.historyId = id;
+    }
+    return full;
+  }
+
+  async startBacktest(req: EqBacktestRequest): Promise<EqBacktestJob> {
+    const startedAt = this.now();
+    const p = await this.prepareBacktest(req);
+    return this.backtests.start({ strategyName: p.def.name, request: req, total: p.found.length }, (run) => this.computeBacktest(p, req, run, { history: true, startedAt }));
+  }
+
+  /**
+   * A backtest outside the page's job slot — the AI assistant's runs. It never cancels the trader's own backtest
+   * (the page's jobs run one at a time); candles come from the same cache and Kite queue.
+   */
+  async runBacktest(req: EqBacktestRequest, o: { history: boolean; progress?: (p: { phase?: 'FETCH' | 'RUN'; done?: number; total?: number; current?: string | null }) => void; cancelled?: () => boolean }): Promise<EqBacktestResult> {
+    const startedAt = this.now();
+    const p = await this.prepareBacktest(req);
+    const run: JobRun = {
+      stats: { fetched: 0, cached: 0 },
+      checkpoint: () => {
+        if (o.cancelled?.()) throw new JobCancelled();
+      },
+      progress: (x) => o.progress?.(x),
+    };
+    return this.computeBacktest(p, req, run, { history: o.history, startedAt });
+  }
+
+  /** Every finished backtest goes into the history (its id). Failing to save it never fails the backtest — it's noted. */
+  private async keepInHistory(result: EqBacktestResult, o: { def: EqStrategyDefinition; req: EqBacktestRequest; strategyId: string | null; strategyVersion: number | null; startedAt: number }): Promise<string | null> {
     const now = this.now();
     try {
-      await this.deps.store.backtests.add({
+      const saved = await this.deps.store.backtests.add({
         run: {
           ranAt: new Date(now).toISOString(),
           seconds: Math.max(0, Math.round((now - o.startedAt) / 1000)),
@@ -277,9 +306,11 @@ export class EquityService {
         request: { ...o.req, definition: o.def },
         result,
       });
+      return saved.id;
     } catch (err) {
       log.warn({ err: msg(err) }, 'could not keep the backtest in the history');
       result.notes.unshift(`Not kept in the backtest history — the database couldn’t save it (${msg(err)}).`);
+      return null;
     }
   }
 
@@ -293,7 +324,8 @@ export class EquityService {
   async backtestRecord(id: string): Promise<EqBacktestRecord> {
     const r = await this.deps.store.backtests.get(id);
     if (!r) throw new EquityError(404, 'This backtest is no longer in the history');
-    return r;
+    // Packed before the store gave it an id — the result knows its entry from here on.
+    return r.result ? { ...r, result: { ...r.result, historyId: r.run.id } } : r;
   }
 
   async removeBacktestRecord(id: string): Promise<void> {

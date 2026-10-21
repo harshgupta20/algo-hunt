@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Eye, RotateCcw, Trash2 } from 'lucide-react';
+import { Eye, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import type { EqBacktestRun } from '@/shared/equity';
 import { EQ_TIMEFRAME } from '@/shared/equity';
 import { Tooltip, type TooltipContent } from '../../components/Tooltip';
@@ -18,6 +18,8 @@ import { eqApi } from '../api';
 import { duration, istDateTime, pct, pnlClass, shortDate, signedInr } from '../format';
 import { E } from '../help';
 import { compactInr } from './charts';
+import { ai } from '../../ai/store';
+import { AI } from '../../ai/help';
 
 const th = 'px-2.5 py-2 font-medium whitespace-nowrap text-left';
 const td = 'px-2.5 py-2 whitespace-nowrap align-middle';
@@ -92,6 +94,18 @@ function Row({ r, active, savedStrategy, onOpen, onRunAgain, onRemoved }: { r: E
           <IconButton help={r.kept ? E.history.open : E.history.notKept} onClick={onOpen} className={clsx(btn, active && 'text-accent-soft')}>
             <Eye className="w-3.5 h-3.5" />
           </IconButton>
+          {r.kept && (
+            <IconButton
+              help={AI.analyse}
+              onClick={() => {
+                ai.setPage({ page: 'equity-backtest', backtestId: r.id, label: `Backtest: ${r.strategyName} on ${r.stocksLabel}, ${r.from} → ${r.to}` });
+                ai.open({ text: 'Analyse this backtest — what drove the result, where is the risk, and is it robust?', send: true });
+              }}
+              className={btn}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+            </IconButton>
+          )}
           <IconButton help={E.history.runAgain} onClick={onRunAgain} className={btn}>
             <RotateCcw className="w-3.5 h-3.5" />
           </IconButton>

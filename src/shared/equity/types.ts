@@ -378,6 +378,8 @@ export interface EqBacktestResult {
   /** Candle sets fetched from Kite (the rest came from memory). */
   requests: number;
   notes: string[];
+  /** Its entry in the backtest history (absent when it wasn't kept). */
+  historyId?: string;
 }
 
 // ---- screener --------------------------------------------------------------------------------------------

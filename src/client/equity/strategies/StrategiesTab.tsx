@@ -13,6 +13,7 @@ import { eqApi } from '../api';
 import { ago } from '../format';
 import { E } from '../help';
 import { StrategyEditor } from './StrategyEditor';
+import { ai, useAi } from '../../ai/store';
 
 export type GoTo = (tab: 'backtest' | 'screener', opts: { strategyId?: string; draft?: EqStrategyDefinition }) => void;
 
@@ -79,7 +80,18 @@ function StrategyCard({ s, onEdit, onGo }: { s: EqStrategy; onEdit: () => void; 
 
 export function StrategiesTab({ editId, onGo }: { editId?: string; onGo: GoTo }) {
   const strategies = useQuery({ queryKey: ['eq-strategies'], queryFn: eqApi.strategies });
-  const [editing, setEditing] = useState<{ strategy?: EqStrategy; initial: EqStrategyDefinition } | null>(null);
+  const [editing, setEditing] = useState<{ strategy?: EqStrategy; initial: EqStrategyDefinition; n?: number } | null>(null);
+  // A strategy the AI wrote ("Open in builder"): a fresh, unsaved builder.
+  const { toBuilder } = useAi();
+  useEffect(() => {
+    if (!toBuilder) return;
+    const d = ai.takeBuilderDraft();
+    if (d) setEditing({ initial: structuredClone(d), n: Date.now() });
+  }, [toBuilder]);
+  useEffect(() => {
+    if (!editing) ai.setPage({ page: 'equity-strategies', label: 'Equity → your strategies' });
+  }, [editing]);
+  useEffect(() => () => ai.setPage(null), []);
   // Opened with ?strategy=<id>: straight into its builder, once.
   const [opened, setOpened] = useState(false);
   useEffect(() => {
@@ -92,7 +104,7 @@ export function StrategiesTab({ editId, onGo }: { editId?: string; onGo: GoTo })
   if (editing)
     return (
       <StrategyEditor
-        key={editing.strategy?.id ?? 'new'}
+        key={`${editing.strategy?.id ?? 'new'}-${editing.n ?? 0}`}
         strategy={editing.strategy}
         initial={editing.initial}
         onClose={() => setEditing(null)}

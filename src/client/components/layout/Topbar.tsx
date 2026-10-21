@@ -13,6 +13,7 @@ import { Logo } from '../Logo';
 import { Tooltip } from '../Tooltip';
 import { IconButton } from '../ui';
 import { HELP } from '../../lib/help';
+import { AiTopbar } from '../../ai/AiTopbar';
 
 const clock = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 
@@ -157,6 +158,7 @@ export function Topbar({ collapsed, onToggleSidebar }: { collapsed: boolean; onT
           </>
         )}
       </div>
+      <AiTopbar />
       {perm === 'granted' ? (
         <Tooltip content={HELP.topbar.notificationsOn} side="bottom">
           <span className="flex items-center gap-1.5 text-xs font-medium text-white cursor-help" tabIndex={0}>

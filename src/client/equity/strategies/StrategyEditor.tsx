@@ -5,10 +5,10 @@
  * stop-loss, trailing stop, exit conditions, time), pyramiding and money per buy — with the strategy read back in
  * plain words and checked as you type. How orders fill is the same for every strategy (shown, not chosen).
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { FlaskConical, LogOut, Play, Save, X } from 'lucide-react';
+import { FlaskConical, LogOut, Play, Save, Sparkles, X } from 'lucide-react';
 import type { EqStrategy, EqStrategyDefinition } from '@/shared/equity';
 import { EQ_MA_TYPES, hasErrors, orderRulesText, strategySummary, validateDefinition } from '@/shared/equity';
 import { Tooltip, type TooltipContent } from '../../components/Tooltip';
@@ -18,6 +18,8 @@ import { InlineSpinner } from '../../components/loaders';
 import { eqApi } from '../api';
 import { E } from '../help';
 import { GroupEditor, newGroup } from './ConditionEditor';
+import { ai } from '../../ai/store';
+import { AI } from '../../ai/help';
 
 const numBox = 'input py-1 text-xs w-20 tabular-nums disabled:opacity-40';
 const rules = orderRulesText();
@@ -82,6 +84,11 @@ export function StrategyEditor({
   const exit = d.exit;
   const setExit = (patch: Partial<EqStrategyDefinition['exit']>) => set({ exit: { ...exit, ...patch } });
   const general = issues.filter((i) => !/^entry\.|^exit\.when\./.test(i.path));
+  // The AI sees the strategy as it is on screen (saved or not).
+  useEffect(() => {
+    ai.setPage({ page: 'equity-builder', label: `Builder: ${d.name.trim() || 'new strategy'}${strategy ? ` (saved v${strategy.version}${JSON.stringify(d) === JSON.stringify(strategy.definition) ? '' : ', changed'})` : ' (unsaved)'}`, draft: d, ...(strategy ? { strategyId: strategy.id } : {}) });
+  }, [d, strategy]);
+  useEffect(() => () => ai.setPage(null), []);
 
   return (
     <div className="flex flex-col gap-4">
@@ -92,7 +99,12 @@ export function StrategyEditor({
             <span className="text-xs text-slate-500">v{strategy.version}</span>
           </Tooltip>
         )}
-        <Tooltip content={E.editor.close} className="ml-auto">
+        <Tooltip content={AI.describe} className="ml-auto">
+          <button type="button" className="btn-ghost py-1 text-xs" onClick={() => ai.open()}>
+            <Sparkles className="w-3.5 h-3.5" /> Describe it to AI
+          </button>
+        </Tooltip>
+        <Tooltip content={E.editor.close}>
           <button type="button" className="btn-ghost py-1 text-xs" onClick={onClose}>
             <X className="w-3.5 h-3.5" /> Close
           </button>

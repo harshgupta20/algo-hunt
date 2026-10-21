@@ -20,6 +20,7 @@ import { countLabel, duration, istDateTime, istToday, shortDate, yearsAgo } from
 import { E } from '../help';
 import { JobProgress } from '../JobProgress';
 import { StockPicker, useSymbols, type StockSource } from '../StockPicker';
+import { ai } from '../../ai/store';
 import { History } from './History';
 import { Results } from './Results';
 
@@ -44,7 +45,7 @@ function stocksLabel(source: StockSource, label: string, symbols: string[]): str
 const QUICK = [1, 3, 5, 10];
 const SECONDS_PER_REQUEST = 0.36;
 
-export function BacktestTab({ initialStrategyId, draft }: { initialStrategyId?: string; draft: EqStrategyDefinition | null }) {
+export function BacktestTab({ initialStrategyId, initialHistory, draft }: { initialStrategyId?: string; initialHistory?: string; draft: EqStrategyDefinition | null }) {
   const qc = useQueryClient();
   const strategies = useQuery({ queryKey: ['eq-strategies'], queryFn: eqApi.strategies });
   const [form, setForm] = useState<Form>(() => {
@@ -57,7 +58,7 @@ export function BacktestTab({ initialStrategyId, draft }: { initialStrategyId?: 
   /** A deleted / unsaved strategy's definition, from the history, to run again. */
   const [historyDef, setHistoryDef] = useState<EqStrategyDefinition | null>(remembered?.historyDef ?? null);
   /** A history entry shown instead of the latest run. */
-  const [viewing, setViewing] = useState<string | null>(remembered?.viewing ?? null);
+  const [viewing, setViewing] = useState<string | null>(initialHistory ?? remembered?.viewing ?? null);
   useEffect(() => {
     remembered = { form, jobId, historyDef, viewing };
   }, [form, jobId, historyDef, viewing]);
@@ -88,6 +89,13 @@ export function BacktestTab({ initialStrategyId, draft }: { initialStrategyId?: 
   const record = useQuery({ queryKey: ['eq-backtest-record', viewing], queryFn: () => eqApi.backtestRecord(viewing!), enabled: viewing !== null, staleTime: Infinity, retry: false });
   const savedIds = useMemo(() => (strategies.data ? new Set(strategies.data.map((s) => s.id)) : null), [strategies.data]);
   const { symbols, loading, label } = useSymbols(form.source);
+  // The AI sees which backtest is on screen (a history entry, or the latest run).
+  const shownId = viewing ?? (j?.status === 'DONE' ? (j.result?.historyId ?? null) : null);
+  const shownLabel = viewing ? (record.data ? `Backtest: ${record.data.run.strategyName} on ${record.data.run.stocksLabel}, ${record.data.run.from} → ${record.data.run.to}` : 'Backtest from the history') : j?.result ? `Backtest: ${j.result.strategyName} on ${j.request.stocksLabel ?? countLabel(j.request.symbols)}, ${j.result.from} → ${j.result.to}` : null;
+  useEffect(() => {
+    ai.setPage(shownId ? { page: 'equity-backtest', backtestId: shownId, label: shownLabel ?? 'Backtest' } : { page: 'equity-backtest', label: 'Equity → Backtest' });
+  }, [shownId, shownLabel]);
+  useEffect(() => () => ai.setPage(null), []);
   const def = form.strategy === 'draft' ? draft : form.strategy === 'history' ? historyDef : strategies.data?.find((s) => s.id === form.strategy)?.definition;
   const reversed = form.range.from > form.range.to;
 

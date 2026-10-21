@@ -27,6 +27,8 @@ export function EquityHub() {
   const raw = params.get('tab') as Tab | null;
   const tab: Tab = TABS.some((t) => t.value === raw) ? raw! : 'strategies';
   const strategy = params.get('strategy') ?? undefined;
+  // A history entry to show on the Backtest tab (the AI's "Open the backtest").
+  const history = params.get('history') ?? undefined;
   // The builder's unsaved strategy, handed to Backtest / Screener ("Backtest without saving").
   const [draft, setDraft] = useState<EqStrategyDefinition | null>(null);
   const go = (t: Tab, opts: { strategyId?: string; draft?: EqStrategyDefinition } = {}) => {
@@ -49,7 +51,7 @@ export function EquityHub() {
         <Tabs value={tab} onChange={(t) => go(t)} items={TABS} />
       </div>
       {tab === 'strategies' && <StrategiesTab key={strategy ?? ''} editId={strategy} onGo={(t, o) => go(t, o)} />}
-      {tab === 'backtest' && <BacktestTab key={strategy ?? ''} initialStrategyId={strategy} draft={draft} />}
+      {tab === 'backtest' && <BacktestTab key={`${strategy ?? ''}-${history ?? ''}`} initialStrategyId={strategy} initialHistory={history} draft={draft} />}
       {tab === 'screener' && <ScreenerTab key={strategy ?? ''} initialStrategyId={strategy} draft={draft} />}
       {tab === 'watchlists' && <WatchlistsTab />}
     </div>
