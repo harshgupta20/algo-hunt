@@ -16,15 +16,44 @@ import { HELP } from '../../lib/help';
 
 const clock = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 
-/** "NSE/BSE ● Open" / "MCX ○ Closed" with today's session in the tooltip (white on the brand header). */
-function Market({ name, m, help }: { name: string; m: MarketStatus; help: { title: string; body: string } }) {
-  const hours = m.today.trading ? `Today: ${clock(m.today.openMin)}–${clock(m.today.closeMin)} IST.` : (m.today.note ?? 'No session today.');
+/** Minutes since midnight in IST (sessions are IST). */
+const istMinute = (ms: number) => Math.floor((ms / 60_000 + 330) % 1440);
+
+/**
+ * A market's state at a glance: a solid green pill with a pulsing dot while it's open ("Open · till 15:30"), a grey
+ * one while it's shut ("Closed · opens 09:15", "Closed", "Holiday", "Weekend"). Green here means "live market" —
+ * the top bar's one exception to green = up. Fixed colours: the header is brand blue in both themes.
+ */
+function Market({ name, m, now, help }: { name: string; m: MarketStatus; now: number; help: { title: string; body: string } }) {
+  const t = m.today;
+  const [label, detail] = m.open
+    ? ['Open', `till ${clock(t.closeMin)}`]
+    : !t.trading
+      ? [t.note ? 'Holiday' : 'Weekend', null]
+      : istMinute(now) < t.openMin
+        ? ['Closed', `opens ${clock(t.openMin)}`]
+        : ['Closed', null];
+  const hours = t.trading ? `Today: ${clock(t.openMin)}–${clock(t.closeMin)} IST${t.note ? ` (${t.note})` : ''}.` : `${t.note ?? 'Weekend'} — no session today.`;
   return (
-    <Tooltip side="bottom" content={{ title: `${help.title} — ${m.open ? 'Open' : 'Closed'}`, body: help.body, note: hours }}>
-      <span className="flex items-center gap-1.5 cursor-help" tabIndex={0}>
-        <span className="font-semibold text-white">{name}</span>
-        <span className={clsx('w-2 h-2 rounded-full', m.open ? 'bg-white shadow-[0_0_0_3px_rgba(255,255,255,0.3)]' : 'border-2 border-white/60')} />
-        <span className={clsx(m.open ? 'font-semibold text-white' : 'text-white/75')}>{m.open ? 'Open' : 'Closed'}</span>
+    <Tooltip side="bottom" content={{ title: `${help.title} — ${label}${detail ? ` ${detail}` : ''}`, body: help.body, note: hours }}>
+      <span
+        className={clsx(
+          'flex items-center gap-1.5 rounded-full px-2.5 py-0.5 cursor-help whitespace-nowrap',
+          m.open ? 'bg-green-600 ring-1 ring-white/50 text-white shadow-sm' : 'bg-gray-500 text-white/90',
+        )}
+        tabIndex={0}
+      >
+        {m.open ? (
+          <span className="relative flex w-2 h-2">
+            <span className="absolute inline-flex h-full w-full rounded-full bg-white opacity-75 motion-safe:animate-ping" />
+            <span className="relative inline-flex w-2 h-2 rounded-full bg-white" />
+          </span>
+        ) : (
+          <span className="w-2 h-2 rounded-full border-2 border-white/70" />
+        )}
+        <span className="font-semibold">{name}</span>
+        <span className={clsx('uppercase tracking-wide text-[10px]', m.open ? 'font-bold' : 'font-medium')}>{label}</span>
+        {detail && <span className={clsx('text-[10px]', m.open ? 'text-white/90' : 'text-white/75')}>· {detail}</span>}
       </span>
     </Tooltip>
   );
@@ -112,9 +141,8 @@ export function Topbar({ collapsed, onToggleSidebar }: { collapsed: boolean; onT
                 <span aria-hidden className="h-4 w-px bg-white/30" />
               </>
             )}
-            <Market name="NSE/BSE" m={s.markets.NSE} help={HELP.topbar.nseMarket} />
-            <span aria-hidden className="h-4 w-px bg-white/30" />
-            <Market name="MCX" m={s.markets.MCX} help={HELP.topbar.mcxMarket} />
+            <Market name="NSE/BSE" m={s.markets.NSE} now={s.now} help={HELP.topbar.nseMarket} />
+            <Market name="MCX" m={s.markets.MCX} now={s.now} help={HELP.topbar.mcxMarket} />
             {s.connections.enabled > 0 && (
               <>
                 <span aria-hidden className="h-4 w-px bg-white/30" />
