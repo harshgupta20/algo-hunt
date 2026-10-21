@@ -20,6 +20,7 @@ import { E } from '../help';
 import { GroupEditor, newGroup } from './ConditionEditor';
 import { ai } from '../../ai/store';
 import { AI } from '../../ai/help';
+import { AiFill } from '../../ai/AiFill';
 
 const numBox = 'input py-1 text-xs w-20 tabular-nums disabled:opacity-40';
 const rules = orderRulesText();
@@ -84,6 +85,15 @@ export function StrategyEditor({
   const exit = d.exit;
   const setExit = (patch: Partial<EqStrategyDefinition['exit']>) => set({ exit: { ...exit, ...patch } });
   const general = issues.filter((i) => !/^entry\.|^exit\.when\./.test(i.path));
+  // "Describe in words" open in Buy when or Sell when.
+  const [aiPart, setAiPart] = useState<'entry' | 'exit' | null>(null);
+  const aiButton = (part: 'entry' | 'exit') => (
+    <Tooltip content={AI.fillButton}>
+      <button type="button" className="btn-ghost py-0.5 text-xs" aria-pressed={aiPart === part} onClick={() => setAiPart(aiPart === part ? null : part)}>
+        <Sparkles className="w-3.5 h-3.5 text-accent-soft" /> Describe in words
+      </button>
+    </Tooltip>
+  );
   // The AI sees the strategy as it is on screen (saved or not).
   useEffect(() => {
     ai.setPage({ page: 'equity-builder', label: `Builder: ${d.name.trim() || 'new strategy'}${strategy ? ` (saved v${strategy.version}${JSON.stringify(d) === JSON.stringify(strategy.definition) ? '' : ', changed'})` : ' (unsaved)'}`, draft: d, ...(strategy ? { strategyId: strategy.id } : {}) });
@@ -133,8 +143,9 @@ export function StrategyEditor({
         </Cell>
       </Section>
 
-      <Section step="2" title="Buy when" help={E.editor.entry}>
+      <Section step="2" title="Buy when" help={E.editor.entry} actions={aiButton('entry')}>
         <div className="flex flex-col gap-3">
+          {aiPart === 'entry' && <AiFill part="entry" strategy={d} onApply={setD} onClose={() => setAiPart(null)} />}
           <GroupEditor group={d.entry.when} onChange={(when) => set({ entry: { ...d.entry, when } })} tf={d.timeframe} issues={issues} path="entry" />
           <Cell label="Buy on" help={E.editor.trigger}>
             <Segmented
@@ -150,8 +161,9 @@ export function StrategyEditor({
         </div>
       </Section>
 
-      <Section step="3" title="Sell when (first of)" help={E.editor.exits}>
+      <Section step="3" title="Sell when (first of)" help={E.editor.exits} actions={aiButton('exit')}>
         <div className="flex flex-col gap-4">
+          {aiPart === 'exit' && <AiFill part="exit" strategy={d} onApply={setD} onClose={() => setAiPart(null)} />}
           <div className="flex flex-wrap items-end gap-5">
             <Optional label="Target" help={E.editor.target} value={exit.targetPct} fallback={20} min={0.1} max={1000} step={1} suffix="%" onChange={(targetPct) => setExit({ targetPct })} />
             <Optional label="Stop-loss" help={E.editor.stopLoss} value={exit.stopLossPct} fallback={8} min={0.1} max={99} step={0.5} suffix="%" onChange={(stopLossPct) => setExit({ stopLossPct })} />

@@ -50,6 +50,7 @@ export function createRouter(ctx: AppContext): Router {
   // The trading AI assistant (Groq) — works through the Equity service's tools
   const ai = aiController(ctx);
   r.get('/ai/status', ai.status);
+  r.post('/ai/fill', ai.fill);
   r.get('/ai/conversations', ai.list);
   r.post('/ai/conversations', ai.send);
   r.get('/ai/conversations/:id', ai.get);

@@ -1,5 +1,5 @@
 /** Typed client for the trading AI assistant (/api/ai/*). */
-import type { AiConversation, AiConversationLine, AiMode, AiSendRequest, AiStatus } from '@/shared/ai/types';
+import type { AiConversation, AiConversationLine, AiFillRequest, AiFillResult, AiMode, AiSendRequest, AiStatus } from '@/shared/ai/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api/ai${path}`, { headers: { 'Content-Type': 'application/json' }, ...init });
@@ -25,4 +25,5 @@ export const aiApi = {
   send: (body: AiSendRequest) => request<AiConversation>('/conversations', { method: 'POST', body: JSON.stringify(body) }),
   stop: (id: string) => request<AiConversation>(`/conversations/${id}/stop`, { method: 'POST' }),
   remove: (id: string) => request<void>(`/conversations/${id}`, { method: 'DELETE' }),
+  fill: (body: AiFillRequest) => request<AiFillResult>('/fill', { method: 'POST', body: JSON.stringify(body) }),
 };

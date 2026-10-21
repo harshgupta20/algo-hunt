@@ -8,13 +8,14 @@
  * still shows them). Waits for the per-minute limit are shown, not failed.
  */
 import { randomUUID } from 'node:crypto';
-import type { AiConversation, AiConversationLine, AiMessage, AiMode, AiPageContext, AiStatus, AiStep } from '@/shared/ai/types';
+import type { AiConversation, AiConversationLine, AiFillRequest, AiFillResult, AiMessage, AiMode, AiPageContext, AiStatus, AiStep } from '@/shared/ai/types';
 import type { EqStrategyDefinition } from '@/shared/equity';
 import type { EquityService } from '../equity';
 import { childLogger } from '../utils/logger';
 import { AiError, estimateTokens, type ChatMessage, type GroqClient, type ToolSpec } from './groq';
 import { contextNote, creatorPrompt, systemPrompt } from './prompt';
 import { CREATOR_TOOLS, ToolError, backtestAsked, chatTools, runTool } from './tools';
+import { fillPart } from './fill';
 
 const log = childLogger('ai');
 
@@ -102,6 +103,13 @@ export class AiService {
   }
 
   /** Conversations of one kind (the chat's and the strategy creator's are kept apart), newest first. */
+  /** "Describe in words" for one section of the builder (Buy when / Sell when) — one short exchange, no conversation. */
+  async fill(req: AiFillRequest): Promise<AiFillResult> {
+    const text = req.text.trim();
+    if (!text) throw new AiError('Describe the rules in words', 400);
+    return fillPart(this.groq(), { ...req, text, today: istDate(this.now()) }, (u) => this.count(u));
+  }
+
   list(mode: AiMode = 'CHAT'): AiConversationLine[] {
     return [...this.conversations.values()]
       .filter((c) => c.view.mode === mode)

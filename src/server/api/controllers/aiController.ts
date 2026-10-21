@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { eqDefinitionSchema } from '@/shared/equity';
-import type { AiSendRequest } from '@/shared/ai/types';
+import type { AiFillRequest, AiSendRequest } from '@/shared/ai/types';
 import { AiError } from '../../ai';
 import type { AppContext } from '../context';
 import type { Handler } from '../http';
@@ -20,6 +20,8 @@ const sendSchema = z.object({
     })
     .optional(),
 }) as z.ZodType<AiSendRequest>;
+
+const fillSchema = z.object({ part: z.enum(['entry', 'exit']), text: z.string().trim().min(1).max(2000), strategy: z.unknown() });
 
 /** Service errors carry their own status (503 not set up, 409 busy, 404 gone, 429 Groq's limit). */
 function wrap(h: Handler): Handler {
@@ -50,6 +52,15 @@ export function aiController(ctx: AppContext) {
         if (!d.success) delete body.context.draft;
       }
       return svc().send(body);
+    },
+    fill: (req) => {
+      const body = parse(fillSchema, req.body);
+      // The builder's strategy as typed so far (an unnamed one is fine).
+      const raw = body.strategy as Record<string, unknown> | null;
+      const d = eqDefinitionSchema.safeParse(raw && typeof raw === 'object' && !String(raw.name ?? '').trim() ? { ...raw, name: 'Draft' } : raw);
+      if (!d.success) return Response.json({ error: 'The builder’s strategy couldn’t be read — check it for errors first' }, { status: 400 });
+      const strategy = { ...d.data, name: typeof raw?.name === 'string' ? raw.name : d.data.name };
+      return svc().fill({ part: body.part, text: body.text, strategy } satisfies AiFillRequest);
     },
     get: (req) => svc().get(req.params.id!),
     stop: (req) => svc().stop(req.params.id!),

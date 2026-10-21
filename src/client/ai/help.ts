@@ -48,4 +48,22 @@ export const AI = {
   creatorSave: { title: 'Save as a new strategy', body: 'Saves it to your strategies as it is (version 1). You can still open and change it later.' },
   creatorAssumed: { title: 'Assumed by the AI', body: 'Defaults and interpretations the AI chose where your words didn’t say. Check them — tell it to change any.' },
   creatorExample: { title: 'Use this example', body: 'Puts the example in the box — edit it to your rules, then send.' },
+  fillButton: {
+    title: 'Describe in words',
+    body: 'Write this section’s rules in your own words — the AI fills them in. You see the result (and what it assumed) before anything changes.',
+  },
+  fillEntry: {
+    title: 'Buy conditions in words',
+    body: 'Say when to buy. “Add …” / “also …” keeps the current conditions; a new description replaces them.',
+    example: 'SMA 50 crosses above SMA 100 and RSI(14) above 60',
+  },
+  fillExit: {
+    title: 'Sell rules in words',
+    body: 'Say how to sell: target %, stop-loss %, trailing stop %, an exit rule, or after N days/weeks. “Add …” keeps the current rules; a new description replaces them.',
+    example: '20% target, 8% stop, or close crosses below SMA 50',
+  },
+  fillWrite: { title: 'Write it', body: 'The AI turns your words into this section’s rules (Enter). Nothing changes until you Apply.' },
+  fillApply: { title: 'Apply', body: 'Put these rules into the builder. You can still edit them — and nothing is saved until you Save.' },
+  fillDiscard: { title: 'Discard', body: 'Drop this suggestion; your rules stay as they are.' },
+  fillClose: { title: 'Close', body: 'Hide the box — your rules stay as they are.' },
 } satisfies Record<string, TooltipContent>;

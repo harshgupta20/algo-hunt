@@ -114,3 +114,23 @@ export interface AiSendRequest {
   message: string;
   context?: AiPageContext;
 }
+
+/** "Describe in words" in the builder: the section's complete rules after the trader's words, or one question. */
+export interface AiFillRequest {
+  part: 'entry' | 'exit';
+  text: string;
+  /** The strategy as it is in the builder (maybe unsaved). */
+  strategy: EqStrategyDefinition;
+}
+
+export interface AiFillResult {
+  part: 'entry' | 'exit';
+  entry?: EqStrategyDefinition['entry'];
+  exit?: EqStrategyDefinition['exit'];
+  /** The section in the builder's plain words. */
+  reads?: string[];
+  assumptions?: string[];
+  warnings?: string[];
+  /** The words were too vague — what the AI needs to know. */
+  question?: string;
+}

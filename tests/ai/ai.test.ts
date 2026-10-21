@@ -10,6 +10,7 @@ import { CompactError, fromDefinition, toDefinition } from '../../src/server/ai/
 import { summarize, withExits, withPeriods } from '../../src/server/ai/analysis';
 import { GroqClient, parseDuration } from '../../src/server/ai/groq';
 import { backtestAsked } from '../../src/server/ai/tools';
+import { fillPart } from '../../src/server/ai/fill';
 import { AiService } from '../../src/server/ai/AiService';
 import type { EquityService } from '../../src/server/equity';
 
@@ -299,5 +300,38 @@ describe('AI conversation', () => {
   it('without a key it says how to set one up', () => {
     const svc = new AiService({ groq: null, equity: fakeEquity([]) });
     expect(() => svc.send({ message: 'hi' })).toThrow(/GROQ_API_KEY/);
+  });
+});
+
+describe('describe in words (builder sections)', () => {
+  const sma = EQ_TEMPLATES.find((t) => t.key === 'sma-50-100')!.definition;
+  const run = (script: Scripted[], part: 'entry' | 'exit', text: string, seen: unknown[][] = []) => fillPart(scriptedGroq(script, seen), { part, text, strategy: { ...sma, name: '' }, today: '2026-10-21' }, () => undefined);
+
+  it('fills the buy conditions — checked like the builder, fixing its own mistake first', async () => {
+    const seen: unknown[][] = [];
+    const r = await run(
+      [
+        { tool_calls: [{ name: 'fill_entry', args: { entry: ['RSI(14)', '>', 'close'] } }] },
+        { tool_calls: [{ name: 'fill_entry', args: { entry: { all: [['SMA(50)', 'crosses_above', 'SMA(100)'], ['RSI(14)', '>', 60]] }, assumptions: ['RSI period 14'] } }] },
+      ],
+      'entry',
+      'SMA 50 crosses above SMA 100 and RSI above 60',
+      seen,
+    );
+    expect(r.reads).toEqual(['Daily: buy when SMA(50) crosses above SMA(100) AND RSI(14) > 60']);
+    expect(r.assumptions).toEqual(['RSI period 14']);
+    expect(r.entry!.trigger).toBe('WHEN_TRUE');
+    expect(r.exit).toBeUndefined();
+    const second = seen[1] as Array<{ role: string; content: string }>;
+    expect(second.at(-1)!.content).toMatch(/compares a 0–100 oscillator with a price/);
+    expect(second[1]!.content).toContain('"entry":["SMA(50)"'.slice(0, 9)); // the current strategy is shown
+  });
+
+  it('fills the sell rules (the current ones kept by the model) — or asks when too vague', async () => {
+    const r = await run([{ tool_calls: [{ name: 'fill_exit', args: { target: 20, stop: 8, when: ['SMA(50)', 'crosses_below', 'SMA(100)'] } }] }], 'exit', 'add an 8% stop');
+    expect(r.reads).toEqual(['Sell everything at the first of: target +20% from the average price; stop-loss −8% from the average price; when SMA(50) crosses below SMA(100)']);
+    expect(r.exit).toMatchObject({ targetPct: 20, stopLossPct: 8, trailingStopPct: null, maxBars: null });
+    const q = await run([{ content: 'Sell how? (a) a target % (b) a stop-loss % (c) an exit rule' }], 'exit', 'sell smartly');
+    expect(q).toEqual({ part: 'exit', question: 'Sell how? (a) a target % (b) a stop-loss % (c) an exit rule' });
   });
 });

@@ -44,6 +44,18 @@ was described. It replies with **Built** (their words → the rule), **Assumed**
 and **Worth considering (not applied)**, then asks what next. The card has **Open in builder** and
 **Save as new strategy**. Page context isn't sent: it works from the trader's words only.
 
+## Describe in words (builder: Buy when / Sell when)
+
+A **Describe in words** button in each of the two sections opens a box inside it. The trader writes the rules
+("SMA 50 crosses above SMA 100 and RSI above 60", "add a 10% trailing stop"). One short exchange (`POST /api/ai/fill`,
+`server/ai/fill.ts`) returns the section's complete rules after their words. The current rules are kept unless the
+words replace them ("add …" keeps them). The result is checked by the builder's validator (only that section's
+problems count) and shown in plain words with what the AI assumed. **Apply** puts it in the builder (still unsaved);
+**Discard** leaves the rules as they were. Words too vague → one question with suggested answers, and nothing changes.
+Usually about 1 s and 1 request.
+
+Note: `npm run dev` builds the API route table once — restart it after adding a route.
+
 ## Tools (`server/ai/tools.ts`)
 
 `list_strategies`, `get_strategy`, `propose_strategy`, `list_stock_lists`, `find_instruments`, `run_backtest`,
