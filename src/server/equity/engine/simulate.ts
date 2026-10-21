@@ -30,7 +30,8 @@
  * Real-market limits: a next-open order is a day order — if the stock doesn't trade on the next market day it
  * lapses (listed); a candle locked at a circuit (one price all day) can't be bought at the upper circuit or sold
  * at the lower one, and a zero-volume candle trades nothing — buys lapse, sales wait for the next candle (one-price
- * days inside Kite's rounded history aren't locks). A lot bought and sold the same day pays Zerodha's intraday
+ * days inside Kite's rounded history aren't locks). An index has neither (Kite reports no volume for indices, and
+ * they have no circuits): every candle of an index trades. A lot bought and sold the same day pays Zerodha's intraday
  * charges. An add that would open at or below the stop it sets is not bought (listed).
  * A buy that the cash can't cover, that buys 0 shares, or that exceeds the max stocks held is skipped and listed.
  * Positions open at the end are closed at the last close (reason END, charges counted).
@@ -48,6 +49,8 @@ export interface SimStock {
   daily: Bars;
   /** Per daily candle: > 0 where Kite's adjusted prices are too coarse to tell a circuit lock (coarseMask). */
   coarse?: Float64Array;
+  /** An index (NIFTY 50, SENSEX…): no volume in the data and no circuits — every candle trades. */
+  index?: boolean;
   timeline: Timeline;
   /** Per check: entry conditions / exit conditions (tri-state) and the pyramiding MA. */
   entry: Int8Array;
@@ -283,6 +286,7 @@ export function simulate(def: EqStrategyDefinition, stocks: SimStock[], opt: Sim
      * moved from the previous close — locked at the upper / lower circuit (no sellers / no buyers).
      */
     const locked = (s: Slot): 'UP' | 'DOWN' | 'NONE' | null => {
+      if (s.stock.index) return null;
       const d = s.stock.daily;
       const i = s.ptr;
       if (!(d.volume[i]! > 0)) return 'NONE';

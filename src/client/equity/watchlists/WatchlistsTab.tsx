@@ -55,7 +55,7 @@ function Editor({ list, onDone }: { list: EqWatchlist | null; onDone: () => void
           </select>
         </Cell>
         <Cell label="Search" help={E.picker.search}>
-          <input aria-label="Search stocks to add" className="input py-1 text-xs w-56" placeholder="RELIANCE, Tata, bank…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input aria-label="Search stocks to add" className="input py-1 text-xs w-56" placeholder="RELIANCE, Tata, BANKNIFTY…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </Cell>
         <span className="mb-1 text-[11px] text-slate-500">
           <span className="font-semibold text-slate-300">{symbols.length}</span> stocks

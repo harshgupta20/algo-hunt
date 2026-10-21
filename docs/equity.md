@@ -12,7 +12,7 @@ strategy's daily / weekly candles; TradingView has no date link, so the tooltip 
 | Tab | What it does |
 | --- | --- |
 | **Strategies** | Saved strategies (edit, backtest, screen, duplicate, delete) and the template gallery — the trader's three strategies first, then classic setups (52-week breakout, golden cross, Supertrend, uptrend pullback, volume breakout). Opens the builder |
-| **Backtest** | A strategy (saved, or the builder's unsaved one) on an index list / watchlist / picked stocks, over any period, with a starting capital (or none) and an optional maximum of stocks held. Runs in the background (progress, time left, cancel; survives tab switches). Results: final capital, return, CAGR, max drawdown, win rate, profit factor, trades, NIFTY 50 bought-and-held comparison, account value + drawdown chart, monthly returns, each trade with **every order and why** (indicator values at the signal), by stock with data notes, signals not taken, CSVs. **Backtest history**: every finished backtest is kept — when it ran, which strategy (and version), stocks, period, money and its figures; filter by strategy, open one exactly as it was, run it again, delete it |
+| **Backtest** | A strategy (saved, or the builder's unsaved one) on a stock list / indices / watchlist / picked stocks and indices, over any period, with a starting capital (or none) and an optional maximum of stocks held. Runs in the background (progress, time left, cancel; survives tab switches). Results: final capital, return, CAGR, max drawdown, win rate, profit factor, trades, NIFTY 50 bought-and-held comparison, account value + drawdown chart, monthly returns, each trade with **every order and why** (indicator values at the signal), by stock with data notes, signals not taken, CSVs. **Backtest history**: every finished backtest is kept — when it ran, which strategy (and version), stocks, period, money and its figures; filter by strategy, open one exactly as it was, run it again, delete it |
 | **Screener** | Each stock at its last completed check: entry true / **fresh signal** (true now, not at the check before) / exit true, with every condition's two values |
 | **Watchlists** | Your own stock lists; start from an index list (NIFTY 50 / Next 50 / 100 / Midcap 150 / Smallcap 250 / 500, F&O) or pick stocks |
 
@@ -67,6 +67,13 @@ strategy's daily / weekly candles; TradingView has no date link, so the tooltip 
   candle; stops don't fill) — except inside stretches of Kite's rounded (coarse) history, where one-price days are
   rounding, not locks. An add whose next open is at or below the stop it would set isn't bought. Orders over 10 % of
   the day's traded volume are noted per stock (filled as usual — a real order that size would fill worse).
+- **Indices** (NIFTY 50, BANKNIFTY, SENSEX…) are tested on their own values, as if one unit could be bought at the
+  index level (TradingView's strategy tester on an index chart). Kite reports **no volume** for indices (always 0)
+  and they have no circuits, so none of the rules above apply: every index candle trades. Index candles on days NSE
+  was shut (NIFTY BANK's base value on 2000-01-01, a bond index's weekends) are dropped — only NIFTY 50's days are
+  kept. Notes per index: stretches where Kite has **only closing values** (open = high = low = close for 5+ candles —
+  NIFTY BANK until 2005, NIFTY FIN SERVICE until 2012, NIFTY SMLCAP 250 until 2019: next-open fills there are the
+  day's close, stops / targets see only the close, high/low indicators aren't real), and volume conditions (always 0).
 - **Max stocks held** counts stocks held, minus those already being sold at the next open, plus buys already queued.
 - **Skipped** (and listed): a buy the free cash can't cover, 0 shares for the money, over the max stocks held, a
   lapsed order, a circuit lock, an add below its own stop, a buy or add signalled at the last check (it would fill
@@ -90,6 +97,12 @@ strategy's daily / weekly candles; TradingView has no date link, so the tooltip 
   `-BE` and bond series are left out), refreshed daily, kept in memory and in `data/equity-instruments.json` (never
   the database). Index lists and sectors from NSE's constituent files (via the market module); F&O = stocks with
   futures (from the F&O catalogue). Both are passed in by `server/api/context.ts`.
+- **Indices:** every index in Kite's NSE and BSE lists (136 + 76; segment `INDICES`), except HANGSENG BEES-NAV (an
+  ETF's NAV, no candles). Key: an NSE index by Kite's symbol (`NIFTY BANK`), a BSE index `BSE:<symbol>`
+  (`BSE:SENSEX`) — never a stock symbol. `shared/equity/indices.ts` gives each its group (broad / sector / theme /
+  strategy / other / BSE → the IDX_* lists), a readable name, its F&O name (searchable: BANKNIFTY, FINNIFTY…) and its
+  TradingView symbol (checked against TradingView's symbol search, 2026-10-21; 7 BSE indices have none → no chart
+  link). An index Kite adds later still loads (group other / BSE, Kite's name).
 - **Candles:** daily candles from Kite (one request per stock covers ~1,900 days; history from 2003 for most stocks, 2000 for a few), weekly
   built from them, through the app's shared Kite queue (~3 requests a second). One data end per job (fixed before
   fetching). Kept in memory for the session they were fetched in (re-runs that day ask Kite for nothing) and fetched

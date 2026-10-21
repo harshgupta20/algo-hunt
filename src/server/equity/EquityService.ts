@@ -20,8 +20,8 @@ import type {
   ValidationIssue,
 } from '@/shared/equity';
 import { EQ_TEMPLATES, hasErrors, normalizeDefinition, settleBars, validateDefinition } from '@/shared/equity';
-import { addDays, type Bars } from './engine/bars';
-import { runBacktest, type StockCandles } from './engine/backtest';
+import { addDays, onDates, type Bars } from './engine/bars';
+import { runBacktest, usesVolume, type StockCandles } from './engine/backtest';
 import { screenStock } from './engine/screen';
 import type { CandleCache } from './data/candles';
 import type { Universe } from './data/universe';
@@ -157,7 +157,7 @@ export class EquityService {
 
   private async cleanSymbols(input: WatchlistInput): Promise<WatchlistInput> {
     const { found, unknown } = await this.deps.universe.resolve(input.symbols);
-    if (unknown.length) throw new EquityError(400, `Not NSE stocks: ${unknown.slice(0, 10).join(', ')}${unknown.length > 10 ? ` (+${unknown.length - 10} more)` : ''}`);
+    if (unknown.length) throw new EquityError(400, `Not NSE stocks or indices: ${unknown.slice(0, 10).join(', ')}${unknown.length > 10 ? ` (+${unknown.length - 10} more)` : ''}`);
     return { name: input.name.trim(), symbols: found.map((s) => s.symbol) };
   }
 
@@ -187,17 +187,29 @@ export class EquityService {
     if (!(await this.deps.kiteConnected())) throw new EquityError(409, `Kite isn’t logged in, so there are no candles to ${what}. Log in to Kite (Connect Kite in the top bar), then run it again.`);
   }
 
-  /** Each stock's daily candles, one by one through Kite's queue (progress + cancel). */
-  private async fetchAll(stocks: Array<{ symbol: string; name: string; token: number }>, from: string, to: string, run: JobRun, each?: (c: StockCandles) => void): Promise<StockCandles[]> {
+  /**
+   * NSE's trading days from `from` to `to`: NIFTY 50's candles (null when Kite can't give them). An index's candles
+   * on other days — a base value on a holiday, a bond index computed on weekends — are dropped (sessions on a
+   * Saturday, like a Budget day, are NIFTY 50 days too).
+   */
+  private async marketDays(from: string, to: string, run: JobRun): Promise<Bars | null> {
+    const token = await this.deps.universe.benchmarkToken().catch(() => null);
+    return token ? this.deps.candles.daily(token, from, to, run.stats).catch(() => null) : null;
+  }
+
+  /** Each stock's / index's daily candles, one by one through Kite's queue (progress + cancel); an index's only on `days`. */
+  private async fetchAll(stocks: Array<{ symbol: string; name: string; token: number; index?: true }>, from: string, to: string, run: JobRun, days: Bars | null, each?: (c: StockCandles) => void): Promise<StockCandles[]> {
     const out: StockCandles[] = [];
+    const open = days ? new Set(days.date) : null;
     for (const [i, s] of stocks.entries()) {
       run.checkpoint();
       run.progress({ phase: 'FETCH', done: i, total: stocks.length, current: s.symbol });
       let c: StockCandles;
       try {
-        c = { symbol: s.symbol, name: s.name, daily: await this.deps.candles.daily(s.token, from, to, run.stats) };
+        const daily = await this.deps.candles.daily(s.token, from, to, run.stats);
+        c = { symbol: s.symbol, name: s.name, daily: s.index && open ? onDates(daily, open) : daily, ...(s.index ? { index: true } : {}) };
       } catch (err) {
-        c = { symbol: s.symbol, name: s.name, daily: null, error: `Candles: ${msg(err)}` };
+        c = { symbol: s.symbol, name: s.name, daily: null, error: `Candles: ${msg(err)}`, ...(s.index ? { index: true } : {}) };
       }
       if (each) each(c);
       else out.push(c);
@@ -215,20 +227,19 @@ export class EquityService {
     if (def.sizing.mode === 'PERCENT' && req.capital === null) throw new EquityError(400, '“% of the account” sizing needs a starting capital — set one or size by ₹ / shares');
     await this.requireKite('backtest on');
     const { found, unknown } = await this.deps.universe.resolve(req.symbols);
-    if (!found.length) throw new EquityError(400, `None of these are NSE stocks: ${unknown.slice(0, 10).join(', ')}`);
+    if (!found.length) throw new EquityError(400, `None of these are NSE stocks or indices: ${unknown.slice(0, 10).join(', ')}`);
     // One data end for the whole job, fixed before fetching: a run crossing the 15:40 cut-off must not give some
     // stocks today's candle and others not.
     const end = this.deps.candles.endDate(req.to);
     const fetchFrom = historyFrom(def, req.from, end);
     return this.backtests.start({ strategyName: def.name, request: req, total: found.length }, async (run) => {
-      const benchToken = await this.deps.universe.benchmarkToken().catch(() => null);
-      let bench: Bars | null = null;
-      if (benchToken) bench = await this.deps.candles.daily(benchToken, req.from, end, run.stats).catch(() => null);
-      const candles = await this.fetchAll(found, fetchFrom, end, run);
+      // NIFTY 50 from the warm-up's start: the benchmark, the market's calendar, and the days an index's candles are kept.
+      const bench = await this.marketDays(fetchFrom, end, run);
+      const candles = await this.fetchAll(found, fetchFrom, end, run, bench);
       run.checkpoint();
       const result = runBacktest(def, req, candles, bench, end);
       if (addDays(req.from, -warmupDays(def)) < HISTORY_START) result.notes.unshift('Some indicators here need history from before 2000, where Kite has none — early in the period their values can differ slightly from TradingView’s, which has older data.');
-      if (unknown.length) result.notes.unshift(`Not NSE stocks (skipped): ${unknown.join(', ')}`);
+      if (unknown.length) result.notes.unshift(`Not NSE stocks or indices (skipped): ${unknown.join(', ')}`);
       const full: EqBacktestResult = { ...result, requests: run.stats.fetched };
       await this.keepInHistory(full, { def, req, strategyId: saved?.id ?? null, strategyVersion: saved?.version ?? null, startedAt });
       return full;
@@ -309,16 +320,18 @@ export class EquityService {
     const def = await this.definitionOf(req);
     await this.requireKite('screen');
     const { found, unknown } = await this.deps.universe.resolve(req.symbols);
-    if (!found.length) throw new EquityError(400, `None of these are NSE stocks: ${unknown.slice(0, 10).join(', ')}`);
+    if (!found.length) throw new EquityError(400, `None of these are NSE stocks or indices: ${unknown.slice(0, 10).join(', ')}`);
     const today = this.deps.candles.endDate('9999-12-31');
     const from = historyFrom(def, today, today);
     return this.screens.start({ strategyName: def.name, request: req, total: found.length }, async (run) => {
       const rows: EqScreenRow[] = [];
-      await this.fetchAll(found, from, today, run, (c) => rows.push(screenStock(def, c, today)));
+      const indices = found.some((s) => s.index);
+      await this.fetchAll(found, from, today, run, indices ? await this.marketDays(from, today, run) : null, (c) => rows.push(screenStock(def, c, today)));
       const rank = (r: EqScreenRow) => (r.fresh ? 0 : r.entry ? 1 : r.error ? 3 : 2);
       rows.sort((a, b) => rank(a) - rank(b) || a.symbol.localeCompare(b.symbol));
       const notes = [`Each stock at its last completed ${def.timeframe === '1w' ? 'week' : 'daily close'} (data up to ${today}).`];
-      if (unknown.length) notes.push(`Not NSE stocks (skipped): ${unknown.join(', ')}`);
+      if (indices && usesVolume(def)) notes.push('Kite has no volume for indices (always 0) — this strategy’s volume conditions don’t work on them.');
+      if (unknown.length) notes.push(`Not NSE stocks or indices (skipped): ${unknown.join(', ')}`);
       return { strategyName: def.name, timeframe: def.timeframe, rows, requests: run.stats.fetched, notes };
     });
   }

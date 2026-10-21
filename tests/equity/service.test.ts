@@ -23,6 +23,14 @@ const KITE_ROWS = [
   { instrument_token: 4, tradingsymbol: 'XYZ-BE', name: 'XYZ', segment: 'NSE', instrument_type: 'EQ' },
   { instrument_token: 5, tradingsymbol: '736GS2027-GS', name: 'GOI', segment: 'NSE', instrument_type: 'EQ' },
   { instrument_token: 99, tradingsymbol: 'NIFTY 50', name: 'NIFTY 50', segment: 'INDICES', instrument_type: 'EQ' },
+  { instrument_token: 98, tradingsymbol: 'NIFTY BANK', name: 'NIFTY BANK', segment: 'INDICES', instrument_type: 'EQ' },
+  { instrument_token: 97, tradingsymbol: 'HANGSENG BEES-NAV', name: 'HANGSENG BEES-NAV', segment: 'INDICES', instrument_type: 'EQ' },
+  { instrument_token: 96, tradingsymbol: 'NIFTY NEWTHING', name: 'NSE INDEX NIFTY NEWTHING', segment: 'INDICES', instrument_type: 'EQ' },
+];
+
+const BSE_ROWS = [
+  { instrument_token: 265, tradingsymbol: 'SENSEX', name: 'SENSEX', segment: 'INDICES', instrument_type: 'EQ' },
+  { instrument_token: 500325, tradingsymbol: 'RELIANCE', name: 'RELIANCE INDUSTRIES', segment: 'BSE', instrument_type: 'EQ' },
 ];
 
 /** Weekday closes from `start`: a slow rise, so SMA(5) crosses above SMA(10) after a dip. */
@@ -84,7 +92,7 @@ describe('equity service', () => {
     kite.data.set(2, candles('2025-01-01', CLOSES.map((c) => c * 2)));
     kite.data.set(99, candles('2025-01-01', CLOSES.map((c) => c * 200)));
     const universe = new Universe({
-      kite: async (fn) => fn({ getInstruments: async () => KITE_ROWS }),
+      kite: async (fn) => fn({ getInstruments: async (exchange: string) => (exchange === 'BSE' ? BSE_ROWS : KITE_ROWS) }),
       lists: async () => [{ symbol: 'AAA', sector: 'Banks', groups: ['N50'] }],
       fno: async () => ['BBB'],
       file: join(mkdtempSync(join(tmpdir(), 'eq-')), 'equity-instruments.json'),
@@ -104,6 +112,37 @@ describe('equity service', () => {
     const presets = await svc.presets();
     expect(presets.find((p) => p.preset === 'NIFTY50')).toMatchObject({ count: 1 });
     expect(presets.find((p) => p.preset === 'ALL')).toMatchObject({ count: 3 });
+  });
+
+  it('indices: every NSE and BSE index Kite lists (not an ETF’s NAV), by group, found by their F&O names', async () => {
+    const ix = (await svc.stocks({})).stocks.filter((s) => s.index);
+    expect(ix.map((s) => s.symbol)).toEqual(['BSE:SENSEX', 'NIFTY 50', 'NIFTY BANK', 'NIFTY NEWTHING']);
+    expect(ix.find((s) => s.symbol === 'NIFTY BANK')).toMatchObject({ name: 'Nifty Bank', token: 98, sector: 'Sector index', presets: ['IDX_ALL', 'IDX_SECTOR', 'IDX_FNO'] });
+    expect(ix.find((s) => s.symbol === 'BSE:SENSEX')).toMatchObject({ name: 'BSE Sensex', presets: ['IDX_ALL', 'IDX_BSE', 'IDX_FNO'] });
+    // One Kite added after indices.ts was written: still there, under "other", with Kite's name.
+    expect(ix.find((s) => s.symbol === 'NIFTY NEWTHING')).toMatchObject({ name: 'NIFTY NEWTHING', presets: ['IDX_ALL', 'IDX_OTHER'] });
+    expect((await svc.stocks({ preset: 'ALL' })).stocks.some((s) => s.index)).toBe(false);
+    expect((await svc.stocks({ preset: 'IDX_FNO' })).stocks.map((s) => s.symbol)).toEqual(['BSE:SENSEX', 'NIFTY 50', 'NIFTY BANK']);
+    expect((await svc.stocks({ search: 'banknifty' })).stocks.map((s) => s.symbol)).toEqual(['NIFTY BANK']);
+    expect((await svc.stocks({ search: 'sensex' })).stocks.map((s) => s.symbol)).toEqual(['BSE:SENSEX']);
+    expect((await svc.presets()).find((p) => p.preset === 'IDX_ALL')).toMatchObject({ of: 'INDICES', count: 4 });
+    expect((await svc.createWatchlist({ name: 'Mix', symbols: ['AAA', 'nifty bank', 'BSE:SENSEX'] })).symbols).toEqual(['AAA', 'NIFTY BANK', 'BSE:SENSEX']);
+  });
+
+  it('an index trades on every candle (Kite gives it no volume), on NSE’s days only', async () => {
+    // NIFTY BANK = AAA's candles with no volume, plus a base value on a Saturday NSE was shut (not in NIFTY 50's days).
+    const base = { time: Date.parse('2024-12-28T00:00:00+05:30') / 1000, open: 1000, high: 1000, low: 1000, close: 1000, volume: 0 };
+    kite.data.set(98, [base, ...candles('2025-01-01', CLOSES).map((c) => ({ ...c, volume: 0 }))]);
+    const job = await svc.startBacktest({ definition: cross, symbols: ['NIFTY BANK', 'AAA'], from: '2025-01-20', to: '2025-03-31', capital: 1_000_000, maxPositions: null });
+    const r = ((await settle(() => svc.backtestJob(job.id))) as EqBacktestJob).result!;
+    const fills = (symbol: string) => r.trades.filter((t) => t.symbol === symbol).map((t) => [t.entryDate, t.avgPrice, t.exitDate, t.exitPrice]);
+    expect(fills('NIFTY BANK').length).toBeGreaterThan(0);
+    expect(fills('NIFTY BANK')).toEqual(fills('AAA'));
+    expect(r.skipped.filter((s) => s.symbol === 'NIFTY BANK')).toEqual([]);
+    expect(r.notes.some((n) => n.startsWith('Indices are tested on their own values'))).toBe(true);
+    const screen = await svc.startScreen({ definition: cross, symbols: ['NIFTY BANK'] });
+    const row = ((await settle(() => svc.screenJob(screen.id))) as EqScreenJob).result!.rows[0]!;
+    expect(row).toMatchObject({ symbol: 'NIFTY BANK', asOf: '2025-02-20', close: 104 });
   });
 
   it('strategies are checked before saving; every template is valid', async () => {
@@ -144,7 +183,7 @@ describe('equity service', () => {
   it('watchlists keep known NSE symbols (cleaned) and refuse unknown ones', async () => {
     const w = await svc.createWatchlist({ name: ' Swing ', symbols: ['aaa', 'BBB', 'AAA'] });
     expect(w).toMatchObject({ name: 'Swing', symbols: ['AAA', 'BBB'] });
-    await expect(svc.createWatchlist({ name: 'x', symbols: ['NOPE'] })).rejects.toMatchObject({ status: 400, message: 'Not NSE stocks: NOPE' });
+    await expect(svc.createWatchlist({ name: 'x', symbols: ['NOPE'] })).rejects.toMatchObject({ status: 400, message: 'Not NSE stocks or indices: NOPE' });
   });
 
   it('a backtest runs as a job: warm-up history, progress, the result; a re-run comes from memory', async () => {
@@ -155,9 +194,9 @@ describe('equity service', () => {
     expect(done.status).toBe('DONE');
     const r = done.result!;
     expect(r.trades.map((t) => t.symbol).sort()).toEqual(['AAA', 'BBB']);
-    expect(r.notes[0]).toBe('Not NSE stocks (skipped): NOPE');
+    expect(r.notes[0]).toBe('Not NSE stocks or indices (skipped): NOPE');
     expect(r.benchmark?.name).toBe('NIFTY 50');
-    // Warm-up: candles fetched from before the period (SMA 10 needs history); NIFTY 50 for the period itself.
+    // Warm-up: candles fetched from before the period (SMA 10 needs history) — NIFTY 50 (the market's days) too.
     const aaa = kite.calls.find((c) => c.token === 1)!;
     expect(aaa.from < '2025-01-20').toBe(true);
     expect(aaa.from).toBe(historyFrom(cross, '2025-01-20', '2025-03-31'));

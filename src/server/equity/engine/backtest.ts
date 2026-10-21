@@ -2,7 +2,7 @@
  * Backtest from candles already fetched: prepare each stock (weekly candles, checks, conditions), simulate
  * the portfolio, then the figures, the NIFTY 50 comparison and each stock's data notes. Pure — no I/O.
  */
-import type { EqBacktestRequest, EqBacktestResult, EqCurvePoint, EqOrderRules, EqStrategyDefinition, EqSymbolResult } from '@/shared/equity';
+import type { EqBacktestRequest, EqBacktestResult, EqCurvePoint, EqOperand, EqOrderRules, EqStrategyDefinition, EqSymbolResult } from '@/shared/equity';
 import { EQ_ORDER_RULES, EQ_TIMEFRAME, leavesOf } from '@/shared/equity';
 import type { Bars } from './bars';
 import { Evaluator, UNKNOWN, buildTimeline, stockSeries } from './evaluate';
@@ -14,13 +14,15 @@ export interface StockCandles {
   name: string;
   daily: Bars | null;
   error?: string;
+  /** An index: no volume in Kite's data, no circuits. */
+  index?: boolean;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const MAX_CURVE_POINTS = 1500;
 
 /** Conditions evaluated over the stock's whole history, ready for the simulation. */
-export function prepareStock(def: EqStrategyDefinition, symbol: string, name: string, daily: Bars, endDate: string): { stock: SimStock; evaluator: Evaluator } {
+export function prepareStock(def: EqStrategyDefinition, symbol: string, name: string, daily: Bars, endDate: string, index = false): { stock: SimStock; evaluator: Evaluator } {
   const series = stockSeries(daily, endDate);
   const timeline = buildTimeline(series, def.timeframe);
   const ev = new Evaluator(series, timeline);
@@ -30,7 +32,8 @@ export function prepareStock(def: EqStrategyDefinition, symbol: string, name: st
     name,
     daily,
     timeline,
-    coarse: coarseMask(daily),
+    // An index's values aren't rounded share prices (and it has no circuits to tell apart).
+    ...(index ? { index: true } : { coarse: coarseMask(daily) }),
     entry: ev.node(def.entry.when),
     exit: exitGroup ? ev.node(exitGroup) : null,
     ma: def.pyramid.enabled ? ev.read({ kind: 'INDICATOR', indicator: def.pyramid.maType, params: { period: def.pyramid.maPeriod } }) : null,
@@ -80,14 +83,46 @@ export function coarsePriceNotes(d: Bars, from: string, to: string, mask = coars
   return out.map((r) => `Kite's prices from ${r.from} to ${r.to} move in coarse steps (up to ${r.pct.toFixed(1)}% of the price) — history adjusted for a later split or bonus and rounded by Kite, so signals and P&L there are approximate`);
 }
 
+/**
+ * Stretches of [from, to] where Kite has only the day's closing value — open = high = low = close for at least
+ * `min` candles in a row. Old index history is often like that (NIFTY BANK until 2005, NIFTY SMLCAP 250 until 2019).
+ */
+export function closeOnlyRanges(d: Bars, from: string, to: string, min = 5): Array<{ from: string; to: string; candles: number }> {
+  const out: Array<{ from: string; to: string; candles: number }> = [];
+  let start = -1;
+  const flat = (i: number) => d.open[i] === d.close[i] && d.high[i] === d.low[i] && d.high[i] === d.close[i];
+  for (let i = 0; i <= d.length; i++) {
+    const inside = i < d.length && d.date[i]! >= from && d.date[i]! <= to && flat(i);
+    if (inside && start < 0) start = i;
+    if (!inside && start >= 0) {
+      if (i - start >= min) out.push({ from: d.date[start]!, to: d.date[i - 1]!, candles: i - start });
+      start = -1;
+    }
+  }
+  return out;
+}
+
+const readsVolume = (o: EqOperand) => (o.kind === 'PRICE' && o.field === 'volume') || (o.kind === 'INDICATOR' && o.source === 'volume');
+
+/** The strategy reads volume somewhere (Volume, SMA of volume, Highest volume…) — indices have none in Kite's data. */
+export function usesVolume(def: EqStrategyDefinition): boolean {
+  return [...leavesOf(def.entry.when), ...leavesOf(def.exit.when)].some((c) => readsVolume(c.left) || readsVolume(c.right));
+}
+
 /** Data limits worth telling the trader: late listing, too little history to decide early in the period. */
 function dataNotes(def: EqStrategyDefinition, stock: SimStock, from: string, to: string): string[] {
   const notes: string[] = [];
   const d = stock.daily;
   const firstIn = d.date.findIndex((x) => x >= from);
   if (firstIn < 0 || d.date[firstIn]! > to) return ['No candles in the period'];
-  if (firstIn === 0 && d.date[0]! > from) notes.push(`Candles start on ${d.date[0]} (listed or first traded then)`);
-  notes.push(...coarsePriceNotes(d, from, to, stock.coarse));
+  if (firstIn === 0 && d.date[0]! > from) notes.push(stock.index ? `Kite’s candles for this index start on ${d.date[0]}` : `Candles start on ${d.date[0]} (listed or first traded then)`);
+  if (stock.index) {
+    for (const r of closeOnlyRanges(d, from, to)) {
+      notes.push(`Kite has only the closing value from ${r.from} to ${r.to} (open = high = low = close, ${r.candles} candles): there, orders “at the open” fill at that day’s close, stops and targets see only the close, and values from the high / low (ATR, ADX, Supertrend, Highest high…) aren’t the real ones`);
+    }
+    if (usesVolume(def)) notes.push('Kite has no volume for indices (always 0) — the strategy’s volume values are 0 here, so its volume conditions don’t work on an index');
+  }
+  if (!stock.index) notes.push(...coarsePriceNotes(d, from, to, stock.coarse));
   const t = stock.timeline;
   let firstCheck = -1;
   for (let k = 0; k < t.daily.length; k++) {
@@ -131,7 +166,7 @@ export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, c
       errors.set(c.symbol, [c.error ?? 'No candles from Kite']);
       continue;
     }
-    const { stock } = prepareStock(def, c.symbol, c.name, c.daily, endDate);
+    const { stock } = prepareStock(def, c.symbol, c.name, c.daily, endDate, c.index);
     notes.set(c.symbol, dataNotes(def, stock, req.from, req.to));
     stocks.push(stock);
   }
@@ -160,6 +195,7 @@ export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, c
   // Orders large against the day's traded volume: the backtest fills them at the open / stop price (+0.1 %), but a
   // real order that size would move the price more — said per stock, results unchanged.
   for (const st of stocks) {
+    if (st.index) continue; // no volume to compare with
     const at = new Map(st.daily.date.map((d, i) => [d, i]));
     let big = 0;
     let worst = 0;
@@ -194,6 +230,8 @@ export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, c
     };
   });
 
+  const anyIndex = stocks.some((s) => s.index);
+  const anyStock = candles.some((c) => !c.index);
   const assumptions = [
     `Checked at each ${def.timeframe === '1w' ? 'completed week’s last trading day, on weekly candles' : 'daily close, on daily candles'}; ${rules.fill === 'CLOSE' ? 'orders fill at the close that signalled' : 'orders fill at the next trading day’s open'}.`,
     rules.stopTrigger === 'TOUCH'
@@ -206,7 +244,12 @@ export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, c
     ...(def.pyramid.enabled ? [`Pyramiding: one more lot when ${def.pyramid.maType}(${def.pyramid.maPeriod}) reaches the last buy price with the close at or above it; the stop for all lots moves to that MA value once the lot is bought.`] : []),
     'Positions still open at the end are valued at the last close (reason END).',
     ...(bench ? ['NIFTY 50 comparison: the price index bought with the same money at the first day’s close — index dividends (≈1–1.5 % a year) aren’t included.'] : []),
-    'Stock lists are today’s members — stocks that left an index or were delisted aren’t included (survivorship bias).',
+    ...(anyIndex
+      ? [
+          'Indices are tested on their own values, as if one unit could be bought at the index level (as TradingView’s strategy tester does on an index chart) — in practice an index is traded through its futures, options or an ETF. Indices have no volume or circuit limits in the data, so every candle of an index trades; candles on days NSE was closed (a base value, a bond index’s weekends) are left out.',
+        ]
+      : []),
+    ...(anyStock ? ['Stock lists are today’s members — stocks that left an index or were delisted aren’t included (survivorship bias).'] : []),
   ];
 
   return {

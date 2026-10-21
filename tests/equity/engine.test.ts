@@ -6,8 +6,8 @@
 import { describe, expect, it } from 'vitest';
 import type { EqBacktestRequest, EqOrderRules, EqStrategyDefinition } from '../../src/shared/equity';
 import { EQ_ORDER_RULES, all, any, cond, defaultDefinition, ind, num, price } from '../../src/shared/equity';
-import { dailyBars, weeklyBars, type Bars } from '../../src/server/equity/engine/bars';
-import { coarsePriceNotes, runBacktest, type StockCandles } from '../../src/server/equity/engine/backtest';
+import { dailyBars, onDates, weeklyBars, type Bars } from '../../src/server/equity/engine/bars';
+import { closeOnlyRanges, coarsePriceNotes, runBacktest, usesVolume, type StockCandles } from '../../src/server/equity/engine/backtest';
 import { orderCharges, saleCharges } from '../../src/server/equity/engine/charges';
 
 type Row = [date: string, open: number, high: number, low: number, close: number, volume?: number];
@@ -418,6 +418,62 @@ describe('real-market limits', () => {
     expect(coarsePriceNotes(coarse, '2012-01-01', '2012-12-31')[0]).toMatch(/^Kite's prices from 2012-01-02 to 2012-04-20 move in coarse steps \(up to \d+\.\d% of the price\)/);
     const fine = toBars(daily('2012-01-02', steps.map((x, i) => x + 0.05 * (i % 3))));
     expect(coarsePriceNotes(fine, '2012-01-01', '2012-12-31')).toEqual([]);
+  });
+});
+
+describe('indices', () => {
+  const cross105 = all('e', cond('e1', price('close'), 'CROSSES_ABOVE', num(105)));
+  const below105 = any('x', cond('x1', price('close'), 'LT', num(105)));
+  const NEXT: EqOrderRules = { ...SIMPLE, fill: 'NEXT_OPEN' };
+  const noExit = { targetPct: null, stopLossPct: null, trailingStopPct: null, priceBase: 'AVERAGE' as const, when: null, maxBars: null };
+  const runAs = (def: EqStrategyDefinition, rows: Row[], index: boolean) =>
+    runBacktest(def, request(rows, { symbols: ['NIFTY BANK'] }), [{ symbol: 'NIFTY BANK', name: 'Nifty Bank', daily: toBars(rows), ...(index ? { index: true } : {}) }], null, rows.at(-1)![0], NEXT);
+
+  it('every candle of an index trades — Kite gives indices no volume, and they have no circuits', () => {
+    const def = plain({ entry: { when: cross105, trigger: 'WHEN_TRUE' }, exit: { ...noExit, when: below105 } });
+    const rows: Row[] = [
+      ['2025-01-06', 100.05, 101.1, 99.15, 100.2, 0],
+      ['2025-01-07', 100.25, 111.3, 99.35, 110.05, 0],
+      ['2025-01-08', 115.5, 115.5, 115.5, 115.5, 0], // one value all day: a stock would be locked at the upper circuit
+      ['2025-01-09', 110.4, 111.45, 99.55, 100.15, 0],
+      ['2025-01-10', 95.15, 95.15, 95.15, 95.15, 0],
+    ];
+    const r = runAs(def, rows, true);
+    expect(r.skipped).toEqual([]);
+    expect(r.trades).toHaveLength(1);
+    expect(r.trades[0]).toMatchObject({ entryDate: '2025-01-08', avgPrice: 115.5, exitDate: '2025-01-10', exitPrice: 95.15, exitReason: 'EXIT_RULE' });
+    expect(r.perSymbol[0]!.notes.filter((n) => n.includes('volume'))).toEqual([]); // nothing about orders large against the (absent) volume
+    expect(r.notes.some((n) => n.startsWith('Indices are tested on their own values'))).toBe(true);
+    expect(r.notes.some((n) => n.startsWith('Stock lists are today’s members'))).toBe(false);
+    // The same candles as a stock: zero volume → nothing trades.
+    const stock = runAs(def, rows, false);
+    expect(stock.trades).toEqual([]);
+    expect(stock.skipped[0]).toMatchObject({ reason: 'No trades in NIFTY BANK that day (zero volume)' });
+  });
+
+  it('notes close-only history (open = high = low = close) and volume conditions on an index', () => {
+    const rows = daily('2025-01-06', Array.from({ length: 12 }, (_, i) => 100 + i)).map(([d, , , , c], i): Row => (i < 6 ? [d, c, c, c, c, 0] : [d, c - 0.5, c + 1, c - 1, c, 0]));
+    const def = plain({ entry: { when: all('e', cond('e1', price('volume'), 'GT', num(0))), trigger: 'WHEN_TRUE' }, exit: noExit });
+    expect(usesVolume(def)).toBe(true);
+    expect(usesVolume(plain({ entry: { when: cross105, trigger: 'WHEN_TRUE' }, exit: { ...noExit, when: any('x', cond('x1', price('close'), 'LT', ind('SMA', { period: 20 }, { source: 'volume' }))) } }))).toBe(true);
+    expect(usesVolume(plain({ entry: { when: cross105, trigger: 'WHEN_TRUE' }, exit: noExit }))).toBe(false);
+    expect(closeOnlyRanges(toBars(rows), '2025-01-01', '2025-12-31')).toEqual([{ from: '2025-01-06', to: '2025-01-13', candles: 6 }]);
+    expect(closeOnlyRanges(toBars(rows), '2025-01-08', '2025-12-31')).toEqual([]); // 4 in the period: a stray day, not a stretch
+    const notes = runAs(def, rows, true).perSymbol[0]!.notes;
+    expect(notes).toEqual([
+      'Kite has only the closing value from 2025-01-06 to 2025-01-13 (open = high = low = close, 6 candles): there, orders “at the open” fill at that day’s close, stops and targets see only the close, and values from the high / low (ATR, ADX, Supertrend, Highest high…) aren’t the real ones',
+      'Kite has no volume for indices (always 0) — the strategy’s volume values are 0 here, so its volume conditions don’t work on an index',
+    ]);
+    // A stock's one-price days are circuit locks or thin trading, not missing data: neither note.
+    expect(runAs(def, rows.map(([d, o, h, l, c]): Row => [d, o, h, l, c, 1000]), false).perSymbol[0]!.notes.filter((n) => n.startsWith('Kite has'))).toEqual([]);
+  });
+
+  it('keeps only the candles on the market’s days (an index’s base value on a holiday, a bond index’s weekends)', () => {
+    const b = toBars([['2000-01-01', 1000, 1000, 1000, 1000], ['2000-01-03', 1010, 1012, 1005, 1011], ['2000-01-04', 1011, 1020, 1009, 1018]]);
+    const kept = onDates(b, new Set(['2000-01-03', '2000-01-04', '2000-01-05']));
+    expect(kept.date).toEqual(['2000-01-03', '2000-01-04']);
+    expect([...kept.close]).toEqual([1011, 1018]);
+    expect(onDates(kept, new Set(kept.date))).toBe(kept);
   });
 });
 

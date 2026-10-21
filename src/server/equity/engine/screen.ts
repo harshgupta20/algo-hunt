@@ -13,7 +13,7 @@ const tri = (v: number | undefined) => (v === undefined || v === UNKNOWN ? null 
 export function screenStock(def: EqStrategyDefinition, c: StockCandles, endDate: string): EqScreenRow {
   const blank: EqScreenRow = { symbol: c.symbol, name: c.name, asOf: null, close: null, changePct: null, entry: null, fresh: false, exit: null, leaves: [] };
   if (c.error || !c.daily || !c.daily.length) return { ...blank, error: c.error ?? 'No candles from Kite' };
-  const { stock, evaluator } = prepareStock(def, c.symbol, c.name, c.daily, endDate);
+  const { stock, evaluator } = prepareStock(def, c.symbol, c.name, c.daily, endDate, c.index);
   const t = stock.timeline;
   const k = t.daily.length - 1;
   if (k < 0) return { ...blank, error: def.timeframe === '1w' ? 'No completed week yet' : 'No candles' };

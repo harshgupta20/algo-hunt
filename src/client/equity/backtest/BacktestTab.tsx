@@ -16,7 +16,7 @@ import { EmptyState, Section, Toggle } from '../../components/ui';
 import { Cell, NumberInput } from '../../components/form';
 import { InlineSpinner } from '../../components/loaders';
 import { eqApi } from '../api';
-import { duration, istDateTime, istToday, shortDate, yearsAgo } from '../format';
+import { countLabel, duration, istDateTime, istToday, shortDate, yearsAgo } from '../format';
 import { E } from '../help';
 import { JobProgress } from '../JobProgress';
 import { StockPicker, useSymbols, type StockSource } from '../StockPicker';
@@ -35,10 +35,10 @@ interface Form {
 let remembered: { form: Form; jobId: string | null; historyDef: EqStrategyDefinition | null; viewing: string | null } | null = null;
 
 /** How the stocks were chosen, in words, for the history line. */
-function stocksLabel(source: StockSource, label: string, count: number): string {
+function stocksLabel(source: StockSource, label: string, symbols: string[]): string {
   if (source.kind === 'PRESET') return EQ_PRESETS.find((p) => p.value === source.preset)?.label ?? label;
   if (source.kind === 'WATCHLIST') return `${label} (watchlist)`;
-  return `${count} picked stock${count === 1 ? '' : 's'}`;
+  return `${countLabel(symbols)} picked`;
 }
 
 const QUICK = [1, 3, 5, 10];
@@ -118,7 +118,7 @@ export function BacktestTab({ initialStrategyId, draft }: { initialStrategyId?: 
         to: form.range.to,
         capital: form.capital,
         maxPositions: form.maxPositions,
-        stocksLabel: stocksLabel(form.source, label, symbols.length),
+        stocksLabel: stocksLabel(form.source, label, symbols),
         source: form.source,
       }),
     onSuccess: (started: EqBacktestJob) => {
@@ -190,12 +190,12 @@ export function BacktestTab({ initialStrategyId, draft }: { initialStrategyId?: 
           <div className="flex flex-wrap items-center gap-3">
             <Tooltip content={E.backtest.run}>
               <button type="button" className="btn-primary" disabled={!def || !symbols.length || loading || reversed || running || run.isPending} onClick={() => run.mutate()}>
-                {run.isPending || running ? <InlineSpinner /> : <FlaskConical className="w-4 h-4" />} Backtest {symbols.length ? symbols.length.toLocaleString('en-IN') : ''} stock{symbols.length === 1 ? '' : 's'}
+                {run.isPending || running ? <InlineSpinner /> : <FlaskConical className="w-4 h-4" />} Backtest {symbols.length ? countLabel(symbols) : 'stocks'}
               </button>
             </Tooltip>
             {symbols.length > 0 && !running && (
               <Tooltip content={E.backtest.estimate}>
-                <span className="text-[11px] text-slate-500">≈ {duration(symbols.length * SECONDS_PER_REQUEST)} of Kite requests (less for stocks already in memory)</span>
+                <span className="text-[11px] text-slate-500">≈ {duration(symbols.length * SECONDS_PER_REQUEST)} of Kite requests (less for ones already in memory)</span>
               </Tooltip>
             )}
           </div>

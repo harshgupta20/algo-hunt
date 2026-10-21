@@ -81,6 +81,15 @@ export function sliceBars(b: Bars, from: number, to: number): Bars {
   return { date: b.date.slice(from, to), open: b.open.slice(from, to), high: b.high.slice(from, to), low: b.low.slice(from, to), close: b.close.slice(from, to), volume: b.volume.slice(from, to), length: Math.max(0, to - from) };
 }
 
+/** Only the candles on these dates (the source unchanged when every candle is on one). */
+export function onDates(b: Bars, dates: ReadonlySet<string>): Bars {
+  const keep: number[] = [];
+  for (let i = 0; i < b.length; i++) if (dates.has(b.date[i]!)) keep.push(i);
+  if (keep.length === b.length) return b;
+  const pick = (a: Float64Array) => Float64Array.from(keep, (i) => a[i]!);
+  return { date: keep.map((i) => b.date[i]!), open: pick(b.open), high: pick(b.high), low: pick(b.low), close: pick(b.close), volume: pick(b.volume), length: keep.length };
+}
+
 /**
  * Weekly bars from daily ones. `endDate` is the last date the data could contain (the period's end, or the
  * last finished session): the final week is complete when no weekday of it comes after `endDate`.

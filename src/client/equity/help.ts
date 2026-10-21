@@ -106,13 +106,18 @@ export const E = {
   },
 
   picker: {
-    source: { title: 'Stocks', body: 'Test on an index list, one of your watchlists, or stocks you pick.' },
-    preset: { title: 'Stock list', body: 'Index lists from NSE’s published constituents (with sectors); F&O = stocks with futures; All = every NSE stock.', note: 'Lists are today’s members — stocks that left the index aren’t in a backtest (survivorship bias).' },
+    source: { title: 'Stocks / indices', body: 'Test on a stock list, on indices themselves (NIFTY 50, BANKNIFTY, SENSEX…), one of your watchlists, or stocks and indices you pick.' },
+    preset: { title: 'Stock list', body: 'The stocks in an index, from NSE’s published constituents (with sectors); F&O = stocks with futures; All = every NSE stock.', note: 'Lists are today’s members — stocks that left the index aren’t in a backtest (survivorship bias).' },
+    indices: {
+      title: 'Indices',
+      body: 'The indices themselves, on their own candles — every NSE and BSE index Kite has (212): the ones with F&O (NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, NIFTY NEXT 50, SENSEX, BANKEX, SENSEX 50), broad market, sectors, themes, strategy indices, bonds / VIX, and BSE’s.',
+      note: 'Tested as if one unit could be bought at the index value, like TradingView’s strategy tester on an index chart. Kite gives indices no volume, so volume conditions don’t work on them; old history of many indices is closing values only — the results say where.',
+    },
     watchlist: { title: 'Watchlist', body: 'One of your saved stock lists (Watchlists tab).' },
-    search: { title: 'Search', body: 'Find NSE stocks by symbol or company name.' },
-    pick: { title: 'Pick', body: 'Tick to add the stock; untick to remove it.' },
-    clear: { title: 'Clear', body: 'Remove every picked stock.' },
-    count: { title: 'Stocks', body: 'How many stocks this run covers. Each one is one Kite request (about 3 a second), unless its candles are already in memory.' },
+    search: { title: 'Search', body: 'Find NSE stocks by symbol or company name, and indices by name or F&O name (BANKNIFTY, FINNIFTY, SENSEX).' },
+    pick: { title: 'Pick', body: 'Tick to add the stock or index; untick to remove it.' },
+    clear: { title: 'Clear', body: 'Remove every picked stock and index.' },
+    count: { title: 'Stocks / indices', body: 'How many stocks and indices this run covers. Each one is one Kite request (about 3 a second), unless its candles are already in memory.' },
   },
 
   history: {

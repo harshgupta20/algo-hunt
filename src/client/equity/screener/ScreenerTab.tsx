@@ -13,7 +13,7 @@ import { Cell } from '../../components/form';
 import { InlineSpinner } from '../../components/loaders';
 import { eqApi } from '../api';
 import { ChartLink } from '../ChartLink';
-import { downloadCsv, duration, num, pct, pnlClass, shortDate } from '../format';
+import { countLabel, downloadCsv, duration, num, pct, pnlClass, shortDate } from '../format';
 import { E } from '../help';
 import { JobProgress } from '../JobProgress';
 import { StockPicker, useSymbols, type StockSource } from '../StockPicker';
@@ -95,10 +95,10 @@ export function ScreenerTab({ initialStrategyId, draft }: { initialStrategyId?: 
           <div className="flex flex-wrap items-center gap-3">
             <Tooltip content={E.screener.run}>
               <button type="button" className="btn-primary" disabled={!strategy || !symbols.length || loading || running || run.isPending} onClick={() => run.mutate()}>
-                {run.isPending || running ? <InlineSpinner /> : <ScanSearch className="w-4 h-4" />} Screen {symbols.length ? symbols.length.toLocaleString('en-IN') : ''} stocks
+                {run.isPending || running ? <InlineSpinner /> : <ScanSearch className="w-4 h-4" />} Screen {symbols.length ? countLabel(symbols) : 'stocks'}
               </button>
             </Tooltip>
-            {symbols.length > 0 && !running && <span className="text-[11px] text-slate-500">≈ {duration(symbols.length * 0.36)} of Kite requests (less for stocks already in memory)</span>}
+            {symbols.length > 0 && !running && <span className="text-[11px] text-slate-500">≈ {duration(symbols.length * 0.36)} of Kite requests (less for ones already in memory)</span>}
           </div>
           {j && running && <JobProgress job={j} onCancel={() => cancel.mutate()} cancelling={cancel.isPending} />}
           {j?.status === 'CANCELLED' && <p className="text-xs text-slate-400">Screen cancelled.</p>}

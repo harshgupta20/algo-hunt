@@ -138,21 +138,46 @@ export interface EqWatchlist {
   updatedAt: string;
 }
 
-/** Ready-made stock lists. Index lists come from NSE's published constituents; F&O = stocks with futures. */
-export type EqPreset = 'NIFTY50' | 'NIFTYNEXT50' | 'NIFTY100' | 'MIDCAP150' | 'SMALLCAP250' | 'NIFTY500' | 'FNO' | 'ALL';
+/**
+ * Ready-made lists. Stock lists come from NSE's published constituents (F&O = stocks with futures); IDX_* are the
+ * indices themselves (indices.ts), by group.
+ */
+export type EqPreset =
+  | 'NIFTY50'
+  | 'NIFTYNEXT50'
+  | 'NIFTY100'
+  | 'MIDCAP150'
+  | 'SMALLCAP250'
+  | 'NIFTY500'
+  | 'FNO'
+  | 'ALL'
+  | 'IDX_FNO'
+  | 'IDX_BROAD'
+  | 'IDX_SECTOR'
+  | 'IDX_THEME'
+  | 'IDX_STRATEGY'
+  | 'IDX_OTHER'
+  | 'IDX_BSE'
+  | 'IDX_ALL';
 
 export interface EqStock {
+  /** NSE stock symbol, or an index key ("NIFTY BANK", "BSE:SENSEX"). */
   symbol: string;
   name: string;
-  /** Kite instrument token (NSE cash). */
+  /** Kite instrument token (NSE cash, or the index). */
   token: number;
+  /** The stock's sector, or what kind of index it is. */
   sector: string | null;
   presets: EqPreset[];
+  /** An index: its own candles, which have no volume (Kite reports 0) and no circuit limits. */
+  index?: true;
 }
 
 export interface EqPresetInfo {
   preset: EqPreset;
   label: string;
+  /** A list of stocks, or of indices. */
+  of: 'STOCKS' | 'INDICES';
   count: number;
   /** Why the list is empty or partial (e.g. NSE's file couldn't be read). */
   note?: string;

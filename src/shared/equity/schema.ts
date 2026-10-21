@@ -78,7 +78,7 @@ export const eqBacktestRequestSchema = z
     stocksLabel: z.string().trim().max(120).optional(),
     source: z
       .union([
-        z.object({ kind: z.literal('PRESET'), preset: z.enum(['NIFTY50', 'NIFTYNEXT50', 'NIFTY100', 'MIDCAP150', 'SMALLCAP250', 'NIFTY500', 'FNO', 'ALL']) }),
+        z.object({ kind: z.literal('PRESET'), preset: z.enum(['NIFTY50', 'NIFTYNEXT50', 'NIFTY100', 'MIDCAP150', 'SMALLCAP250', 'NIFTY500', 'FNO', 'ALL', 'IDX_FNO', 'IDX_BROAD', 'IDX_SECTOR', 'IDX_THEME', 'IDX_STRATEGY', 'IDX_OTHER', 'IDX_BSE', 'IDX_ALL']) }),
         z.object({ kind: z.literal('WATCHLIST'), id: z.string().min(1).max(64) }),
         z.object({ kind: z.literal('PICK'), symbols }),
       ])

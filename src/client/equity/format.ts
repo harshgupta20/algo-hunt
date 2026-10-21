@@ -1,4 +1,5 @@
 /** Formatting for the Equity screens (Indian digit grouping, IST dates). */
+import { isIndexSymbol, tradingViewSymbol } from '@/shared/equity';
 export const inr = (n: number | null | undefined, digits = 2) => {
   if (n === null || n === undefined || !Number.isFinite(n)) return '—';
   return `₹${Math.abs(n) < 1e-9 ? '0' : n.toLocaleString('en-IN', { maximumFractionDigits: digits })}`.replace('₹-', '−₹');
@@ -14,10 +15,22 @@ export const pct = (n: number | null | undefined, digits = 1) => {
 };
 export const num = (n: number | null | undefined, digits = 2) => (n === null || n === undefined || !Number.isFinite(n) ? '—' : n.toLocaleString('en-IN', { maximumFractionDigits: digits }));
 
-/** The stock's NSE chart on TradingView, on daily or weekly candles. TradingView writes NSE's “-” as “_”
- *  (BAJAJ-AUTO → NSE:BAJAJ_AUTO) and keeps “&” (NSE:M&M). It always opens at today — there's no date link. */
-export const tradingViewUrl = (symbol: string, tf: '1d' | '1w') =>
-  `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(`NSE:${symbol.replace(/-/g, '_')}`)}&interval=${tf === '1w' ? 'W' : 'D'}`;
+/** The stock's / index's chart on TradingView, on daily or weekly candles (null when TradingView has none — a few BSE
+ *  indices). It always opens at today — there's no date link. */
+export const tradingViewUrl = (symbol: string, tf: '1d' | '1w') => {
+  const tv = tradingViewSymbol(symbol);
+  return tv ? `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tv)}&interval=${tf === '1w' ? 'W' : 'D'}` : null;
+};
+
+/** "50 stocks", "8 indices", "52 stocks & indices". */
+export function countLabel(symbols: readonly string[]): string {
+  const n = symbols.length;
+  const indices = symbols.filter(isIndexSymbol).length;
+  const count = n.toLocaleString('en-IN');
+  if (!indices) return `${count} stock${n === 1 ? '' : 's'}`;
+  if (indices === n) return `${count} ${n === 1 ? 'index' : 'indices'}`;
+  return `${count} stocks & indices`;
+}
 
 const IST_MS = 5.5 * 3600_000;
 export const istToday = () => new Date(Date.now() + IST_MS).toISOString().slice(0, 10);

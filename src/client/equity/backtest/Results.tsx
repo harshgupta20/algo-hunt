@@ -13,7 +13,7 @@ import { EQ_TIMEFRAME } from '@/shared/equity';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { Badge, EmptyState, StatCard } from '../../components/ui';
 import { ChartLink } from '../ChartLink';
-import { downloadCsv, inr, num, pct, pnlClass, shortDate, signedInr } from '../format';
+import { countLabel, downloadCsv, inr, num, pct, pnlClass, shortDate, signedInr } from '../format';
 import { E } from '../help';
 import { CurveCharts, MonthlyGrid, compactInr } from './charts';
 
@@ -149,7 +149,7 @@ export function Results({ r }: { r: EqBacktestResult }) {
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
         <span className="font-semibold text-slate-200">{r.strategyName}</span>
         <span>
-          · {EQ_TIMEFRAME[r.definition.timeframe].label} · {r.symbols.toLocaleString('en-IN')} stocks · {shortDate(r.from)} → {shortDate(r.to)} · {r.requests.toLocaleString('en-IN')} Kite request(s)
+          · {EQ_TIMEFRAME[r.definition.timeframe].label} · {countLabel(r.perSymbol.map((p) => p.symbol))} · {shortDate(r.from)} → {shortDate(r.to)} · {r.requests.toLocaleString('en-IN')} Kite request(s)
         </span>
         <div className="ml-auto flex gap-2">
           <Tooltip content={E.backtest.csv}>

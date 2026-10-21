@@ -3,6 +3,7 @@
  * The maths matches TradingView (Wilder RSI / ATR / ADX, EMA seeded with an SMA) — see server/equity/engine.
  */
 import type { EqIndicatorId, EqMaType, EqOperator, EqOrderRules, EqPreset, EqTimeframe, EqUnit, PriceField } from './types';
+import type { EqIndexGroup } from './indices';
 
 export interface EqParamSpec {
   name: string;
@@ -143,16 +144,27 @@ export const PRICE_FIELDS: Array<{ value: PriceField; label: string }> = [
   { value: 'volume', label: 'Volume' },
 ];
 
-export const EQ_PRESETS: Array<{ value: EqPreset; label: string }> = [
-  { value: 'NIFTY50', label: 'NIFTY 50' },
-  { value: 'NIFTYNEXT50', label: 'NIFTY Next 50' },
-  { value: 'NIFTY100', label: 'NIFTY 100' },
-  { value: 'MIDCAP150', label: 'NIFTY Midcap 150' },
-  { value: 'SMALLCAP250', label: 'NIFTY Smallcap 250' },
-  { value: 'NIFTY500', label: 'NIFTY 500' },
-  { value: 'FNO', label: 'F&O stocks' },
-  { value: 'ALL', label: 'All NSE stocks' },
+export const EQ_PRESETS: Array<{ value: EqPreset; label: string; of: 'STOCKS' | 'INDICES' }> = [
+  { value: 'NIFTY50', label: 'NIFTY 50', of: 'STOCKS' },
+  { value: 'NIFTYNEXT50', label: 'NIFTY Next 50', of: 'STOCKS' },
+  { value: 'NIFTY100', label: 'NIFTY 100', of: 'STOCKS' },
+  { value: 'MIDCAP150', label: 'NIFTY Midcap 150', of: 'STOCKS' },
+  { value: 'SMALLCAP250', label: 'NIFTY Smallcap 250', of: 'STOCKS' },
+  { value: 'NIFTY500', label: 'NIFTY 500', of: 'STOCKS' },
+  { value: 'FNO', label: 'F&O stocks', of: 'STOCKS' },
+  { value: 'ALL', label: 'All NSE stocks', of: 'STOCKS' },
+  { value: 'IDX_FNO', label: 'Indices with F&O (NIFTY, BANKNIFTY, SENSEX…)', of: 'INDICES' },
+  { value: 'IDX_BROAD', label: 'Broad market — NSE', of: 'INDICES' },
+  { value: 'IDX_SECTOR', label: 'Sectors — NSE', of: 'INDICES' },
+  { value: 'IDX_THEME', label: 'Themes — NSE', of: 'INDICES' },
+  { value: 'IDX_STRATEGY', label: 'Strategy & factor — NSE', of: 'INDICES' },
+  { value: 'IDX_OTHER', label: 'Bonds, VIX, leveraged — NSE', of: 'INDICES' },
+  { value: 'IDX_BSE', label: 'BSE indices', of: 'INDICES' },
+  { value: 'IDX_ALL', label: 'All indices (NSE + BSE)', of: 'INDICES' },
 ];
+
+/** The preset of an index group. */
+export const EQ_INDEX_PRESET = { BROAD: 'IDX_BROAD', SECTOR: 'IDX_SECTOR', THEME: 'IDX_THEME', STRATEGY: 'IDX_STRATEGY', OTHER: 'IDX_OTHER', BSE: 'IDX_BSE' } as const satisfies Record<EqIndexGroup, EqPreset>;
 
 /** Bounds the builder and the API accept. */
 export const EQ_LIMITS = {

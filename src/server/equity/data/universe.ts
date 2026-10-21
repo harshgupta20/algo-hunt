@@ -1,14 +1,14 @@
 /**
- * The equity universe: every NSE cash stock (equity series — no -BE / -SM / bond series), from Kite's NSE
- * instrument list, refreshed once a day and kept in memory plus a small file next to the app's other local data
- * (data/equity-instruments.json) so a restart works before Kite is logged in. Never in the database.
- * Index lists (NIFTY 50 / Next 50 / Midcap 150 / Smallcap 250 / 500, with sectors) and the F&O list are
- * injected by the app's wiring.
+ * The equity universe: every NSE cash stock (equity series — no -BE / -SM / bond series) and every NSE and BSE
+ * index (indices.ts), from Kite's instrument lists, refreshed once a day and kept in memory plus a small file next
+ * to the app's other local data (data/equity-instruments.json) so a restart works before Kite is logged in. Never in
+ * the database. Index lists (NIFTY 50 / Next 50 / Midcap 150 / Smallcap 250 / 500, with sectors) and the F&O list
+ * are injected by the app's wiring.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { EqPreset, EqPresetInfo, EqStock } from '@/shared/equity';
-import { EQ_PRESETS } from '@/shared/equity';
+import { EQ_INDEX_GROUP_LABEL, EQ_INDEX_PRESET, EQ_INDEX_SKIP, EQ_INDICES, EQ_PRESETS, bseIndexKey, indexAliases } from '@/shared/equity';
 import { childLogger } from '../../utils/logger';
 
 const log = childLogger('equity');
@@ -45,6 +45,8 @@ export interface UniverseDeps {
 interface Snapshot {
   fetchedAt: number;
   stocks: Array<{ symbol: string; name: string; token: number }>;
+  /** NSE and BSE indices (key as in indices.ts). Missing in a file saved before indices were added. */
+  indices?: Array<{ symbol: string; name: string; token: number }>;
   /** NIFTY 50 index token (the benchmark). */
   nifty50: number | null;
 }
@@ -57,6 +59,20 @@ export function stocksFromKite(rows: KiteRow[]): Snapshot['stocks'] {
   for (const r of rows) {
     if (r.segment !== 'NSE' || r.instrument_type !== 'EQ' || !EQ_SYMBOL.test(r.tradingsymbol)) continue;
     out.push({ symbol: r.tradingsymbol, name: (r.name ?? '').trim() || r.tradingsymbol, token: Number(r.instrument_token) });
+  }
+  return out.sort((a, b) => a.symbol.localeCompare(b.symbol));
+}
+
+/** Kite's index rows (segment INDICES) as the equity section's indices: NSE by Kite's symbol, BSE as "BSE:<symbol>". */
+export function indicesFromKite(nse: KiteRow[], bse: KiteRow[]): NonNullable<Snapshot['indices']> {
+  const out: NonNullable<Snapshot['indices']> = [];
+  for (const [rows, exchange] of [[nse, 'NSE'], [bse, 'BSE']] as const) {
+    for (const r of rows) {
+      if (r.segment !== 'INDICES' || EQ_INDEX_SKIP.has(r.tradingsymbol)) continue;
+      const symbol = exchange === 'NSE' ? r.tradingsymbol : bseIndexKey(r.tradingsymbol);
+      const kiteName = (r.name ?? '').replace(/^(NSE|BSE) INDEX /, '').trim() || r.tradingsymbol;
+      out.push({ symbol, name: EQ_INDICES[symbol]?.name ?? kiteName, token: Number(r.instrument_token) });
+    }
   }
   return out.sort((a, b) => a.symbol.localeCompare(b.symbol));
 }
@@ -83,7 +99,9 @@ export class Universe {
     try {
       if (!existsSync(this.file)) return null;
       const s = JSON.parse(readFileSync(this.file, 'utf8')) as Snapshot;
-      return Array.isArray(s.stocks) && s.stocks.length ? s : null;
+      if (!Array.isArray(s.stocks) || !s.stocks.length) return null;
+      // Saved before indices were added: usable, but due for a refresh from Kite.
+      return Array.isArray(s.indices) ? s : { ...s, fetchedAt: 0 };
     } catch {
       return null;
     }
@@ -102,11 +120,16 @@ export class Universe {
 
   private async fetch(): Promise<Snapshot> {
     const rows = await this.deps.kite((kc) => kc.getInstruments('NSE'));
+    // BSE only for its indices (SENSEX, BANKEX…) — without it the NSE stocks and indices still load.
+    const bse = await this.deps.kite((kc) => kc.getInstruments('BSE')).catch((err: unknown) => {
+      log.warn({ err: err instanceof Error ? err.message : String(err) }, 'could not read Kite’s BSE list — BSE indices left out');
+      return [] as KiteRow[];
+    });
     const nifty = rows.find((r) => r.segment === 'INDICES' && r.tradingsymbol === 'NIFTY 50');
-    const s: Snapshot = { fetchedAt: this.now(), stocks: stocksFromKite(rows), nifty50: nifty ? Number(nifty.instrument_token) : null };
+    const s: Snapshot = { fetchedAt: this.now(), stocks: stocksFromKite(rows), indices: indicesFromKite(rows, bse), nifty50: nifty ? Number(nifty.instrument_token) : null };
     if (!s.stocks.length) throw new Error('Kite returned no NSE stocks');
     this.writeFile(s);
-    log.info({ stocks: s.stocks.length }, 'equity stock list refreshed');
+    log.info({ stocks: s.stocks.length, indices: s.indices!.length }, 'equity stock list refreshed');
     return s;
   }
 
@@ -132,12 +155,19 @@ export class Universe {
     return (await this.snapshot()).nifty50;
   }
 
-  /** Every stock with its sector and presets. */
+  /** Every stock with its sector and presets, then every index with its kind and groups. */
   async all(): Promise<EqStock[]> {
     const [snap, lists, fno] = await Promise.all([this.snapshot(), this.deps.lists().catch(() => undefined), this.deps.fno().catch(() => [] as string[])]);
     const listed = new Map((lists ?? []).map((l) => [l.symbol, l]));
     const fnoSet = new Set(fno);
-    return snap.stocks.map((s) => {
+    const indices = (snap.indices ?? []).map((ix): EqStock => {
+      const info = EQ_INDICES[ix.symbol];
+      const group = info?.group ?? (ix.symbol.startsWith('BSE:') ? 'BSE' : 'OTHER');
+      const presets: EqPreset[] = ['IDX_ALL', EQ_INDEX_PRESET[group]];
+      if (info?.fno) presets.push('IDX_FNO');
+      return { symbol: ix.symbol, name: ix.name, token: ix.token, sector: EQ_INDEX_GROUP_LABEL[group], presets, index: true };
+    });
+    const stocks = snap.stocks.map((s) => {
       const l = listed.get(s.symbol);
       const presets: EqPreset[] = ['ALL'];
       if (l) {
@@ -147,14 +177,16 @@ export class Universe {
       if (fnoSet.has(s.symbol)) presets.push('FNO');
       return { symbol: s.symbol, name: s.name, token: s.token, sector: l?.sector ?? null, presets };
     });
+    return [...stocks, ...indices];
   }
 
   async presets(): Promise<EqPresetInfo[]> {
     const [stocks, lists] = await Promise.all([this.all(), this.deps.lists().catch(() => undefined)]);
-    return EQ_PRESETS.map(({ value, label }) => {
+    return EQ_PRESETS.map(({ value, label, of }) => {
       const count = stocks.filter((s) => s.presets.includes(value)).length;
-      const fromNse = value !== 'ALL' && value !== 'FNO';
-      return { preset: value, label, count, ...(fromNse && !lists ? { note: 'NSE’s index lists couldn’t be read right now — try again later' } : {}) };
+      const fromNse = of === 'STOCKS' && value !== 'ALL' && value !== 'FNO';
+      const note = fromNse && !lists ? 'NSE’s index lists couldn’t be read right now — try again later' : of === 'INDICES' && !count ? 'Kite’s index list isn’t loaded yet — log in to Kite and try again' : undefined;
+      return { preset: value, label, of, count, ...(note ? { note } : {}) };
     });
   }
 
@@ -167,7 +199,7 @@ export class Universe {
     }
     const term = q.search?.trim().toUpperCase();
     if (term) {
-      list = list.filter((s) => s.symbol.includes(term) || s.name.toUpperCase().includes(term));
+      list = list.filter((s) => s.symbol.includes(term) || s.name.toUpperCase().includes(term) || (s.index && indexAliases(s.symbol).some((a) => a.includes(term))));
       // Exact and prefix symbol matches first.
       list.sort((a, b) => Number(b.symbol === term) - Number(a.symbol === term) || Number(b.symbol.startsWith(term)) - Number(a.symbol.startsWith(term)) || a.symbol.localeCompare(b.symbol));
     }

@@ -38,7 +38,7 @@ export function EquityHub() {
     <div>
       <PageHeader
         title="Equity · Stock strategies"
-        subtitle="Strategies for NSE cash stocks — separate from F&O. Build one (or start from your trader’s templates), backtest it over years on any stocks with your money, and screen today’s signals."
+        subtitle="Strategies for NSE cash stocks and indices — separate from F&O. Build one (or start from your trader’s templates), backtest it over years on any stocks or indices (NIFTY, BANKNIFTY, SENSEX…) with your money, and screen today’s signals."
         actions={
           <Tooltip content={E.page}>
             <Badge tone="accent">NSE cash</Badge>
