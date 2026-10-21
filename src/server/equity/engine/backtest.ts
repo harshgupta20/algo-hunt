@@ -7,6 +7,7 @@ import { EQ_ORDER_RULES, EQ_TIMEFRAME, leavesOf } from '@/shared/equity';
 import type { Bars } from './bars';
 import { Evaluator, UNKNOWN, buildTimeline, stockSeries } from './evaluate';
 import { simulate, type SimStock } from './simulate';
+import { KITE_STOCK_GAPS } from './kiteGaps';
 import { cagr, drawdowns, periodReturns, thin, tradeStats } from './stats';
 
 export interface StockCandles {
@@ -123,6 +124,9 @@ function dataNotes(def: EqStrategyDefinition, stock: SimStock, from: string, to:
     if (usesVolume(def)) notes.push('Kite has no volume for indices (always 0) — the strategy’s volume values are 0 here, so its volume conditions don’t work on an index');
   }
   if (!stock.index) notes.push(...coarsePriceNotes(d, from, to, stock.coarse));
+  const have = new Set(d.date);
+  const gap2004 = [...KITE_STOCK_GAPS].filter((x) => x >= '2004-05-24' && x <= '2004-06-22' && x >= from && x <= to && x >= d.date[0]! && !have.has(x));
+  if (gap2004.length >= 5) notes.push(`Kite has no candles for this stock from ${gap2004[0]} to ${gap2004.at(-1)} (the market traded) — nothing could fill, stop out or reach a target then`);
   const t = stock.timeline;
   let firstCheck = -1;
   for (let k = 0; k < t.daily.length; k++) {
@@ -172,7 +176,8 @@ export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, c
   }
 
   // The market's calendar (every stock's days and NIFTY 50's) decides when a next-open order lapses.
-  const sim = simulate(def, stocks, { from: req.from, to: req.to, capital: req.capital, maxPositions: req.maxPositions, rules, ...(bench ? { marketDates: bench.date } : {}) });
+  // Kite's stock histories lack some days the market traded (KITE_STOCK_GAPS) — those don't make an order lapse.
+  const sim = simulate(def, stocks, { from: req.from, to: req.to, capital: req.capital, maxPositions: req.maxPositions, rules, gapDays: KITE_STOCK_GAPS, ...(bench ? { marketDates: bench.date } : {}) });
   const start = req.capital ?? 0;
   const values = sim.curve.map((p) => p.equity);
   const dd = drawdowns(values, start);
@@ -238,11 +243,12 @@ export function runBacktest(def: EqStrategyDefinition, req: EqBacktestRequest, c
       ? 'Stops sell when a day’s low reaches them (at the open if it opened below); targets when a day’s high reaches them. Both in one day → the stop counts.'
       : 'Stops sell when a check’s close is below them; targets when a day’s high reaches them.',
     'Sells before buys each day; when money is short, same-day buys are taken in alphabetical order.',
-    'Fill prices are whole paise (buys rounded up, sales down). A next-open order lapses if the stock doesn’t trade on the next market day; a candle locked at a circuit (one price all day) can’t be bought at the upper circuit or sold at the lower one; an add that would open at or below the stop it sets isn’t bought.',
+    'Fill prices are whole paise (buys rounded up, sales down). A next-open order lapses if the stock doesn’t trade on the next market day (days missing from Kite’s stock data — special sessions before 2019, 24 May – 22 Jun 2004 — don’t count: the order fills at the stock’s next candle); a candle locked at a circuit (one price all day) can’t be bought at the upper circuit or sold at the lower one; an add that would open at or below the stop it sets isn’t bought.',
     rules.charges ? 'Zerodha charges on every order: delivery (STT, exchange, SEBI, stamp, GST, ₹15.34 DP charge on sells); a lot bought and sold the same day pays intraday charges instead.' : rules.slippagePct ? 'No charges.' : 'No charges or slippage — every price is the candle’s own, like TradingView’s strategy tester.',
     ...(rules.slippagePct ? [`${rules.slippagePct}% slippage on every market order (not on targets).`] : []),
     ...(def.pyramid.enabled ? [`Pyramiding: one more lot when ${def.pyramid.maType}(${def.pyramid.maPeriod}) reaches the last buy price with the close at or above it; the stop for all lots moves to that MA value once the lot is bought.`] : []),
     'Positions still open at the end are valued at the last close (reason END).',
+    'The test starts with no position on its first day. TradingView’s strategy tester runs from the chart’s first candle, so its list can also show a position bought before your start date (and sold after it) — compare from the first trade both lists have.',
     ...(bench ? ['NIFTY 50 comparison: the price index bought with the same money at the first day’s close — index dividends (≈1–1.5 % a year) aren’t included.'] : []),
     ...(anyIndex
       ? [

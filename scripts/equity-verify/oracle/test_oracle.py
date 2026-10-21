@@ -277,10 +277,10 @@ def rules(fill='NEXT_OPEN', trig='TOUCH', charges=False, slip=0):
     return {'fill': fill, 'stopTrigger': trig, 'charges': charges, 'slippagePct': slip}
 
 
-def run(defn, stocks, frm=None, to=None, capital=100000, maxpos=None, end=None, rl=None):
+def run(defn, stocks, frm=None, to=None, capital=100000, maxpos=None, end=None, rl=None, market=None, gaps=None):
     alld = sorted({d for _, b in stocks for d in b['date']})
     return simulate(defn, stocks, frm or alld[0], to or alld[-1], capital, maxpos, end or alld[-1],
-                    rl or rules())
+                    rl or rules(), market_dates=market, gap_days=gaps)
 
 
 class TestEvaluate(unittest.TestCase):
@@ -787,6 +787,21 @@ class TestV2(unittest.TestCase):
         r = run(strat(VOL_ENTRY), [('AAA', a), ('BBB', bb)])
         self.assertEqual(r['trades'], [])
         self.assertEqual(r['skipped'], [{'symbol': 'BBB', 'date': dates[2], 'kind': 'ENTRY', 'category': 'lapsed'}])
+
+    def test_gap_day_does_not_lapse(self):
+        # v7: the market's calendar has a day (2014-03-22) the stock has no candle on. As a plain market day the
+        # ENTRY signalled on 03-21 lapses at 03-24; declared a gap day, it fills at 03-24's open (100).
+        dates = ['2014-03-20', '2014-03-21', '2014-03-24', '2014-03-25']
+        b = bars_from([(100, 101, 99, 100, 0), (100, 101, 99, 100, 1), (100, 101, 99, 100, 0), (100, 101, 99, 100, 0)], dates)
+        market = ['2014-03-20', '2014-03-21', '2014-03-22', '2014-03-24', '2014-03-25']
+        lapsed = run(strat(VOL_ENTRY), [('AAA', b)], market=market)
+        self.assertEqual(lapsed['skipped'], [{'symbol': 'AAA', 'date': '2014-03-24', 'kind': 'ENTRY', 'category': 'lapsed'}])
+        filled = run(strat(VOL_ENTRY), [('AAA', b)], market=market, gaps={'2014-03-22'})
+        self.assertEqual(filled['skipped'], [])
+        self.assertEqual(filled['trades'][0]['entryDate'], '2014-03-24')
+        # A gap day the stock DID trade on is a market day like any other.
+        b2 = bars_from([(100, 101, 99, 100, 0), (100, 101, 99, 100, 1), (100, 101, 99, 100, 0), (100, 101, 99, 100, 0), (100, 101, 99, 100, 0)], market)
+        self.assertEqual(run(strat(VOL_ENTRY), [('AAA', b2)], market=market, gaps={'2014-03-22'})['trades'][0]['entryDate'], '2014-03-22')
 
     def test_circuit_up_entry_at_open(self):
         # d1 is one price all day (110) above d0's close 100 -> locked UP -> pending ENTRY skipped "circuit"

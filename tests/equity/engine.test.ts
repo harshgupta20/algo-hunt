@@ -374,6 +374,21 @@ describe('real-market limits', () => {
     expect(r.skipped).toEqual([{ symbol: 'BBB', date: '2025-01-09', kind: 'ENTRY', reason: 'No trade in BBB on 2025-01-08, the day after the signal — the next-open order lapsed' }]);
   });
 
+  it('a day missing from Kite’s stock data (a special session before 2019) doesn’t make the order lapse', () => {
+    // MARUTI, 2014: the signal at Friday 21 Mar's close; NIFTY 50 traded on Saturday 22 Mar (a special session) but
+    // Kite has no MARUTI candle that day — the order fills at Monday's open instead of lapsing.
+    const rows: Row[] = [['2014-03-20', 100, 101, 99, 100], ['2014-03-21', 100, 111, 99, 110], ['2014-03-24', 112, 113, 111, 112], ['2014-03-25', 112, 114, 111, 113]];
+    const bench = toBars([['2014-03-20', 1, 1, 1, 1], ['2014-03-21', 1, 1, 1, 1], ['2014-03-22', 1, 1, 1, 1], ['2014-03-24', 1, 1, 1, 1], ['2014-03-25', 1, 1, 1, 1]]);
+    const def = plain({ entry: { when: cross105, trigger: 'WHEN_TRUE' }, exit: noExit });
+    const r = runBacktest(def, request(rows), [{ symbol: 'MARUTI', name: 'MARUTI', daily: toBars(rows) }], bench, '2014-03-25', NEXT);
+    expect(r.skipped).toEqual([]);
+    expect(r.trades[0]).toMatchObject({ entryDate: '2014-03-24', avgPrice: 112 });
+    // A regular weekday the stock didn't trade still lapses.
+    const missed: Row[] = [['2014-03-20', 100, 101, 99, 100], ['2014-03-21', 100, 111, 99, 110], ['2014-03-25', 112, 114, 111, 113]];
+    const bench2 = toBars([['2014-03-20', 1, 1, 1, 1], ['2014-03-21', 1, 1, 1, 1], ['2014-03-24', 1, 1, 1, 1], ['2014-03-25', 1, 1, 1, 1]]);
+    expect(runBacktest(def, request(missed), [{ symbol: 'X', name: 'X', daily: toBars(missed) }], bench2, '2014-03-25', NEXT).skipped[0]).toMatchObject({ reason: 'No trade in X on 2014-03-24, the day after the signal — the next-open order lapsed' });
+  });
+
   it('circuit locks: no buy at the upper circuit; a sale waits through the lower circuit', () => {
     const def = plain({ entry: { when: cross105, trigger: 'WHEN_TRUE' }, exit: { ...noExit, when: below105 } });
     // Signal day 2; day 3 is locked up at 115.50 (one price, above 110.05) → the buy lapses. (Paise prices: whole

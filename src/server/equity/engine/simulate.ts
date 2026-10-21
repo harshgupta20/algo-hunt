@@ -28,7 +28,8 @@
  * limit at its price rounded up to the paisa. Price rules (stops, targets, pyramiding) treat values within 1 part
  * in 10⁹ as equal, like the conditions.
  * Real-market limits: a next-open order is a day order — if the stock doesn't trade on the next market day it
- * lapses (listed); a candle locked at a circuit (one price all day) can't be bought at the upper circuit or sold
+ * lapses (listed) — except on a known gap in the data (`gapDays`: the market traded, the stock has no candle), where
+ * it waits for the stock's next candle; a candle locked at a circuit (one price all day) can't be bought at the upper circuit or sold
  * at the lower one, and a zero-volume candle trades nothing — buys lapse, sales wait for the next candle (one-price
  * days inside Kite's rounded history aren't locks). An index has neither (Kite reports no volume for indices, and
  * they have no circuits): every candle of an index trades. A lot bought and sold the same day pays Zerodha's intraday
@@ -69,6 +70,9 @@ export interface SimOptions {
   /** Every trading day of the market (e.g. the stocks' and NIFTY 50's dates) — a next-open order whose stock
    *  doesn't trade on the market's next day lapses. Defaults to the stocks' own dates. */
   marketDates?: string[];
+  /** Market days the data source mostly lacks for stocks (KITE_STOCK_GAPS): a stock without a candle on one didn't
+   *  "not trade" — they're skipped when finding its next market day. */
+  gapDays?: ReadonlySet<string>;
 }
 
 export interface SimOutput {
@@ -145,6 +149,17 @@ export function simulate(def: EqStrategyDefinition, stocks: SimStock[], opt: Sim
   const marketIndex = new Map(market.map((d, i) => [d, i]));
   /** The market's trading day after `date` (undefined past the end). */
   const nextMarketDay = (date: string) => market[(marketIndex.get(date) ?? -2) + 1];
+  const gaps = opt.gapDays;
+  const stockDays = new Map<SimStock, Set<string>>();
+  /** The market's next day for this stock: a known data gap it has no candle on doesn't count. */
+  const nextDayFor = (s: Slot, date: string) => {
+    let d = nextMarketDay(date);
+    if (!gaps?.size) return d;
+    let days = stockDays.get(s.stock);
+    if (!days) stockDays.set(s.stock, (days = new Set(s.stock.daily.date)));
+    while (d !== undefined && gaps.has(d) && !days.has(d)) d = nextMarketDay(d);
+    return d;
+  };
 
   const rules = opt.rules;
   const slip = rules.slippagePct / 100;
@@ -314,7 +329,7 @@ export function simulate(def: EqStrategyDefinition, stocks: SimStock[], opt: Sim
           continue;
         }
         if (kind === 'ADD' ? !s.pos : !!s.pos) continue;
-        const next = nextMarketDay(o.signalDate);
+        const next = nextDayFor(s, o.signalDate);
         if (next !== undefined && next !== date) skip(s, kind, date, 'lapsed', `No trade in ${s.stock.symbol} on ${next}, the day after the signal — the next-open order lapsed`);
         else if (noBuy(s)) skip(s, kind, date, noBuy(s)!.category, noBuy(s)!.text);
         else if (kind === 'ADD' && o.stopAfter !== undefined && atMost(b.open, o.stopAfter)) skip(s, kind, date, 'gap', `Opened at ${inr(b.open)}, at or below the new stop ${inr(o.stopAfter)} — no add`);

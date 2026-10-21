@@ -134,7 +134,7 @@ class Stock:
                  'soldAtClose', 'skipMark', 'series', 'k_of_daily', 'entry_fn', 'exit_fn', 'ma_fn', 'entry_memo')
 
 
-def simulate(definition, stocks, date_from, date_to, capital, max_positions, end_date, rules, colcaches=None):
+def simulate(definition, stocks, date_from, date_to, capital, max_positions, end_date, rules, colcaches=None, market_dates=None, gap_days=None):
     """stocks: list of (symbol, daily_bars) with daily_bars already limited (and repaired) for the case.
     colcaches: optional {symbol: dict-like} indicator column caches (per data slice)."""
     tf = definition.get('timeframe', '1d')
@@ -220,8 +220,18 @@ def simulate(definition, stocks, date_from, date_to, capital, max_positions, end
         s.skipMark = {'ENTRY': None, 'ADD': None}
         sts.append(s)
 
-    cal = sorted({d for s in sts for d in s.dates[s.ptr:] if d <= date_to})
+    cal = sorted({d for s in sts for d in s.dates[s.ptr:] if d <= date_to} | set(market_dates or []))   # v7 + market dates
     next_market_day = {cal[i]: cal[i + 1] for i in range(len(cal) - 1)}   # v2 market calendar
+    gaps = set(gap_days or [])
+
+    def next_market_day_for(s, d):
+        """v7: the market's next day for this stock — gap days it has no candle on are skipped."""
+        n = next_market_day.get(d)
+        if gaps:
+            have = set(s.dates)
+            while n is not None and n in gaps and n not in have:
+                n = next_market_day.get(n)
+        return n
 
     cash = 0.0 if capital is None else float(capital)
     trades = []
@@ -388,7 +398,7 @@ def simulate(definition, stocks, date_from, date_to, capital, max_positions, end
 
     def open_order_blocked(s, pd, date, kind, open_px):
         """v2 step-1 checks for ADD/ENTRY. Returns True (after recording the skip) if it must not fill."""
-        nm = next_market_day.get(pd['signalDate'])
+        nm = next_market_day_for(s, pd['signalDate'])
         if nm is not None and nm != date:
             skip(s, date, kind, 'lapsed')
             return True

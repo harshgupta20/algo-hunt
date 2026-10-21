@@ -182,7 +182,11 @@ This replaces the exact comparisons in step 2, step 3a (CLOSE stop) and step 3b 
 
 ### Calendar
 The simulated dates = the sorted union of all stocks' daily dates within [from, to]. (v2) The MARKET calendar is the
-same list; nextMarketDay(d) = the date after d in it (none after the last).
+same list (v7: plus the run's marketDates when given — the app passes NIFTY 50's days); nextMarketDay(d) = the date
+after d in it (none after the last).
+**Data gaps (v7):** gapDays = market days the data source mostly lacks for stocks (the app passes Kite's 46 days,
+engine/kiteGaps.ts). For a given stock, nextMarketDay skips every gap day on which THAT stock has no candle (repeat
+until a day that isn't a gap day, or one the stock has). A gap day the stock has a candle on counts as usual.
 **Circuit lock (v2):** a stock's candle at daily index i ≥ 1 is LOCKED when high == low and close ≠ close[i−1]:
 locked UP if close > close[i−1], locked DOWN if close < close[i−1] (one price all day = circuit limit).
 **Coarse history (v4):** per stock, over its LOADED daily candles in blocks of 40 starting at the first loaded
@@ -247,8 +251,8 @@ first all pending EXITs, then all pending ADDs, then all pending ENTRYs. (v2 rul
 - EXIT: if not holding → drop it. If noSell (v3: locked DOWN or NONE) → it stays pending (retried at the stock's
   next candle). Else sell at the open (slippage).
 - ADD (needs a position, else drop) / ENTRY (needs no position, else drop), checked in this order:
-  1. if nextMarketDay(signalDate) exists and ≠ today → SKIP category "lapsed" (the stock didn't trade on the
-     market's next day; a day order lapses);
+  1. if nextMarketDay(signalDate) (for this stock — v7 gap days) exists and ≠ today → SKIP category "lapsed" (the
+     stock didn't trade on the market's next day; a day order lapses);
   2. elif noBuy (v3) → SKIP category "circuit" (UP) or "no-trades" (NONE);
   3. elif ADD and atMost(open, stopAfter) → SKIP category "gap" (it would open at/below the stop it sets);
   4. else buy at the open (ADD with its stopAfter).

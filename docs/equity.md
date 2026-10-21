@@ -67,6 +67,14 @@ strategy's daily / weekly candles; TradingView has no date link, so the tooltip 
   candle; stops don't fill) — except inside stretches of Kite's rounded (coarse) history, where one-price days are
   rounding, not locks. An add whose next open is at or below the stop it would set isn't bought. Orders over 10 % of
   the day's traded volume are noted per stock (filled as usual — a real order that size would fill worse).
+- **Gaps in Kite's data (2026-10-21):** Kite's NIFTY 50 has 46 days that Kite's stock histories mostly lack —
+  every special session before 2019 (Budget Saturdays, Muhurat, Saturday test sessions) and 24 May – 22 Jun 2004
+  (`engine/kiteGaps.ts`; found against 32 liquid stocks, only RELIANCE / ADANIENT have them). They aren't days the
+  stock didn't trade: an order due on one waits for the stock's next candle (as TradingView would). Before this, such
+  orders lapsed. MARUTI's weekly RSI-60 strategy lost its 24 Mar 2014, 5 Nov 2013 and 30 Apr 2012 orders this way.
+  Illiquid stocks' real no-trade days still lapse. A stock missing the 2004 month gets a data note.
+- **Start:** a backtest starts with no position on its first day; TradingView's tester runs from the first candle,
+  so its list can show a position bought before the start (noted in every result).
 - **Indices** (NIFTY 50, BANKNIFTY, SENSEX…) are tested on their own values, as if one unit could be bought at the
   index level (TradingView's strategy tester on an index chart). Kite reports **no volume** for indices (always 0)
   and they have no circuits, so none of the rules above apply: every index candle trades. Index candles on days NSE
