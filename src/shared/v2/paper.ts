@@ -5,7 +5,7 @@
  * the money and exit settings. Nothing is ever sent to a broker.
  */
 import { z } from 'zod';
-import type { ExprNode, LegDef, LegId, StrategyDefinition, V2Instrument } from './types';
+import type { AlertSide, ExprNode, ExprTrace, LegDef, LegId, StrategyDefinition, V2Instrument } from './types';
 
 export type PaperSide = 'BUY' | 'SELL';
 /** END: a backtest ended with the trade still open (closed at the last price). */
@@ -258,6 +258,14 @@ export function paperGroups(d: StrategyDefinition): Array<{ id: string; label: s
   const root = d.expression;
   if (root.type !== 'OR' || root.children.length < 2) return [];
   return root.children.map((c, i) => ({ id: c.id, label: ('label' in c && c.label) || `Group ${i + 1}`, node: c }));
+}
+
+/** Call or put of an evaluation: the option leg the fired group trades (CE → CALL, PE → PUT), else FUT. */
+export function alertSide(d: StrategyDefinition, trace: ExprTrace): AlertSide {
+  const groups = paperGroups(d);
+  const fired = groups.find((g) => trace.children?.some((c) => c.id === g.id && c.result === 'TRUE')) ?? groups[0];
+  const leg = d.legs.find((l) => l.id === naturalLeg(d.legs, fired?.node ?? d.expression));
+  return leg?.kind === 'CE' ? 'CALL' : leg?.kind === 'PE' ? 'PUT' : 'FUT';
 }
 
 /** Rules for the strategy as it is now: one per top-level group (kept where already set), else one for the whole strategy. */

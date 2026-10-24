@@ -6,7 +6,7 @@
  */
 import clsx from 'clsx';
 import { CheckCircle2, CircleHelp, XCircle } from 'lucide-react';
-import type { AlertStateName, ConditionTrace, EvaluationSource, ExprTrace, LegDef, LegKind, OperandTrace, SignalOutcome, TriState, UnitEvaluation, V2Instrument, V2Product, V2Unit } from '@/shared/v2';
+import type { AlertSide, AlertStateName, ConditionTrace, EvaluationSource, ExprTrace, LegDef, LegKind, OperandTrace, SignalOutcome, TriState, UnitEvaluation, V2Instrument, V2Product, V2Unit } from '@/shared/v2';
 import { legKindText, legName } from '@/shared/v2';
 import { Tooltip, type TooltipContent } from '../components/Tooltip';
 import { Badge } from '../components/ui';
@@ -54,6 +54,29 @@ export function UnitTag({ unit, symbol }: { unit: V2Unit; symbol: string }) {
           unit.expiry && <span className="text-slate-500">{shortDate(unit.expiry)}</span>
         )}
       </span>
+    </Tooltip>
+  );
+}
+
+const SIDE: Record<AlertSide, { label: string; className: string; help: TooltipContent }> = {
+  CALL: { label: 'Call', className: LEG_KIND_TEXT.CE, help: H.alerts.sideCall },
+  PUT: { label: 'Put', className: LEG_KIND_TEXT.PE, help: H.alerts.sidePut },
+  FUT: { label: 'Future', className: LEG_KIND_TEXT.FUT, help: H.alerts.sideFut },
+};
+
+/** Call or put of an alert: the option leg its fired branch trades, in that leg's colour. */
+export function SideBadge({ side }: { side: AlertSide | undefined }) {
+  if (!side) {
+    return (
+      <Tooltip content={H.alerts.sideNone}>
+        <span className="text-xs text-slate-500">—</span>
+      </Tooltip>
+    );
+  }
+  const s = SIDE[side];
+  return (
+    <Tooltip content={s.help}>
+      <span className={clsx('inline-flex items-center rounded border border-current px-1.5 py-px text-[10px] font-bold uppercase tracking-wide', s.className)}>{s.label}</span>
     </Tooltip>
   );
 }

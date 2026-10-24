@@ -243,6 +243,10 @@ export const H = {
     status: { title: 'Delivery status', body: 'Sent: every chosen channel delivered. Partial: one failed. Failed: none delivered.' },
     outcome: { title: 'Signal outcome', body: 'Every time a strategy fires a signal is recorded — delivered, or suppressed with the reason.' },
     why: { title: 'Why did it fire?', body: 'Every condition with its leg, values and candles.' },
+    sideCall: { title: 'Call', body: 'The branch that fired trades a CE (call option) leg. Shown in the CE colour (violet).' },
+    sidePut: { title: 'Put', body: 'The branch that fired trades a PE (put option) leg. Shown in the PE colour (pink).' },
+    sideFut: { title: 'Future', body: 'The branch that fired trades the future or spot — no option leg. Shown in the future colour (sky).' },
+    sideNone: { title: 'Not recorded', body: 'Alerts from before call / put was saved on each alert. New alerts always show it.' },
   } satisfies Record<string, TooltipContent>,
 
   products: {

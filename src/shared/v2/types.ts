@@ -284,7 +284,12 @@ export interface UnitEvaluation {
   prices: Partial<Record<LegId, number>>;
   /** Where the candles came from (absent on older evaluations = Kite historical). */
   source?: EvaluationSource;
+  /** Which way the fired branch trades (absent on alerts recorded before this was saved). */
+  side?: AlertSide;
 }
+
+/** CALL = the fired branch trades a CE leg, PUT = a PE leg, FUT = futures or spot. */
+export type AlertSide = 'CALL' | 'PUT' | 'FUT';
 
 /**
  * HISTORICAL: Kite's official candles (scanner, compare).

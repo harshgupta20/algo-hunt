@@ -9,7 +9,7 @@ import { pageCursor } from '@/shared/v2';
 import { Tooltip } from '../components/Tooltip';
 import { Badge, Card, EmptyState, IconButton, Tabs } from '../components/ui';
 import { v2Api } from './api';
-import { InstrumentChip, LegPrices, OutcomeBadge, SourceBadge, TraceView, TriBadge, UnitTag } from './components';
+import { InstrumentChip, LegPrices, OutcomeBadge, SideBadge, SourceBadge, TraceView, TriBadge, UnitTag } from './components';
 import { candleRange, istStampIso } from './format';
 import { H } from './help';
 import { InlineSpinner, SkeletonRows } from '../components/loaders';
@@ -49,6 +49,7 @@ export function AlertRow({ alert: a }: { alert: V2AlertItem }) {
           </button>
         </Tooltip>
         <UnitTag unit={a.unit} symbol={symbolOf(a.productId)} />
+        <SideBadge side={a.evaluation.side} />
         <span className="text-xs text-slate-300 font-medium">{a.strategyName}</span>
         <Tooltip content={{ title: 'Strategy version', body: 'The strategy version that produced this alert.' }}>
           <span className="text-[11px] text-slate-500">v{a.version}</span>

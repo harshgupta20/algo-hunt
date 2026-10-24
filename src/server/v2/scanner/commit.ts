@@ -6,6 +6,7 @@
  *   returned unit state.
  */
 import type { ScanError, TriState, UnitEvaluation, UnitState, V2Connection, V2Product, V2Settings, V2Strategy, V2Unit } from '@/shared/v2';
+import { alertSide } from '@/shared/v2';
 import { decide, signalIdentity } from '../alerts/alertPolicy';
 import { deliver, formatAlert, type ChannelFactory, type Message } from '../alerts/notifications';
 import { evaluateUnit, type UnitEvalInput } from '../engine/evaluator';
@@ -123,7 +124,7 @@ export async function commitUnit(
           unit,
           triggerTimeframe: d.evaluation.triggerTimeframe,
           candleTime: evaluation.triggerCandle,
-          evaluation,
+          evaluation: { ...evaluation, side: alertSide(d, evaluation.trace) },
         };
         const alert = await store.alerts.insert(draft);
         stats.alerts++;
