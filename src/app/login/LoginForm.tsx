@@ -28,8 +28,8 @@ export function LoginForm() {
         return;
       }
       const next = params.get('next');
-      // Only follow same-site relative paths.
-      window.location.href = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
+      // Only follow same-site relative paths; otherwise the app (the home page is the landing page).
+      window.location.href = next && next.startsWith('/') && !next.startsWith('//') ? next : '/v2';
     } finally {
       setPending(false);
     }

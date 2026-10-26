@@ -3,7 +3,7 @@
 **Strategy + Product = Alert.** Build a strategy once, without choosing a product. Then connect it to NIFTY,
 RELIANCE, GOLD or anything else to get alerts, and use Compare to see which products it suits.
 
-Open **V2** in the sidebar (the home page opens it too). Every control has an ⓘ or a hover tooltip explaining it.
+Open **V2** in the sidebar (signing in opens it too; the home page `/` is the product landing page). Every control has an ⓘ or a hover tooltip explaining it.
 
 ---
 

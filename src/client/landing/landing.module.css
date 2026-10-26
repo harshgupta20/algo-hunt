@@ -1,0 +1,338 @@
+/* Landing page (the home page, /): its own type, effects and motion. Colours come from the
+   app's theme tokens (the page always renders the dark theme). */
+
+@font-face {
+  font-family: 'LP Display';
+  src: url('./fonts/archivo-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'LP Display';
+  src: url('./fonts/archivo-latin-ext.woff2') format('woff2');
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'LP Mono';
+  src: url('./fonts/jetbrains-mono-latin.woff2') format('woff2');
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'LP Mono';
+  src: url('./fonts/jetbrains-mono-latin-ext.woff2') format('woff2');
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+.root {
+  font-family: 'LP Display', system-ui, sans-serif;
+  font-stretch: 100%;
+  background: #05070d;
+  min-height: 100vh;
+  overflow-x: clip;
+}
+:global(html):has(.root),
+:global(body):has(.root) {
+  background: #05070d;
+  scroll-behavior: smooth;
+}
+
+.display {
+  font-family: 'LP Display', system-ui, sans-serif;
+  font-stretch: 125%;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 0.95;
+}
+.wide {
+  font-stretch: 125%;
+}
+.mono {
+  font-family: 'LP Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-stretch: 100%;
+  letter-spacing: 0;
+}
+
+/* Text cut out of the alert colour, slowly shimmering. */
+.alertText {
+  background: linear-gradient(100deg, rgb(var(--warn)) 20%, rgb(253 230 138) 45%, rgb(var(--warn)) 70%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 6s linear infinite;
+}
+/* Backgrounds */
+.grid {
+  background-image: linear-gradient(rgb(255 255 255 / 0.035) 1px, transparent 1px), linear-gradient(90deg, rgb(255 255 255 / 0.035) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+.fadeY {
+  mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+}
+.panel {
+  position: relative;
+  border-radius: 1.5rem;
+  border: 1px solid rgb(255 255 255 / 0.07);
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.035), rgb(255 255 255 / 0.012)), rgb(10 14 23 / 0.85);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.06),
+    0 30px 80px -30px rgb(0 0 0 / 0.7);
+}
+
+/* Split-flap board */
+.tile {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.18em;
+  height: 1.7em;
+  border-radius: 0.18em;
+  background: linear-gradient(180deg, #1a2233 0%, #141b29 49.5%, #0e1420 50.5%, #121a28 100%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.06),
+    0 1px 2px rgb(0 0 0 / 0.6);
+  color: rgb(241 245 249);
+  font-weight: 600;
+  perspective: 200px;
+}
+.tile::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: rgb(0 0 0 / 0.75);
+}
+.flip {
+  display: inline-block;
+  animation: flap 120ms ease-out;
+  transform-origin: 50% 50%;
+}
+
+/* Scanner words: outlined; lit in --word inside the lens, glowing in --glow (default: the same colour). */
+.word {
+  color: transparent;
+  -webkit-text-stroke: 1px rgb(255 255 255 / 0.16);
+  transition:
+    color 300ms ease,
+    -webkit-text-stroke-color 300ms ease,
+    text-shadow 300ms ease;
+}
+.wordOn {
+  color: var(--word);
+  -webkit-text-stroke-color: transparent;
+  text-shadow: 0 0 36px var(--glow, var(--word));
+}
+
+/* Radar */
+.sweep {
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 290deg,
+    rgb(var(--accent) / 0.04) 300deg,
+    rgb(var(--accent) / 0.3) 356deg,
+    rgb(160 205 255 / 0.85) 360deg
+  );
+  border-radius: 9999px;
+  animation: spin var(--sweep, 6s) linear infinite;
+}
+.blip {
+  animation: blip var(--sweep, 6s) linear infinite;
+}
+.ping {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ping var(--sweep, 6s) ease-out infinite;
+}
+
+/* Signals travelling along a wire (paths use pathLength="100"). */
+.flow {
+  stroke-dasharray: 6 94;
+  animation: flow 1.4s linear infinite;
+}
+.flowSlow {
+  stroke-dasharray: 3 97;
+  animation: flow 2.6s linear infinite;
+}
+
+.ring {
+  transform-box: fill-box;
+  transform-origin: 50% 20%;
+  animation: ring 0.9s ease-in-out infinite;
+}
+.halo {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: halo 1.6s ease-out infinite;
+}
+.caret {
+  animation: caret 1s steps(1) infinite;
+}
+.pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+.float {
+  animation: float 7s ease-in-out infinite;
+}
+.wave {
+  transform-box: fill-box;
+  transform-origin: left center;
+  animation: wave 1.2s ease-out infinite;
+}
+
+/* Scroll reveal */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition:
+    opacity 0.9s cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 0.9s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.reveal[data-in='true'] {
+  opacity: 1;
+  transform: none;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -220% 0;
+  }
+}
+@keyframes flap {
+  from {
+    transform: rotateX(-80deg);
+    opacity: 0.4;
+  }
+  to {
+    transform: rotateX(0);
+    opacity: 1;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes blip {
+  0% {
+    opacity: 1;
+  }
+  35% {
+    opacity: 0.45;
+  }
+  100% {
+    opacity: 0.2;
+  }
+}
+@keyframes ping {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.95;
+  }
+  30% {
+    transform: scale(3.2);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(3.2);
+    opacity: 0;
+  }
+}
+@keyframes flow {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes ring {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  20% {
+    transform: rotate(14deg);
+  }
+  40% {
+    transform: rotate(-12deg);
+  }
+  60% {
+    transform: rotate(8deg);
+  }
+  80% {
+    transform: rotate(-5deg);
+  }
+}
+@keyframes halo {
+  from {
+    transform: scale(0.85);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+}
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes float {
+  50% {
+    transform: translateY(-10px);
+  }
+}
+@keyframes wave {
+  from {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root *,
+  .root *::before,
+  .root *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .reveal {
+    opacity: 1;
+    transform: none;
+  }
+}
