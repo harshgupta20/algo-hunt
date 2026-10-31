@@ -11,6 +11,7 @@ import type {
   BacktestJob,
   BacktestRequest,
   BacktestResult,
+  OptionsSourceStatus,
   PaperOverride,
   PaperPlan,
   PaperQuery,
@@ -42,6 +43,8 @@ import { paperSummary } from './paper/summary';
 import { lastPaperSyncPoint, nextPaperSyncPoint } from './paper/paperSync';
 import { runBacktest } from './paper/backtest';
 import { BacktestJobs } from './paper/BacktestJobs';
+import { runOptionsBacktest } from './paper/optionsBacktest';
+import type { OptionsHistory } from './data/OptionsHistory';
 import { V2Scanner, type ScanOptions } from './scanner/V2Scanner';
 import { atmReference, resolveUnits, unitInstruments } from './universe/resolve';
 
@@ -65,6 +68,8 @@ export interface V2ServiceDeps {
   products: ProductService;
   channels?: ChannelFactory;
   clock?: () => number;
+  /** The Options backtest's history (Upstox): expired contracts, its login's status, and a logout. */
+  options?: { history: OptionsHistory; status: () => Promise<OptionsSourceStatus>; logout: () => Promise<void> };
 }
 
 export const DEFAULT_CONFIG: ConnectionConfig = {
@@ -117,6 +122,8 @@ export class V2Service {
   /** Backtests: candles kept between runs, and the background jobs (memory only). */
   private readonly candleCache = new CandleCache();
   private readonly backtestJobs = new BacktestJobs(() => this.now());
+  /** Options backtests (Upstox, expired contracts): their own jobs, so one of each kind can run. */
+  private readonly optionsJobs = new BacktestJobs(() => this.now());
 
   constructor(private readonly deps: V2ServiceDeps) {
     this.channels = deps.channels ?? envChannelFactory;
@@ -497,6 +504,13 @@ export class V2Service {
 
   /** The strategy of a backtest request, after checking the request (and that Kite is logged in). */
   private async backtestStrategy(req: BacktestRequest): Promise<V2Strategy> {
+    const s = await this.checkedBacktest(req);
+    await this.requireKite('backtest');
+    return s;
+  }
+
+  /** The request's strategy, its period and exit rules checked (the same for both backtests). */
+  private async checkedBacktest(req: BacktestRequest): Promise<V2Strategy> {
     const s = await this.getStrategy(req.strategyId);
     if (req.from > req.to) throw new V2ServiceError(400, '“From” must be on or before “to”');
     // Exit rules use the strategy's legs and indicators: the same checks as the strategy's own conditions.
@@ -506,7 +520,6 @@ export class V2Service {
       const issue = validateStrategy({ ...s.definition, expression: x.when }).find((i) => i.severity === 'error');
       if (issue) throw new V2ServiceError(400, `Exit rule: ${issue.message}`);
     }
-    await this.requireKite('backtest');
     return s;
   }
 
@@ -545,6 +558,55 @@ export class V2Service {
   cancelBacktest(id: string): BacktestJob {
     const job = this.backtestJobs.cancel(id);
     if (!job) throw new V2ServiceError(404, 'This backtest is no longer in memory');
+    return job;
+  }
+
+  // ---- options backtest (Upstox: expired contracts) ----------------------------------------------
+
+  /** The Options backtest's history, after checking it is set up and logged in. */
+  private async optionsHistory(): Promise<OptionsHistory> {
+    const o = this.deps.options;
+    if (!o) throw new V2ServiceError(503, 'Upstox isn’t set up: add UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI to the environment and restart the app.');
+    const c = await o.status();
+    if (!c.connected) throw new V2ServiceError(409, `Upstox isn’t logged in, so there are no expired contracts to test on. ${c.lastError ? `${c.lastError.replace(/\.$/, '')}. ` : ''}Use “Connect Upstox”, then run it again.`);
+    return o.history;
+  }
+
+  /** The Options backtest's Upstox login, for the page (not set up = configured false). */
+  async optionsStatus(): Promise<OptionsSourceStatus> {
+    if (!this.deps.options) return { source: 'UPSTOX', configured: false, connected: false, lastError: 'UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI are not all set on the server.' };
+    return this.deps.options.status();
+  }
+
+  async optionsLogout(): Promise<{ ok: true }> {
+    await this.deps.options?.logout();
+    return { ok: true };
+  }
+
+  /** Start an Options backtest in the background (cancelling one still running); follow it with optionsBacktestJob. */
+  async startOptionsBacktest(req: BacktestRequest): Promise<BacktestJob> {
+    const s = await this.checkedBacktest(req);
+    const products = await this.deps.store.products.list({ ids: [...new Set(req.products)] });
+    const mcx = products.filter((p) => p.market === 'MCX');
+    if (mcx.length) throw new V2ServiceError(400, `Upstox has no expired MCX contracts — remove ${mcx.map((p) => p.symbol).join(', ')} (the Options backtest covers NSE and BSE products)`);
+    const history = await this.optionsHistory();
+    const meta = { strategyId: s.id, strategyName: s.name, request: req, total: new Set(req.products).size };
+    return this.optionsJobs.start(meta, (run) => runOptionsBacktest({ store: this.deps.store, history, now: () => this.now() }, s, req, run));
+  }
+
+  optionsBacktestJob(id: string): BacktestJob {
+    const job = this.optionsJobs.get(id);
+    if (!job) throw new V2ServiceError(404, 'This Options backtest is no longer in memory (the app restarted, or it finished over an hour ago) — run it again');
+    return job;
+  }
+
+  latestOptionsBacktestJob(): BacktestJob | null {
+    return this.optionsJobs.latest();
+  }
+
+  cancelOptionsBacktest(id: string): BacktestJob {
+    const job = this.optionsJobs.cancel(id);
+    if (!job) throw new V2ServiceError(404, 'This Options backtest is no longer in memory');
     return job;
   }
 

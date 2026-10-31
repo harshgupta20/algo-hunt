@@ -18,6 +18,11 @@ export const H = {
       body: 'What would I have made? Run a strategy over past candles on the products you choose, with your money — every alert traded like a paper trade (cash per trade, target, stop-loss, square-off, charges) — and see the profit or loss, trade by trade.',
       note: 'Nothing is saved or sent.',
     },
+    options: {
+      title: 'Options backtest',
+      body: 'The Backtest on contracts as they were listed — expired ones included, from Upstox. At every candle the legs are re-picked like the live scanner does (that day’s expiry, the strike nearest the index), so option strategies can be tested weeks and months back instead of only on today’s contracts.',
+      note: 'Needs an Upstox login (Upstox Plus on the account). NSE and BSE products; Upstox keeps about six months of expired contracts. Nothing is saved or sent.',
+    },
     alerts: { title: 'Alerts', body: 'Active alerts (acknowledge them), the full history and every signal, including suppressed ones.' },
     paper: {
       title: 'Paper trading',
@@ -324,6 +329,40 @@ export const H = {
     trades: { title: 'Trades', body: 'Every simulated trade: entry, exit, why it closed, charges and net P&L.' },
     contracts: { title: 'Contracts', body: 'The contract each leg used — fixed at the strikes around ATM at the start of the period (contracts listed today).' },
     notes: { title: 'How it was tested', body: 'Assumptions and data limits of this backtest.' },
+  } satisfies Record<string, TooltipContent>,
+
+  options: {
+    section: {
+      title: 'Options backtest — expired contracts',
+      body: 'The Backtest on contracts as they were listed. At every trigger candle the legs are re-picked the way the live scanner picks them: the expiry of that day (current / next / far) and the strike nearest the index’s close — each contract with its own lot size. Trades are simulated exactly like the Backtest and paper trading.',
+      note: 'Only days whose expiry list is complete are tested; each product row names the days left out. Nothing is saved or sent.',
+    },
+    products: { title: 'Products', body: 'NSE and BSE indices and stocks with futures & options. MCX isn’t offered — Upstox has no expired MCX contracts.' },
+    period: {
+      title: 'Period',
+      body: 'Past trading days (IST, inclusive). Upstox keeps about six months of expired contracts and serves complete days only, so the test ends yesterday at the latest.',
+      note: 'Days before Upstox’s first known expiry, or around an expiry missing from its list, aren’t tested — the product row says which.',
+    },
+    quick: { title: 'Quick period', body: 'The most recent complete days (up to yesterday).' },
+    run: {
+      title: 'Run options backtest',
+      body: 'Fetch the contract lists and candles from Upstox, find every alert and trade it. Runs in the background — switch tabs freely and come back.',
+      note: 'Upstox allows about 2,000 requests per 30 minutes: long periods on many products wait for that. A re-run reuses what was already fetched.',
+    },
+    calls: { title: 'Upstox requests', body: 'Contract lists and candle sets fetched from Upstox so far, and those answered from memory (fetched earlier while the app was running).' },
+    contracts: { title: 'Contracts used', body: 'Every contract the legs read — re-picked at each candle, so a leg shows how many contracts it used over how many expiries (first … last).' },
+    connection: {
+      title: 'Upstox',
+      body: 'Expired contracts come from your Upstox account. Log in once a day — Upstox ends every login at 3:30 AM IST.',
+      note: 'Expired contracts need Upstox Plus on the account (free to turn on).',
+    },
+    connect: { title: 'Connect Upstox', body: 'Open Upstox’s login page. When you’ve logged in you come straight back here.' },
+    disconnect: { title: 'Log out of Upstox', body: 'End the Upstox session here and at Upstox. The next options backtest needs a new login.' },
+    notConfigured: {
+      title: 'Upstox isn’t set up',
+      body: 'Add UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI to .env, then restart the app.',
+      note: 'UPSTOX_REDIRECT_URI must be exactly the Redirect URL saved on your Upstox app — http://localhost:3000/redirect/upstox.',
+    },
   } satisfies Record<string, TooltipContent>,
 
   lists: {

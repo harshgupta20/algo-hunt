@@ -1,21 +1,15 @@
 /**
  * Backtest a strategy on products with money: the alerts it would have sent over past candles (the same
- * evaluation as Compare), each traded exactly like a paper trade, the exits found on the traded contract's
- * 1-minute Kite candles.
- *
- *   entry     the leg's close on the alert's trigger candle ± slippage; whole lots for the cash per trade
- *   money     a trade opens only if the starting capital + realised P&L − money already in use covers it
- *   exits     stop-loss / target inside each minute (both in one minute → the stop; a gap past the stop fills
- *             at the minute's open), an exit rule coming true (at that candle's close), the other group firing,
- *             the day's square-off, expiry, or the end of the test (still open → closed at the last price)
- *   one open position per product (Compare tests one strike position)
+ * evaluation as Compare), each traded exactly like a paper trade (simulate.ts), the exits found on the traded
+ * contract's 1-minute Kite candles.
  *
  * Any number of products and any period: candles come product by product through Kite's request queue (the
  * cost is only waiting), through the candle cache so a re-run is quick; a job reports progress and can cancel.
  * Contracts are those listed today with their strikes fixed at the start of the period, and Kite has no
- * candles for expired contracts (each product notes where its data starts).
+ * candles for expired contracts (each product notes where its data starts) — the Options backtest
+ * (optionsBacktest.ts) replays expired contracts from Upstox instead.
  */
-import type { BacktestJob, BacktestProduct, BacktestRequest, BacktestResult, BacktestSkip, CompareProductResult, PaperExitReason, PaperTrade, StrategyDefinition, V2Instrument, V2Strategy, V2Unit } from '@/shared/v2';
+import type { BacktestJob, BacktestProduct, BacktestRequest, BacktestResult, CompareProductResult, StrategyDefinition, V2Instrument, V2Strategy } from '@/shared/v2';
 import { nodeText, paperGroups, resolveRules } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { calendars, dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
@@ -24,15 +18,13 @@ import type { V2DataProvider } from '../data/DataProvider';
 import { exitDefinition, type V2Tools } from '../debug/tools';
 import type { RawCandle } from '../engine/candles';
 import type { V2Store } from '../persistence/V2Store';
-import { buildTrade, exitDeadline, firedGroupOf, settle, squareOffAt } from './PaperTrader';
+import { exitKey, ruleFor as ruleOf, simulate, type SimAlert } from './simulate';
 import { breakdowns, paperStats, spark } from './summary';
 
-const MINUTE = 60_000;
 const DAY = 86_400_000;
 const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const msg = (err: unknown) => (err instanceof Error ? err.message : String(err));
-const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 
 export interface BacktestDeps {
   store: V2Store;
@@ -51,28 +43,6 @@ export interface BacktestRun {
   stats: CandleStats;
 }
 
-interface Open {
-  t: PaperTrade;
-  candles: RawCandle[];
-  /** Next minute candle to look at. */
-  i: number;
-  lastClose: number;
-  deadline: { at: number; reason: 'SQUARE_OFF' | 'EXPIRY' } | null;
-  /** Candle closes after entry where the trade's exit rule is true (ascending). */
-  exits: number[];
-}
-
-/** The rule's key in the exit-rule list (as sent to Compare). */
-const exitKey = (group: string | null) => group ?? '*';
-
-interface AlertEvent {
-  at: number;
-  productId: string;
-  unit: V2Unit;
-  prices: Partial<Record<string, number>>;
-  trace: Parameters<typeof firedGroupOf>[1];
-}
-
 export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req: BacktestRequest, run?: BacktestRun): Promise<BacktestResult> {
   const d: StrategyDefinition = strategy.definition;
   const tf = d.evaluation.triggerTimeframe;
@@ -87,11 +57,7 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
   const symbolOf = (productId: string) => products.get(productId)?.symbol ?? productId.split(':')[1] ?? productId;
   const stats = run?.stats ?? { fetched: 0, cached: 0 };
   const provider = (deps.cache ?? new CandleCache()).wrap(deps.provider, cals, deps.now, stats);
-  /** The group an alert fired and the trade rule it follows (its group's, else the first). */
-  const ruleFor = (trace: AlertEvent['trace']) => {
-    const fired = firedGroupOf(d, trace);
-    return { fired, rule: plan.rules.find((r) => r.group === (fired?.id ?? null)) ?? plan.rules[0] };
-  };
+  const ruleFor = (trace: SimAlert['trace']) => ruleOf(d, plan, trace);
 
   // 1-minute candles of the contracts a product's alerts trade, from its first alert — fetched as soon as its
   // alerts are found, so the job's progress is simply products done.
@@ -134,139 +100,24 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
   const exitTimes = new Map(cmp.products.map((r) => [r.productId, r.exits ?? {}]));
 
   // Alerts in time order, across products (money is shared).
-  const events: AlertEvent[] = [];
+  const alerts: SimAlert[] = [];
   for (const r of cmp.products) {
     if (!r.unit) continue;
-    for (const a of r.alerts) events.push({ at: calOf(r.productId).candleClose(a.candleTime * 1000, tf), productId: r.productId, unit: r.unit, prices: a.prices, trace: a.trace });
+    for (const a of r.alerts) alerts.push({ at: calOf(r.productId).candleClose(a.candleTime * 1000, tf), productId: r.productId, unit: r.unit, prices: a.prices, trace: a.trace });
   }
-  events.sort((a, b) => a.at - b.at);
+  alerts.sort((a, b) => a.at - b.at);
 
-  const open = new Map<string, Open>();
-  const closed: PaperTrade[] = [];
-  const skipped: BacktestSkip[] = [];
-  let realized = 0;
-  let inUse = 0;
-  let n = 0;
-
-  const finish = (o: Open, price: number, reason: PaperExitReason, at: number) => {
-    const s = settle(o.t, price, reason);
-    const exitAt = new Date(at).toISOString();
-    closed.push({ ...o.t, ...s, status: 'CLOSED', exitAt, exitReason: reason, lastPrice: price, lastPriceAt: exitAt });
-    open.delete(o.t.slot);
-    inUse -= o.t.capitalUsed;
-    realized += s.netPnl;
-  };
-
-  /** The next timed exit: the square-off / expiry deadline or the exit rule, whichever is first. */
-  const due = (o: Open): { at: number; reason: PaperExitReason } | null => {
-    const rule = o.exits[0];
-    if (rule !== undefined && (!o.deadline || rule < o.deadline.at)) return { at: rule, reason: 'EXIT_RULE' };
-    return o.deadline;
-  };
-
-  /** Walk a trade's minutes that closed by `until`; true when it closed. */
-  const advance = (o: Open, until: number): boolean => {
-    const t = o.t;
-    const buy = t.side === 'BUY';
-    while (o.i < o.candles.length) {
-      const c = o.candles[o.i]!;
-      const t0 = c.time * 1000;
-      if (t0 + MINUTE > until) break;
-      const next = due(o);
-      if (next && t0 >= next.at) {
-        finish(o, o.lastClose, next.reason, next.at);
-        return true;
-      }
-      const hitStop = t.stopPrice !== null && (buy ? c.low <= t.stopPrice : c.high >= t.stopPrice);
-      const hitTarget = t.targetPrice !== null && (buy ? c.high >= t.targetPrice : c.low <= t.targetPrice);
-      if (hitStop) {
-        // A gap through the stop fills at the minute's open.
-        finish(o, buy ? Math.min(t.stopPrice!, c.open) : Math.max(t.stopPrice!, c.open), 'STOP', t0 + MINUTE);
-        return true;
-      }
-      if (hitTarget) {
-        finish(o, t.targetPrice!, 'TARGET', t0 + MINUTE);
-        return true;
-      }
-      o.lastClose = c.close;
-      o.i++;
-    }
-    const next = due(o);
-    if (next && until > next.at && (o.i >= o.candles.length || o.candles[o.i]!.time * 1000 >= next.at)) {
-      finish(o, o.lastClose, next.reason, next.at);
-      return true;
-    }
-    return false;
-  };
-
-  const skip = (e: AlertEvent, reason: string) => skipped.push({ productId: e.productId, at: new Date(e.at).toISOString(), reason });
-
-  for (const e of events) {
-    for (const o of [...open.values()]) advance(o, e.at);
-    const product = products.get(e.productId);
-    if (!product) continue;
-    const cal = calOf(e.productId);
-    const { fired, rule } = ruleFor(e.trace);
-    const slot = e.productId;
-    const cur = open.get(slot);
-    if (cur) {
-      if (cur.t.group === (fired?.id ?? null)) continue; // the same group again: keep the position
-      if (!plan.exitOnOpposite) {
-        skip(e, `${fired?.label ?? 'Alert'}: a trade was still open`);
-        continue;
-      }
-      finish(cur, cur.lastClose, 'OPPOSITE', e.at);
-    }
-    if (!rule?.leg) {
-      if (!cur) skip(e, `${fired?.label ?? 'This group'} doesn't trade`);
-      continue;
-    }
-    const inst = e.unit.legs[rule.leg] ?? null;
-    if (!inst) {
-      skip(e, `Leg ${rule.leg} has no listed contract`);
-      continue;
-    }
-    if (inst.kind === 'SPOT' && product.kind !== 'STOCK') {
-      skip(e, 'An index can’t be traded — choose its future or an option leg');
-      continue;
-    }
-    const squareOffTime = product.market === 'MCX' ? plan.squareOffMcx : plan.squareOffNse;
-    if (plan.squareOff && e.at >= squareOffAt(cal, istDate(e.at), squareOffTime)) {
-      skip(e, `After the ${squareOffTime} square-off — switch “Square off daily” off to hold trades overnight`);
-      continue;
-    }
-    const candles = minutes.get(inst.token) ?? [];
-    const ref = e.prices[rule.leg] ?? candles.filter((c) => c.time * 1000 + MINUTE <= e.at).at(-1)?.close;
-    if (ref === undefined || !(ref > 0)) {
-      skip(e, `No price for ${inst.symbol}`);
-      continue;
-    }
-    const draft = buildTrade({
-      plan,
-      instrument: inst,
-      productKind: product.kind,
-      side: rule.side,
-      ref,
-      at: e.at,
-      ids: { strategyId: strategy.id, connectionId: `backtest:${e.productId}`, productId: e.productId, slot, unitKey: e.unit.key, alertId: null },
-      group: fired,
-      leg: rule.leg,
-    });
-    if (req.capital !== null) {
-      const free = req.capital + realized - inUse;
-      if (draft.capitalUsed > free) {
-        skip(e, `Not enough money: needs ${inr(draft.capitalUsed)}${draft.marginEstimated ? ' margin (est.)' : ''}, ${inr(Math.max(0, free))} free`);
-        continue;
-      }
-    }
-    const t: PaperTrade = { ...draft, id: `bt-${++n}` };
-    const first = candles.findIndex((c) => c.time * 1000 >= e.at);
-    const exits = (exitTimes.get(e.productId)?.[exitKey(rule.group)] ?? []).filter((x) => x > e.at);
-    open.set(slot, { t, candles, i: first < 0 ? candles.length : first, lastClose: ref, deadline: exitDeadline(t, cal), exits });
-    inUse += t.capitalUsed;
-  }
-  // Play out what's still open, then close the rest at the last price.
-  for (const o of [...open.values()]) if (!advance(o, end)) finish(o, o.lastClose, 'END', Math.min(end, (o.candles.at(-1)?.time ?? end / 1000) * 1000 + MINUTE));
+  const { closed, skipped } = simulate({
+    strategy,
+    plan,
+    capital: req.capital,
+    products,
+    calOf,
+    alerts,
+    minutes: (inst) => minutes.get(inst.token) ?? [],
+    exitsFor: (e, key) => exitTimes.get(e.productId)?.[key] ?? [],
+    end,
+  });
 
   const byProduct = (id: string) => closed.filter((t) => t.productId === id);
   const results: BacktestProduct[] = cmp.products.map((r) => {

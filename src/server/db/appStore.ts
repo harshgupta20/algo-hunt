@@ -35,6 +35,26 @@ export interface KiteSessionRepository {
   clear(): Promise<void>;
 }
 
+/** The Upstox login (V2 Options backtest): the same life cycle as Kite's; tokens stop working at 03:30 IST. */
+export interface UpstoxSessionRecord {
+  /** Encrypted access token (base64 iv.tag.ciphertext). */
+  accessTokenEnc?: string;
+  userId?: string;
+  userName?: string;
+  loginTime?: string;
+  expiresAt?: string;
+  state: KiteSessionState;
+  lastError?: string;
+  updatedAt?: string;
+}
+
+export interface UpstoxSessionRepository {
+  get(): Promise<UpstoxSessionRecord | null>;
+  save(record: UpstoxSessionRecord): Promise<void>;
+  markState(state: KiteSessionState, lastError?: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
 export interface PreferencesRepository {
   get(): Promise<UserPreferences>;
   save(prefs: UserPreferences): Promise<UserPreferences>;
@@ -42,6 +62,7 @@ export interface PreferencesRepository {
 
 export interface AppStore {
   readonly kite: KiteSessionRepository;
+  readonly upstox: UpstoxSessionRepository;
   readonly preferences: PreferencesRepository;
 }
 
@@ -90,6 +111,51 @@ class PgKiteSessionRepository implements KiteSessionRepository {
   }
 }
 
+class PgUpstoxSessionRepository implements UpstoxSessionRepository {
+  constructor(private readonly pool: pg.Pool) {}
+
+  async get(): Promise<UpstoxSessionRecord | null> {
+    const res = await this.pool.query('SELECT * FROM upstox_session WHERE id = 1');
+    const r = res.rows[0];
+    if (!r) return null;
+    const iso = (v: unknown) => (v == null ? undefined : new Date(v as string).toISOString());
+    return {
+      accessTokenEnc: r.access_token ?? undefined,
+      userId: r.user_id ?? undefined,
+      userName: r.user_name ?? undefined,
+      loginTime: iso(r.login_time),
+      expiresAt: iso(r.expires_at),
+      state: r.state,
+      lastError: r.last_error ?? undefined,
+      updatedAt: iso(r.updated_at),
+    };
+  }
+
+  async save(u: UpstoxSessionRecord): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO upstox_session (id, access_token, user_id, user_name, login_time, expires_at, state, last_error, updated_at)
+       VALUES (1,$1,$2,$3,$4,$5,$6,$7, now())
+       ON CONFLICT (id) DO UPDATE SET
+         access_token = EXCLUDED.access_token, user_id = EXCLUDED.user_id, user_name = EXCLUDED.user_name,
+         login_time = EXCLUDED.login_time, expires_at = EXCLUDED.expires_at, state = EXCLUDED.state,
+         last_error = EXCLUDED.last_error, updated_at = now()`,
+      [u.accessTokenEnc ?? null, u.userId ?? null, u.userName ?? null, u.loginTime ?? null, u.expiresAt ?? null, u.state, u.lastError ?? null],
+    );
+  }
+
+  async markState(state: KiteSessionState, lastError?: string): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO upstox_session (id, state, last_error, updated_at) VALUES (1, $1, $2, now())
+       ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, last_error = EXCLUDED.last_error, updated_at = now()`,
+      [state, lastError ?? null],
+    );
+  }
+
+  async clear(): Promise<void> {
+    await this.pool.query('DELETE FROM upstox_session WHERE id = 1');
+  }
+}
+
 class PgPreferencesRepository implements PreferencesRepository {
   constructor(private readonly pool: pg.Pool) {}
 
@@ -111,17 +177,19 @@ class PgPreferencesRepository implements PreferencesRepository {
 
 export class PgAppStore implements AppStore {
   readonly kite: KiteSessionRepository;
+  readonly upstox: UpstoxSessionRepository;
   readonly preferences: PreferencesRepository;
 
   constructor(pool: pg.Pool = getPool()) {
     this.kite = new PgKiteSessionRepository(pool);
+    this.upstox = new PgUpstoxSessionRepository(pool);
     this.preferences = new PgPreferencesRepository(pool);
   }
 }
 
 // ---- in memory (one-process app, see runtime.ts) -----------------------------------------------------
 
-const g = globalThis as unknown as { __ashAppState?: { kite?: KiteSessionRecord | null; prefs?: UserPreferences } };
+const g = globalThis as unknown as { __ashAppState?: { kite?: KiteSessionRecord | null; upstox?: UpstoxSessionRecord | null; prefs?: UserPreferences } };
 
 /**
  * The Kite session and preferences read once and kept in memory, written through on change: the Kite status
@@ -129,6 +197,7 @@ const g = globalThis as unknown as { __ashAppState?: { kite?: KiteSessionRecord 
  */
 export class RuntimeAppStore implements AppStore {
   readonly kite: KiteSessionRepository;
+  readonly upstox: UpstoxSessionRepository;
   readonly preferences: PreferencesRepository;
 
   constructor(db: AppStore) {
@@ -151,6 +220,25 @@ export class RuntimeAppStore implements AppStore {
       clear: async () => {
         await db.kite.clear();
         st.kite = null;
+      },
+    };
+    this.upstox = {
+      get: async () => {
+        if (st.upstox === undefined) st.upstox = await db.upstox.get();
+        return copy(st.upstox);
+      },
+      save: async (r) => {
+        await db.upstox.save(r);
+        st.upstox = { ...copy(r), updatedAt: new Date().toISOString() };
+      },
+      markState: async (state, lastError) => {
+        await db.upstox.markState(state, lastError);
+        const cur = st.upstox === undefined ? await db.upstox.get() : st.upstox;
+        st.upstox = { ...(cur ?? {}), state, lastError, updatedAt: new Date().toISOString() };
+      },
+      clear: async () => {
+        await db.upstox.clear();
+        st.upstox = null;
       },
     };
     this.preferences = {

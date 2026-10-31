@@ -14,6 +14,12 @@ const EnvSchema = z.object({
   KITE_API_KEY: z.string().optional(),
   KITE_API_SECRET: z.string().optional(),
 
+  /** Upstox (optional): expired option / futures candles for the V2 Options backtest. */
+  UPSTOX_API_KEY: z.string().optional(),
+  UPSTOX_API_SECRET: z.string().optional(),
+  /** Must equal the Redirect URL saved on the Upstox app, e.g. http://localhost:3000/redirect/upstox. */
+  UPSTOX_REDIRECT_URI: z.string().optional(),
+
   /** Password protecting the dashboard + API (required in production). */
   APP_PASSWORD: z.string().optional(),
   /** Shared secret for the scheduler calling /api/cron/* (required in production). */
@@ -51,6 +57,12 @@ function load() {
       apiSecret: env.KITE_API_SECRET,
       isConfigured: Boolean(env.KITE_API_KEY && env.KITE_API_SECRET),
     },
+    upstox: {
+      apiKey: env.UPSTOX_API_KEY?.trim() || undefined,
+      apiSecret: env.UPSTOX_API_SECRET?.trim() || undefined,
+      redirectUri: env.UPSTOX_REDIRECT_URI?.trim() || undefined,
+      isConfigured: Boolean(env.UPSTOX_API_KEY?.trim() && env.UPSTOX_API_SECRET?.trim() && env.UPSTOX_REDIRECT_URI?.trim()),
+    },
     appPassword: env.APP_PASSWORD,
     cronSecret: env.CRON_SECRET,
     telegram:
@@ -81,4 +93,13 @@ export function requireKiteCredentials(): { apiKey: string; apiSecret: string } 
     throw new Error('Zerodha Kite is not configured: set KITE_API_KEY and KITE_API_SECRET.');
   }
   return { apiKey: kite.apiKey, apiSecret: kite.apiSecret };
+}
+
+/** Upstox credentials, or a clear error explaining which env vars to set. */
+export function requireUpstoxCredentials(): { apiKey: string; apiSecret: string; redirectUri: string } {
+  const { upstox } = getConfig();
+  if (!upstox.apiKey || !upstox.apiSecret || !upstox.redirectUri) {
+    throw new Error('Upstox is not configured: set UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI.');
+  }
+  return { apiKey: upstox.apiKey, apiSecret: upstox.apiSecret, redirectUri: upstox.redirectUri };
 }

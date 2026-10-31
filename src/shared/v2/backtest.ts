@@ -54,7 +54,7 @@ export interface BacktestProduct {
   skipped: number;
   stats: PaperStats;
   spark: number[];
-  /** Contracts the legs used (fixed at the start of the period). */
+  /** Contracts the legs used (Backtest: fixed at the start of the period; Options backtest: every one re-picked). */
   contracts: string[];
   notes: string[];
   errors: string[];
@@ -79,6 +79,8 @@ export interface BacktestResult {
   skipped: BacktestSkip[];
   /** Candle sets fetched from Kite (the rest came from memory — an earlier run's). */
   requests: number;
+  /** Where the candles came from: Kite (today's contracts, the Backtest) or Upstox (expired contracts, the Options backtest). Absent = Kite. */
+  source?: 'KITE' | 'UPSTOX';
   notes: string[];
 }
 
@@ -128,6 +130,19 @@ export const backtestRequestSchema = z.object({
   cooldownMinutes: z.number().min(0).max(1440).nullable().optional(),
   exits: z.array(z.object({ group: z.string().nullable(), when: exprNode })).max(8).optional(),
 }) as z.ZodType<BacktestRequest>;
+
+/** The Options backtest's history (Upstox): set up, logged in, until when. */
+export interface OptionsSourceStatus {
+  source: 'UPSTOX';
+  /** The server has its keys (UPSTOX_API_KEY, UPSTOX_API_SECRET, UPSTOX_REDIRECT_URI). */
+  configured: boolean;
+  connected: boolean;
+  userId?: string;
+  userName?: string;
+  /** When the login stops working (03:30 IST). */
+  expiresAt?: string;
+  lastError?: string;
+}
 
 export const BACKTEST_DEFAULT_CAPITAL = 100_000;
 

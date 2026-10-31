@@ -1,5 +1,5 @@
 /**
- * Typed client for the app-level API (/api/*): Kite login, preferences, health.
+ * Typed client for the app-level API (/api/*): Kite and Upstox logins, preferences, health.
  * V2 has its own client (src/client/v2/api.ts).
  */
 import type { KiteAuthStatus, UserPreferences } from '@ash/shared';
@@ -51,4 +51,8 @@ export const api = {
   kiteSubmitToken: (token: string) => request<{ ok: boolean }>('/kite/session', { method: 'POST', body: JSON.stringify({ token }) }),
   /** Full-page redirect into Kite login; Kite returns to /zerodhaRedirection (or /api/kite/callback). */
   kiteLoginUrl: '/api/kite/login',
+
+  // Upstox login (V2 Options backtest: expired contracts — its status and logout go through /api/v2)
+  /** Complete login with the redirect's code and state (the /redirect/upstox page). */
+  upstoxSubmitCode: (code: string, state: string) => request<{ ok: boolean }>('/upstox/session', { method: 'POST', body: JSON.stringify({ code, state }) }),
 };

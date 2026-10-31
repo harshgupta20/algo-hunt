@@ -6,6 +6,7 @@ import type { AppContext } from './context';
 import { Router } from './http';
 import { preferencesController } from './controllers/preferencesController';
 import { kiteController } from './controllers/kiteController';
+import { upstoxController } from './controllers/upstoxController';
 import { marketController } from './controllers/marketController';
 import { v2Controller } from './controllers/v2Controller';
 import { equityController } from './controllers/equityController';
@@ -92,6 +93,12 @@ export function createRouter(ctx: AppContext): Router {
   r.get('/v2/backtest/jobs/latest', v2.latestBacktestJob); // before /v2/backtest/jobs/:id
   r.get('/v2/backtest/jobs/:id', v2.backtestJob);
   r.delete('/v2/backtest/jobs/:id', v2.cancelBacktest);
+  r.get('/v2/options-backtest/status', v2.optionsStatus);
+  r.post('/v2/options-backtest/logout', v2.optionsLogout);
+  r.post('/v2/options-backtest/jobs', v2.startOptionsBacktest);
+  r.get('/v2/options-backtest/jobs/latest', v2.latestOptionsBacktestJob); // before /v2/options-backtest/jobs/:id
+  r.get('/v2/options-backtest/jobs/:id', v2.optionsBacktestJob);
+  r.delete('/v2/options-backtest/jobs/:id', v2.cancelOptionsBacktest);
   r.get('/v2/alerts', v2.alerts);
   r.get('/v2/alerts/feed', v2.alertFeed); // before /v2/alerts/:id
   r.get('/v2/alerts/counts', v2.alertCounts);
@@ -146,6 +153,14 @@ export function createRouter(ctx: AppContext): Router {
   r.get('/kite/callback', kite.callback);
   r.post('/kite/session', kite.session);
   r.post('/kite/logout', kite.logout);
+
+  // Upstox login (V2 Options backtest: expired contracts).
+  const upstox = upstoxController(ctx);
+  r.get('/upstox/status', upstox.status);
+  r.get('/upstox/login', upstox.login);
+  r.get('/upstox/login-url', upstox.loginUrlJson);
+  r.post('/upstox/session', upstox.session);
+  r.post('/upstox/logout', upstox.logout);
 
   return r;
 }

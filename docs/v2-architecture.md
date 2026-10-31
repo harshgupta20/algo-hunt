@@ -138,6 +138,7 @@ src/shared/v2/        types · catalog (products, legs, timeframes, indicators, 
 src/server/v2/
 ├── calendar/         MarketCalendar (NSE + MCX sessions, per-market holidays)
 ├── data/             DataProvider (interface) · KiteDataProvider (NSE, BSE, NFO, BFO, MCX dumps; shared rate gate)
+│                     · OptionsHistory (interface: the Options backtest's contracts + candles)
 │                     · ProductService (sync + product catalogue + per-product contracts) · CandleService
 ├── universe/         resolve (legs → contracts, ATM, strike positions)
 ├── engine/           candles · indicators · series · evaluator
@@ -146,7 +147,10 @@ src/server/v2/
 ├── live/             LiveWorker · KiteStream · ticks (Kite binary protocol) · LiveCandles · plan · verify
 │                     · FetchQueue · health
 ├── paper/            PaperTrader (open on alerts, exits) · charges (Zerodha charges, margin estimate) · summary
-│                     · backtest (Compare's alerts traded with money on 1-minute candles)
+│                     · backtest (Compare's alerts traded with money on 1-minute candles) · simulate (the money
+│                     side shared by both backtests) · optionsBacktest (expired contracts re-picked per candle)
+├── upstox/           UpstoxHistory (expired + live contracts, coverage, candle pieces, 10 min / 1 h built here)
+│                     · instruments (Upstox contracts → V2 instruments, the daily instrument file)
 ├── debug/            tools (explain now, compare across products)
 ├── persistence/      V2Store · PgV2Store (v2_* tables, migrations 007–011) · RuntimeV2Store (memory layer)
 │                     · writeQueue (background saves) · createStore
@@ -155,9 +159,11 @@ src/server/v2/
 src/server/workers/v2Live.ts   the `npm run live` process (also `--check`, `--force`)
 src/server/background.ts       started by src/instrumentation.ts with the app: the live worker inside `npm start`,
                                the daily history clean-up, saving waiting records on stop
-src/server/db/                 pool (Postgres) · appStore (Kite session, preferences)
+src/server/db/                 pool (Postgres) · appStore (Kite and Upstox sessions, preferences)
+src/server/services/upstox/    upstoxClient (REST, rate gate 20/s · 450/min · 1,900/30 min, typed errors) · upstoxAuth
+                               (login with a checked state, token encrypted, ends 03:30 IST)
 src/client/v2/        V2Hub (tabs) · strategies/ (editor, legs, conditions) · connections/ · compare/ · alerts, products,
-                      paper/ (Paper tab, charts, paper settings fields + connection editor) · backtest/ (Backtest tab)
+                      paper/ (Paper tab, charts, paper settings fields + connection editor) · backtest/ (Backtest and Options tabs)
                       · FilterBar · scanner, settings, dashboard · ProductPicker · ExplainView · help.ts (tooltips)
 ```
 

@@ -7,6 +7,8 @@
 import { requireKiteCredentials } from '../config/index';
 import type { KiteAuthService } from '../services/kite/kiteAuth';
 import type { KiteHistoricalProvider } from '../services/kite/KiteHistoricalProvider';
+import type { UpstoxAuthService } from '../services/upstox/upstoxAuth';
+import { getConfig } from '../config/index';
 import { envChannelFactory } from './alerts/notifications';
 import { KiteDataProvider } from './data/KiteDataProvider';
 import { KiteStream } from './live/KiteStream';
@@ -15,6 +17,7 @@ import { ProductService } from './data/ProductService';
 import { createV2Store } from './persistence/createStore';
 import { memoryMode } from '../runtime';
 import { V2Service } from './V2Service';
+import { UpstoxHistory } from './upstox/UpstoxHistory';
 
 export { V2Service, V2ServiceError } from './V2Service';
 export { LiveWorker } from './live/LiveWorker';
@@ -24,11 +27,24 @@ export interface V2Module {
   service: V2Service;
 }
 
-export function createV2Module(deps: { kiteAuth: KiteAuthService; historical: KiteHistoricalProvider }): V2Module {
+export function createV2Module(deps: { kiteAuth: KiteAuthService; historical: KiteHistoricalProvider; upstoxAuth?: UpstoxAuthService }): V2Module {
   const store = createV2Store();
   const provider = new KiteDataProvider(deps.kiteAuth, deps.historical);
   const products = new ProductService(store, provider);
-  return { service: new V2Service({ store, provider, products }) };
+  // The Options backtest's history: Upstox, when its keys are set.
+  const upstox = deps.upstoxAuth;
+  const options =
+    upstox && getConfig().upstox.isConfigured
+      ? {
+          history: new UpstoxHistory({ api: () => upstox.api(), calendar: () => store.calendar.list() }),
+          status: async () => {
+            const st = await upstox.status();
+            return { source: 'UPSTOX' as const, configured: st.enabled, connected: st.state === 'connected', userId: st.userId, userName: st.userName, expiresAt: st.expiresAt, lastError: st.lastError };
+          },
+          logout: () => upstox.logout(),
+        }
+      : undefined;
+  return { service: new V2Service({ store, provider, products, options }) };
 }
 
 /** The Kite session as the live worker sees it: credentials while logged in, else null. */

@@ -132,6 +132,34 @@ comes first. The results' notes repeat the rules in words.
 MCX quantities are in the exchange's units: one CRUDEOIL lot is 100 barrels, Gold Mini 100 g (priced per 10 g),
 Copper 2,500 kg, … — so a single lot often needs more than the cash per trade (shown *over budget*).
 
+## 2c. Backtest options on expired contracts (Options tab)
+
+The Backtest on contracts **as they were listed** — expired ones included — from **Upstox** instead of Kite. Use it
+for option (and futures) strategies over weeks and months: Kite only has today's contracts.
+
+- **Every trigger candle re-picks the legs the way the live scanner does**: the expiry of that day (current / next /
+  far among the expiries listed then — on an expiry day the expiring contract is still current) and the strike
+  nearest the index's (or stock's) close on that candle, plus the strike position. Each contract keeps **its own lot
+  size** (NIFTY was 75 a lot before 65, …). A unit met for the first time takes its previous result from that unit,
+  exactly like the scanner, so "becomes true" alerts behave the same.
+- Trades are the Backtest's (the same code): entry at the alert candle's close ± slippage, exits on the traded
+  contract's 1-minute candles, charges, capital. **Exit rules** are checked on the legs the trade was opened with.
+- **Products**: NSE and BSE indices and stocks with F&O. **No MCX** — Upstox has no expired MCX contracts.
+- **Period**: complete past days (it ends yesterday at the latest). Upstox keeps about **six months** of expired
+  contracts. Days before Upstox's first known expiry, or around an expiry missing from its list, are **not tested**
+  (the product row says which days and why) — the test never guesses which contract was current.
+- Results look like the Backtest's; a product row's **contracts** list how many contracts each leg used over how
+  many expiries (first … last).
+
+**Setup (once)**: an Upstox account with **Upstox Plus** turned on (free; brokerage on that account becomes ₹30 an
+order), an app at https://account.upstox.com/developer/apps with Redirect URL `http://localhost:3000/redirect/upstox`,
+and in `.env`: `UPSTOX_API_KEY`, `UPSTOX_API_SECRET`, `UPSTOX_REDIRECT_URI=http://localhost:3000/redirect/upstox`
+(exactly as saved on the app). Restart the app (it adds the `upstox_session` table). **Each day**: **Connect Upstox**
+on the Options tab — Upstox ends every login at 3:30 AM IST.
+
+Upstox allows about 2,000 requests per 30 minutes; the app paces itself under that, so a long period on many products
+just takes longer. A re-run reuses what was already fetched while the app keeps running.
+
 ## 3. Connect and switch on (Connections tab)
 
 1. Click **New connection**, pick the strategy, then tick one or more products.

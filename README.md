@@ -169,6 +169,7 @@ project shares its compute-hours).
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `KITE_API_KEY`, `KITE_API_SECRET` | yes | Kite Connect app (the secret also encrypts the stored access token) |
+| `UPSTOX_API_KEY`, `UPSTOX_API_SECRET`, `UPSTOX_REDIRECT_URI` | no | V2 → Options backtest (expired contracts from Upstox; needs Upstox Plus). The redirect URL must equal the one on the Upstox app, e.g. `http://localhost:3000/redirect/upstox` |
 | `APP_PASSWORD` | for `npm start` | Login password |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | no | Telegram alerts via our bot [@algohuntbot](https://t.me/algohuntbot). Recipients (several people / groups) are managed in V2 → Settings; `TELEGRAM_CHAT_ID` (comma-separated) is the fallback |
 | `RESEND_API_KEY` | no | Email alerts (recipients and sender in V2 → Settings) |

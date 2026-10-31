@@ -6,11 +6,14 @@
  *            here only) · what each group trades · alert settings
  *   results  final capital and return, the paper-trading figures and charts, by product, every trade,
  *            alerts that weren't traded (and why), how it was tested
+ * Two sources, one page: Kite (the Backtest tab — today's contracts) and Upstox (the Options tab — expired
+ * contracts re-picked at every candle, NSE / BSE only, complete past days only, an Upstox login).
  * Nothing is saved or sent.
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Download, FlaskConical, LogOut, Plus, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, FlaskConical, LogIn, LogOut, Plus, Trash2, X } from 'lucide-react';
 import clsx from 'clsx';
 import type { BacktestJob, BacktestRequest, BacktestResult, ConnectionConfig, ExprNode, GroupNode, PaperPlan, PaperRule, StrategyDefinition } from '@/shared/v2';
 import { BACKTEST_DEFAULT_CAPITAL, EXPIRY_MODES, TIMEFRAME, defaultPaperPlan, paperGroups, resolveRules } from '@/shared/v2';
@@ -38,6 +41,22 @@ const QUICK = [
   { days: 30, label: '1 month' },
   { days: 90, label: '3 months' },
 ];
+/** Options backtest: complete days up to yesterday — Upstox keeps about six months of expired contracts. */
+const QUICK_OPTIONS = [
+  { days: 7, label: '1 week' },
+  { days: 30, label: '1 month' },
+  { days: 90, label: '3 months' },
+  { days: 180, label: '6 months' },
+];
+
+export type BacktestSource = 'kite' | 'upstox';
+
+/** Where a backtest runs: its job endpoints and its own query key (one of each kind can run). */
+const JOBS = {
+  kite: { key: 'v2-backtest-job', start: v2Api.startBacktest, get: v2Api.backtestJob, latest: v2Api.latestBacktest, cancel: v2Api.cancelBacktest },
+  upstox: { key: 'v2-options-job', start: v2Api.startOptionsBacktest, get: v2Api.optionsBacktestJob, latest: v2Api.latestOptionsBacktest, cancel: v2Api.cancelOptionsBacktest },
+} satisfies Record<BacktestSource, unknown>;
+const sourceName = (r: Pick<BacktestResult, 'source'>) => (r.source === 'UPSTOX' ? 'Upstox' : 'Kite');
 /** Kite answers ~3 candle requests a second. */
 const SECONDS_PER_REQUEST = 0.35;
 const duration = (seconds: number) => {
@@ -143,7 +162,7 @@ function skipHint(reason: string): string | null {
   if (reason.startsWith('After the')) return 'Switch “Square off daily” off in the trades settings to hold positions overnight.';
   if (reason.startsWith('An index can’t be traded')) return 'In “What each group trades”, pick the future or an option leg instead of the index.';
   if (/doesn['’]t trade/.test(reason)) return 'In “What each group trades”, choose a leg for that group.';
-  if (reason.startsWith('No price')) return 'Kite had no candles for that contract at the alert — try a shorter, more recent period.';
+  if (reason.startsWith('No price')) return 'There were no candles for that contract at the alert — it may not have traded yet.';
   return null;
 }
 
@@ -219,7 +238,7 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
         <span className="font-semibold text-slate-200">{r.strategyName}</span>
         <span>
-          · {r.products.length} product{r.products.length === 1 ? '' : 's'} · {r.from} → {r.to} · {TIMEFRAME[r.triggerTimeframe].label} candles · {r.requests} Kite request(s)
+          · {r.products.length} product{r.products.length === 1 ? '' : 's'} · {r.from} → {r.to} · {TIMEFRAME[r.triggerTimeframe].label} candles · {r.requests} {sourceName(r)} request(s)
         </span>
         <Tooltip content={H.paper.csv} className="ml-auto">
           <button type="button" className="btn-ghost py-1 text-xs" disabled={!r.trades.length} onClick={() => download(`backtest-${r.strategyName.replace(/\W+/g, '-')}-${r.from}-${r.to}.csv`, toCsv(r.trades, names))}>
@@ -296,7 +315,7 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
                     <tr>
                       <td className={clsx(td, 'text-slate-500 tabular-nums')}>{i + 1}</td>
                       <td className={td}>
-                        <Tooltip content={{ ...H.backtest.contracts, note: p.contracts.join(' · ') || 'No contracts resolved' }}>
+                        <Tooltip content={{ ...(r.source === 'UPSTOX' ? H.options.contracts : H.backtest.contracts), note: p.contracts.join(' · ') || 'No contracts resolved' }}>
                           <button type="button" aria-expanded={isOpen} onClick={() => setOpenRow(isOpen ? null : p.productId)} className="flex items-center gap-1.5 text-left">
                             {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
                             <span className="leading-tight">
@@ -395,8 +414,9 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
   );
 }
 
-/** A backtest running on the server: products done, time left, Kite requests, cancel. */
-function JobProgress({ job, marketOpen, onCancel, cancelling }: { job: BacktestJob; marketOpen: boolean; onCancel: () => void; cancelling: boolean }) {
+/** A backtest running on the server: products done, time left, Kite / Upstox requests, cancel. */
+function JobProgress({ job, source, marketOpen, onCancel, cancelling }: { job: BacktestJob; source: BacktestSource; marketOpen: boolean; onCancel: () => void; cancelling: boolean }) {
+  const upstox = source === 'upstox';
   const pct = job.total ? (job.done / job.total) * 100 : 0;
   return (
     <div role="status" aria-live="polite" className="rounded-lg border border-accent/30 bg-accent/5 p-3">
@@ -409,9 +429,9 @@ function JobProgress({ job, marketOpen, onCancel, cancelling }: { job: BacktestJ
         </Tooltip>
         {job.current && <span className="text-slate-400">{job.current}</span>}
         {job.phase === 'CANDLES' && <span className="text-slate-400">· {job.etaSeconds === null ? 'estimating time left…' : `~${duration(job.etaSeconds)} left`}</span>}
-        <Tooltip content={H.backtest.calls}>
+        <Tooltip content={upstox ? H.options.calls : H.backtest.calls}>
           <span className="text-slate-500">
-            · {job.fetched.toLocaleString('en-IN')} Kite request{job.fetched === 1 ? '' : 's'}
+            · {job.fetched.toLocaleString('en-IN')} {upstox ? 'Upstox' : 'Kite'} request{job.fetched === 1 ? '' : 's'}
             {job.cached > 0 && ` · ${job.cached.toLocaleString('en-IN')} from memory`}
           </span>
         </Tooltip>
@@ -426,7 +446,7 @@ function JobProgress({ job, marketOpen, onCancel, cancelling }: { job: BacktestJ
       </div>
       <p className="mt-2 text-[11px] text-slate-500">
         {job.strategyName} — runs in the background: switch tabs freely, the result waits here.
-        {marketOpen && (
+        {marketOpen && !upstox && (
           <Tooltip content={H.backtest.marketOpen}>
             <span className="ml-1 text-warn">A market is open — live scans share Kite’s queue with this backtest.</span>
           </Tooltip>
@@ -436,12 +456,71 @@ function JobProgress({ job, marketOpen, onCancel, cancelling }: { job: BacktestJ
   );
 }
 
-export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string }) {
+/** The Options backtest's Upstox login: who is connected and until when, or the way to log in (and what went wrong). */
+function UpstoxConnection() {
+  const params = useSearchParams();
+  const qc = useQueryClient();
+  const status = useQuery({ queryKey: ['v2-options-status'], queryFn: v2Api.optionsStatus, refetchInterval: 60_000, refetchOnWindowFocus: true });
+  const logout = useMutation({ mutationFn: v2Api.optionsLogout, onSuccess: () => qc.invalidateQueries({ queryKey: ['v2-options-status'] }) });
+  const s = status.data;
+  const returned = params.get('upstox');
+  const message = params.get('message');
+  if (!s) return status.error ? <p className="text-xs text-warn">Upstox status: {(status.error as Error).message}</p> : null;
+  if (!s.configured) {
+    return (
+      <div className="rounded-lg border border-warn/30 bg-warn/5 p-3 text-xs text-slate-300">
+        <p className="flex items-center gap-1 font-semibold text-warn">
+          {H.options.notConfigured.title} <InfoTip content={H.options.notConfigured} />
+        </p>
+        <p className="mt-0.5">{H.options.notConfigured.body}</p>
+        <p className="mt-0.5 text-slate-500">{H.options.notConfigured.note}</p>
+      </div>
+    );
+  }
+  const connected = s.connected;
+  return (
+    <div className={clsx('flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border p-2.5 text-xs', connected ? 'border-ink-700/60 bg-ink-950/30' : 'border-warn/30 bg-warn/5')}>
+      <Tooltip content={H.options.connection}>
+        <span className="font-semibold text-slate-200">Upstox</span>
+      </Tooltip>
+      {connected ? (
+        <span className="text-slate-400">
+          logged in{s.userName ? ` as ${s.userName}` : ''}
+          {s.userId ? ` (${s.userId})` : ''}
+          {s.expiresAt ? ` · until ${istStampIso(s.expiresAt)} IST` : ''}
+        </span>
+      ) : (
+        <span className="text-warn">not logged in{s.lastError ? ` — ${s.lastError}` : ''}</span>
+      )}
+      {returned === 'error' && message && <span className="basis-full text-warn">Login failed: {message}</span>}
+      {connected ? (
+        <Tooltip content={H.options.disconnect} className="ml-auto">
+          <button type="button" className="btn-ghost py-1 text-xs" disabled={logout.isPending} onClick={() => logout.mutate()}>
+            <LogOut className="w-3.5 h-3.5" /> Log out
+          </button>
+        </Tooltip>
+      ) : (
+        <Tooltip content={H.options.connect} className="ml-auto">
+          <a className="btn-primary py-1 text-xs" href={v2Api.upstoxLoginUrl}>
+            <LogIn className="w-3.5 h-3.5" /> Connect Upstox
+          </a>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStrategyId?: string; source?: BacktestSource }) {
+  const upstox = source === 'upstox';
+  const jobs = JOBS[source];
   const strategies = useQuery({ queryKey: ['v2-strategies'], queryFn: v2Api.strategies });
   const settings = useQuery({ queryKey: ['v2-paper-settings'], queryFn: v2Api.paperSettings, staleTime: 30_000 });
+  const upstoxStatus = useQuery({ queryKey: ['v2-options-status'], queryFn: v2Api.optionsStatus, enabled: upstox, staleTime: 30_000 });
   const [strategyId, setStrategyId] = useState(initialStrategyId ?? '');
   const [products, setProducts] = useState<string[]>([]);
-  const [range, setRange] = useState({ from: daysAgo(4), to: istToday() });
+  // Upstox serves complete past days: the period ends yesterday at the latest.
+  const lastDay = upstox ? daysAgo(1) : istToday();
+  const [range, setRange] = useState(upstox ? { from: daysAgo(30), to: daysAgo(1) } : { from: daysAgo(4), to: istToday() });
   const [capital, setCapital] = useState<number | null>(BACKTEST_DEFAULT_CAPITAL);
   const [plan, setPlan] = useState<PaperPlan | null>(null);
   const [expiry, setExpiry] = useState<ConnectionConfig['expiry']>({ mode: 'CURRENT' });
@@ -454,8 +533,8 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
   // The backtest runs on the server as a job: poll it while it runs.
   const [jobId, setJobId] = useState<string | null>(null);
   const job = useQuery({
-    queryKey: ['v2-backtest-job', jobId],
-    queryFn: () => v2Api.backtestJob(jobId!),
+    queryKey: [jobs.key, jobId],
+    queryFn: () => jobs.get(jobId!),
     enabled: jobId !== null,
     retry: false,
     refetchInterval: (q) => (q.state.data?.status === 'RUNNING' ? 1000 : false),
@@ -471,12 +550,12 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
   // On opening (e.g. back from another tab): pick up the latest backtest — still running, or its result.
   useEffect(() => {
     let live = true;
-    v2Api.latestBacktest().then(
+    jobs.latest().then(
       (latest) => {
         if (!live || !latest || (initialStrategyId && latest.strategyId !== initialStrategyId)) return;
         const r = latest.request;
         restore.current = r;
-        qc.setQueryData(['v2-backtest-job', latest.id], latest);
+        qc.setQueryData([jobs.key, latest.id], latest);
         setJobId(latest.id);
         setStrategyId(r.strategyId);
         setProducts(r.products);
@@ -521,22 +600,24 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
       // Exit rules of the groups that still trade (a group switched to "don't trade" drops its rule).
       const rules = resolveRules(def!, plan!.rules);
       const sent = rules.filter((r) => r.leg && exits[ruleKey(r)]?.children.length).map((r) => ({ group: r.group, when: exits[ruleKey(r)]! }));
-      return v2Api.startBacktest({ strategyId, products, from: range.from, to: range.to, plan: plan!, capital, expiry, strikeShift: shift, trigger, exits: sent });
+      return jobs.start({ strategyId, products, from: range.from, to: range.to, plan: plan!, capital, expiry, strikeShift: shift, trigger, exits: sent });
     },
     onSuccess: (started) => {
-      qc.setQueryData(['v2-backtest-job', started.id], started);
+      qc.setQueryData([jobs.key, started.id], started);
       setJobId(started.id);
     },
   });
   const cancel = useMutation({
-    mutationFn: () => v2Api.cancelBacktest(jobId!),
-    onSuccess: (cancelled) => qc.setQueryData(['v2-backtest-job', cancelled.id], cancelled),
+    mutationFn: () => jobs.cancel(jobId!),
+    onSuccess: (cancelled) => qc.setQueryData([jobs.key, cancelled.id], cancelled),
   });
+  const upstoxReady = !upstox || upstoxStatus.data?.connected === true;
 
   return (
     <div className="flex flex-col gap-4">
-      <Section title="Backtest a strategy with money" help={H.backtest.section}>
+      <Section title={upstox ? 'Backtest options on expired contracts' : 'Backtest a strategy with money'} help={upstox ? H.options.section : H.backtest.section}>
         <div className="flex flex-col gap-4">
+          {upstox && <UpstoxConnection />}
           <div className="flex flex-wrap items-center gap-3">
             <Tooltip content={H.backtest.strategy}>
               <select aria-label="Strategy" className="input py-1.5 text-sm min-w-[16rem]" value={strategyId} onChange={(e) => (setStrategyId(e.target.value), !running && setJobId(null), setProducts([]))}>
@@ -556,18 +637,18 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
 
           {def && plan && (
             <>
-              <ProductPicker selected={products} onChange={setProducts} definition={def} />
+              <ProductPicker selected={products} onChange={setProducts} definition={def} market={upstox ? 'NSE' : undefined} />
 
               <div className="flex flex-wrap items-end gap-5">
-                <Cell label="Period" help={H.backtest.period}>
+                <Cell label="Period" help={upstox ? H.options.period : H.backtest.period}>
                   <input type="date" aria-label="From" className="input py-1 text-xs" value={range.from} max={range.to} onChange={(e) => setRange({ ...range, from: e.target.value })} />
                   <span className="text-xs text-slate-500">to</span>
-                  <input type="date" aria-label="To" className="input py-1 text-xs" value={range.to} min={range.from} max={istToday()} onChange={(e) => setRange({ ...range, to: e.target.value })} />
+                  <input type="date" aria-label="To" className="input py-1 text-xs" value={range.to} min={range.from} max={lastDay} onChange={(e) => setRange({ ...range, to: e.target.value })} />
                 </Cell>
-                <Cell label="Quick" help={H.backtest.quick}>
-                  {QUICK.map((q) => (
-                    <Tooltip key={q.days} content={{ ...H.backtest.quick, title: `Last ${q.days} days` }}>
-                      <button type="button" className="btn-ghost py-1 text-xs" onClick={() => setRange({ from: daysAgo(q.days - 1), to: istToday() })}>
+                <Cell label="Quick" help={upstox ? H.options.quick : H.backtest.quick}>
+                  {(upstox ? QUICK_OPTIONS : QUICK).map((q) => (
+                    <Tooltip key={q.days} content={{ ...(upstox ? H.options.quick : H.backtest.quick), title: `Last ${q.days} days` }}>
+                      <button type="button" className="btn-ghost py-1 text-xs" onClick={() => setRange(upstox ? { from: daysAgo(q.days), to: lastDay } : { from: daysAgo(q.days - 1), to: istToday() })}>
                         {q.label}
                       </button>
                     </Tooltip>
@@ -635,19 +716,19 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
                     ]}
                   />
                 </Cell>
-                <Tooltip content={H.backtest.run}>
-                  <button type="button" className="btn-primary" disabled={!products.length || run.isPending || running || reversed} onClick={() => run.mutate()}>
+                <Tooltip content={upstox ? (upstoxReady ? H.options.run : { ...H.options.run, note: 'Connect Upstox above first.' }) : H.backtest.run}>
+                  <button type="button" className="btn-primary" disabled={!products.length || run.isPending || running || reversed || !upstoxReady} onClick={() => run.mutate()}>
                     {run.isPending || running ? <InlineSpinner /> : <FlaskConical className="w-4 h-4" />} Backtest {products.length || ''} product{products.length === 1 ? '' : 's'}
                   </button>
                 </Tooltip>
-                {products.length > 0 && !running && (
+                {products.length > 0 && !running && !upstox && (
                   <Tooltip content={{ ...H.backtest.run, title: 'Rough waiting time', note: 'An estimate before it starts: one Kite request per leg and per traded contract, per product. Candles still in memory from a run in the last hour are free.' }}>
                     <span className="self-center text-[11px] text-slate-500">≈ {duration(estimate)} of Kite requests</span>
                   </Tooltip>
                 )}
               </div>
-              {j && running && <JobProgress job={j} marketOpen={marketOpen} onCancel={() => cancel.mutate()} cancelling={cancel.isPending} />}
-              {j?.status === 'CANCELLED' && <p className="text-xs text-slate-400">Backtest cancelled. The candles fetched so far stay in memory for an hour, so running it again picks up quickly.</p>}
+              {j && running && <JobProgress job={j} source={source} marketOpen={marketOpen} onCancel={() => cancel.mutate()} cancelling={cancel.isPending} />}
+              {j?.status === 'CANCELLED' && <p className="text-xs text-slate-400">Backtest cancelled. The candles fetched so far stay in memory{upstox ? '' : ' for an hour'}, so running it again picks up quickly.</p>}
               {j?.status === 'FAILED' && <p className="text-xs text-bear">{j.error}</p>}
               {(run.error || job.error || cancel.error) && <p className="text-xs text-bear">{((run.error ?? job.error ?? cancel.error) as Error).message}</p>}
             </>

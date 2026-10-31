@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { X } from 'lucide-react';
-import type { ProductKind, StrategyDefinition, V2Product } from '@/shared/v2';
+import type { Market, ProductKind, StrategyDefinition, V2Product } from '@/shared/v2';
 import { MAX_CONNECT, PRODUCT_KIND_LABEL, incompatibility, requiredKinds } from '@/shared/v2';
 import { Tooltip } from '../components/Tooltip';
 import { v2Api } from './api';
@@ -31,6 +31,7 @@ export function ProductPicker({
   max = MAX_CONNECT,
   compact = false,
   connected = [],
+  market,
 }: {
   selected: string[];
   onChange: (ids: string[]) => void;
@@ -41,6 +42,8 @@ export function ProductPicker({
   compact?: boolean;
   /** Products already connected to this strategy — marked and skipped. */
   connected?: string[];
+  /** Only this session's products ('NSE' = NSE and BSE: the Options backtest has no MCX). */
+  market?: Market;
 }) {
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<'' | ProductKind>('');
@@ -48,11 +51,11 @@ export function ProductPicker({
   const needs = definition ? requiredKinds(definition) : undefined;
   const needsKey = needs?.join(',') ?? '';
   const list = useQuery({
-    queryKey: ['v2-products', search, kind, needsKey, 'picker'],
-    queryFn: () => v2Api.products({ search: search || undefined, kind: kind || undefined, needs, limit: LIST_LIMIT }),
+    queryKey: ['v2-products', search, kind, needsKey, market ?? '', 'picker'],
+    queryFn: () => v2Api.products({ search: search || undefined, kind: kind || undefined, market, needs, limit: LIST_LIMIT }),
     staleTime: 60_000,
   });
-  const counts = useQuery({ queryKey: ['v2-products', 'counts', search, needsKey], queryFn: () => v2Api.productCounts({ search: search || undefined, needs }), staleTime: 60_000 });
+  const counts = useQuery({ queryKey: ['v2-products', 'counts', search, needsKey, market ?? ''], queryFn: () => v2Api.productCounts({ search: search || undefined, market, needs }), staleTime: 60_000 });
   const c = counts.data;
   const n = (v: number | undefined) => (v === undefined ? '' : ` (${v.toLocaleString('en-IN')})`);
   const matching = c ? (kind ? c[kind] : c.total) : undefined;
@@ -129,10 +132,10 @@ export function ProductPicker({
           value={kind}
           onChange={setKind}
           options={[
-            { value: '' as const, label: `All${n(c?.total)}`, help: { title: 'All products', body: 'Indices, stocks and commodities.', note: legsText ? `Counts only products with ${legsText} — what this strategy needs.` : undefined } },
+            { value: '' as const, label: `All${n(c?.total)}`, help: { title: 'All products', body: market === 'NSE' ? 'NSE and BSE indices and stocks (no MCX commodities here).' : 'Indices, stocks and commodities.', note: legsText ? `Counts only products with ${legsText} — what this strategy needs.` : undefined } },
             { value: 'INDEX' as const, label: `Indices${n(c?.INDEX)}`, help: { title: 'Indices', body: 'NIFTY, BANKNIFTY, FINNIFTY, SENSEX…' } },
             { value: 'STOCK' as const, label: `Stocks${n(c?.STOCK)}`, help: { title: 'Stocks', body: 'NSE cash stocks; F&O stocks also have futures and options.' } },
-            { value: 'COMMODITY' as const, label: `Commodities${n(c?.COMMODITY)}`, help: { title: 'Commodities', body: 'MCX: gold, silver, crude oil, natural gas, base metals.' } },
+            ...(market === 'NSE' ? [] : [{ value: 'COMMODITY' as const, label: `Commodities${n(c?.COMMODITY)}`, help: { title: 'Commodities', body: 'MCX: gold, silver, crude oil, natural gas, base metals.' } }]),
           ]}
         />
         {multiple && (

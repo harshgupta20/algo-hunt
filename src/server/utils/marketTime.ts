@@ -154,3 +154,10 @@ export function nextKiteTokenExpiry(fromMs: number): number {
   const sixAm = dayStartUtc + 6 * 60 * MINUTE;
   return fromMs < sixAm ? sixAm : sixAm + 24 * 60 * MINUTE;
 }
+
+/** Upstox access tokens stop working at 03:30 IST: the next one after `fromMs` (a token made at 02:30 lasts an hour). */
+export function nextUpstoxTokenExpiry(fromMs: number): number {
+  const dayStartUtc = Date.parse(`${istDate(fromMs)}T00:00:00Z`) - IST_OFFSET_MS;
+  const cutoff = dayStartUtc + (3 * 60 + 30) * MINUTE;
+  return fromMs < cutoff ? cutoff : cutoff + 24 * 60 * MINUTE;
+}

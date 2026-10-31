@@ -39,6 +39,13 @@ export function calendars(entries: CalendarEntry[]): Record<Market, MarketCalend
   return { NSE: new MarketCalendar('NSE', entries), MCX: new MarketCalendar('MCX', entries) };
 }
 
+/** The last trading day before `now`'s IST date — the latest day whose candles are complete (today's session isn't). */
+export function lastCompleteDay(cal: MarketCalendar, now: number): string {
+  let d = addDays(istDate(now), -1);
+  for (let i = 0; i < 14 && !cal.isTradingDay(d); i++) d = addDays(d, -1);
+  return d;
+}
+
 /** Epoch ms of IST midnight for a yyyy-mm-dd date. */
 export function dateStartMs(date: string): number {
   return Date.parse(`${date}T00:00:00Z`) - IST_OFFSET_MS;

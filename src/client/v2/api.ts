@@ -33,7 +33,7 @@ import type {
   V2Unit,
   ValidationIssue,
 } from '@/shared/v2';
-import { filterParams, normalizePaperSummary, type AlertQuery, type BacktestJob, type BacktestRequest, type BacktestResult, type PaperQuery, type SignalQuery } from '@/shared/v2';
+import { filterParams, normalizePaperSummary, type AlertQuery, type BacktestJob, type BacktestRequest, type BacktestResult, type OptionsSourceStatus, type PaperQuery, type SignalQuery } from '@/shared/v2';
 
 const BASE = '/api/v2';
 
@@ -168,9 +168,10 @@ export const v2Api = {
     return request<V2Product[]>(`/products?${p}`);
   },
   syncProducts: () => post<{ instruments: number; products: number; syncedAt: string }>('/products/sync'),
-  productCounts: (q: { search?: string; needs?: string[] } = {}) => {
+  productCounts: (q: { search?: string; market?: string; needs?: string[] } = {}) => {
     const p = new URLSearchParams();
     if (q.search) p.set('search', q.search);
+    if (q.market) p.set('market', q.market);
     if (q.needs?.length) p.set('needs', q.needs.join(','));
     return request<ProductCounts>(`/products/counts?${p}`);
   },
@@ -204,6 +205,15 @@ export const v2Api = {
   latestBacktest: () => request<BacktestJob | null>('/backtest/jobs/latest').then((j) => (j ? normalizeJob(j) : null)),
   backtestJob: (id: string) => request<BacktestJob>(`/backtest/jobs/${id}`).then(normalizeJob),
   cancelBacktest: (id: string) => request<BacktestJob>(`/backtest/jobs/${id}`, { method: 'DELETE' }).then(normalizeJob),
+  // Options backtest (Upstox: expired contracts)
+  optionsStatus: () => request<OptionsSourceStatus>('/options-backtest/status'),
+  optionsLogout: () => post<{ ok: true }>('/options-backtest/logout'),
+  /** Full-page redirect into Upstox's login; it returns to /redirect/upstox, then to this tab. */
+  upstoxLoginUrl: '/api/upstox/login',
+  startOptionsBacktest: (body: BacktestRequest) => post<BacktestJob>('/options-backtest/jobs', body).then(normalizeJob),
+  latestOptionsBacktest: () => request<BacktestJob | null>('/options-backtest/jobs/latest').then((j) => (j ? normalizeJob(j) : null)),
+  optionsBacktestJob: (id: string) => request<BacktestJob>(`/options-backtest/jobs/${id}`).then(normalizeJob),
+  cancelOptionsBacktest: (id: string) => request<BacktestJob>(`/options-backtest/jobs/${id}`, { method: 'DELETE' }).then(normalizeJob),
 
   alerts: (q: AlertQuery = {}) => request<V2AlertItem[]>(`/alerts?${filterParams(q)}`),
   /** Per strategy, how many alerts match the other filters. */

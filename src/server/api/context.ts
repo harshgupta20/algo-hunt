@@ -9,6 +9,7 @@
 import { createAppStore, type AppStore } from '../db/appStore';
 import { KiteAuthService } from '../services/kite/kiteAuth';
 import { KiteHistoricalProvider } from '../services/kite/KiteHistoricalProvider';
+import { UpstoxAuthService } from '../services/upstox/upstoxAuth';
 import { createV2Module, type V2Module } from '../v2';
 import { createEquityModule, type EquityModule } from '../equity';
 import { createAiModule, type AiModule } from '../ai';
@@ -18,6 +19,8 @@ export interface AppContext {
   /** Kite login session + UI preferences. */
   store: AppStore;
   kiteAuth: KiteAuthService;
+  /** Upstox login (the V2 Options backtest's expired contracts). */
+  upstoxAuth: UpstoxAuthService;
   /** Kite historical candles with the shared ~3 requests/s gate (the in-app live worker uses the same one). */
   historical: KiteHistoricalProvider;
   /** V2: product-agnostic strategies + product connections (alerts). */
@@ -32,7 +35,8 @@ function build(): AppContext {
   const store = createAppStore();
   const kiteAuth = new KiteAuthService(store);
   const historical = new KiteHistoricalProvider(kiteAuth);
-  const v2 = createV2Module({ kiteAuth, historical });
+  const upstoxAuth = new UpstoxAuthService(store);
+  const v2 = createV2Module({ kiteAuth, historical, upstoxAuth });
   const equity = createEquityModule({
     kite: (fn) => kiteAuth.call(fn),
     historical,
@@ -42,7 +46,7 @@ function build(): AppContext {
     fno: async () => (await v2.service.products({ kind: 'STOCK', needs: ['FUT'], limit: 5000 })).map((p) => p.symbol),
   });
   const ai = createAiModule({ equity: equity.service });
-  return { store, kiteAuth, historical, v2, equity, ai };
+  return { store, kiteAuth, upstoxAuth, historical, v2, equity, ai };
 }
 
 /** New on every evaluation of this module — i.e. after a dev hot reload of any service it wires. */
