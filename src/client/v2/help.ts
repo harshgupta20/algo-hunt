@@ -417,6 +417,11 @@ export const H = {
     // Paper tab
     strategy: { title: 'Strategy', body: 'Show results for one strategy, or all of them.' },
     refresh: { title: 'Refresh', body: 'Reload results now (open positions refresh every few seconds by themselves).' },
+    sync: {
+      title: 'Saved on this computer, synced at the close',
+      body: 'Paper trades are saved on this computer the moment they open or close (and open trades’ latest prices every 30 seconds), so a restart loses nothing. After each market closes — NSE / BSE at 15:30, MCX at 23:30 or 23:55 — the day’s trades go to the database in one go, open positions with their closing price.',
+      note: 'If the app is off at a close, it syncs as soon as it starts again. If the database can’t be reached, the trades stay on this computer and the sync is tried again every few minutes.',
+    },
     net: { title: 'Net P&L', body: 'Profit or loss of closed trades after charges and slippage.' },
     ret: { title: 'Return', body: 'Net P&L ÷ money needed — the return on the money the account would have needed.' },
     capital: { title: 'Money needed', body: 'The most money in use at the same time (all open trades together) — what the account would have needed to take every trade.' },
@@ -489,6 +494,10 @@ export const H = {
       title: 'Keep history',
       body: 'How long alerts, signals and closed paper trades are kept. Older ones are deleted once a day — for good.',
       note: 'Default: everything is kept. Strategies, connections, settings and open paper trades are never deleted.',
+    },
+    paperBook: {
+      title: 'Paper trades on this computer',
+      body: 'Paper trades are kept on this computer during the day (data/paper-book.json) and written to the database a few minutes after each market’s close. This is how many are waiting, and when they go.',
     },
     pending: {
       title: 'Waiting to be saved',

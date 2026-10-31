@@ -179,8 +179,9 @@ adds `v2_paper_overrides` (a connection's own paper values).
 Store: `PgV2Store` (Postgres / Neon, `DATABASE_URL`)
 ([createStore.ts](../src/server/v2/persistence/createStore.ts)). When the app is the only process writing — the normal
 one-process run — `RuntimeV2Store` wraps it: core records go to the database, hot data (scan runs, signals that
-didn't alert, evaluations, live status, locks, paper marks) stays in memory, and event writes are saved by a
-background queue so an alert never waits for the database ([database.md § 5](database.md#5-database-traffic)).
+didn't alert, evaluations, live status, locks) stays in memory, event writes are saved by a background queue so an
+alert never waits for the database, and paper trades are kept on this computer (`data/paper-book.json`) and synced
+once after each market's close ([database.md § 5](database.md#5-database-traffic)).
 
 ## 7. Compare — how to read it
 

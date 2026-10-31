@@ -7,6 +7,9 @@
  *                 separate worker is already running on this computer.
  *   history       deletes alerts / signals / closed paper trades older than Settings → Database keeps (daily;
  *                 nothing by default — everything is kept).
+ *   paper sync    paper trades are kept on this computer during the day (data/paper-book.json) and go to the
+ *                 database a few minutes after each market's close — checked every minute, and at start for a
+ *                 close that passed while the app was off (memory mode only; otherwise they're saved at once).
  *   on stop       saves the records still waiting for the database (or keeps them for the next start).
  *
  * Nothing runs on Vercel (serverless).
@@ -60,6 +63,21 @@ export async function startBackground(): Promise<void> {
   setTimeout(() => void housekeeping(), 2 * 60_000).unref();
   setInterval(() => void housekeeping(), HOUR).unref();
 
+  // The end-of-day paper sync (V2Service.syncPaperIfDue decides whether a close has passed).
+  if (memoryMode()) {
+    const paperSync = async () => {
+      try {
+        const { getContext } = await import('./api/context');
+        const out = await getContext().v2.service.syncPaperIfDue();
+        if (out) log.info(out, 'paper trades saved to the database (end-of-day sync)');
+      } catch (err) {
+        log.warn({ err: err instanceof Error ? err.message : String(err) }, 'end-of-day paper sync failed — the trades stay on this computer; trying again in a few minutes');
+      }
+    };
+    setTimeout(() => void paperSync(), 30_000).unref();
+    setInterval(() => void paperSync(), 60_000).unref();
+  }
+
   let stopping = false;
   const stop = async () => {
     if (stopping) return;
@@ -70,6 +88,7 @@ export async function startBackground(): Promise<void> {
     await runtimeState()
       .writes?.close(2_000)
       .catch(() => undefined);
+    runtimeState().paperBook?.flush(); // open trades' latest prices still waiting for their 30 s
     process.exit(0);
   };
   process.once('SIGINT', () => void stop());

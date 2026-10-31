@@ -122,12 +122,13 @@ The state lives on `globalThis`, so every module copy in the process shares it.
 | Alerts, deliveries | Written in the background (below); the alarm feed is served from memory (the last 200 loaded once); this run's alerts (last 1 000) are kept in full — opened from memory and merged into lists. List pages are read once per filters + page and kept: a new alert is added from memory instead of re-reading; a page is read again only after an acknowledgement or a deletion, or when a newer alert has left memory |
 | Signals | ALERTED / NO_CHANNEL written (in the background) with a shallow trace (top-level ids, labels, results); others kept in memory (last 1 000); deduped in memory by identity; list pages kept and merged like alerts |
 | Unit state | Written (in the background) only when the alert decision changes (state, last signal candle, last alert, cooldown); read at start without the saved last evaluations |
-| Paper trades | Written (in the background) on open and on close; open trades and their marks (live P&L) in memory, one per slot checked there; **every closed trade read once at start** (up to 50 000) and kept — closures are added in memory, the Paper and Strategies tabs and their filters never re-read |
+| Paper trades | **Synced once after each market's close** ([paperBook.ts](../src/server/v2/persistence/paperBook.ts), `V2Service.syncPaperIfDue`): during the day they live in memory and in `data/paper-book.json` (`PAPER_BOOK_FILE`; written at every open / close, open trades' latest prices within 30 s); a few minutes after the NSE / BSE close (15:30) and the MCX close (23:30 / 23:55) every trade that changed goes in one upsert — one row each, closed trades before open ones, open positions with their closing price (`paper.saveTrades`). A close missed while the app was off is synced on the next start; a failed sync is retried every 3 min and keeps everything. Open trades are read at start and overlaid with the file; **every closed trade read once at start** (up to 50 000) and kept — closures are added in memory, the Paper and Strategies tabs and their filters never re-read |
 | Scanner runs, locks, live-worker status, the change stamp screens poll | Memory only |
 
 [tests/v2/memoryLayer.test.ts](../tests/v2/memoryLayer.test.ts) checks this on a simulated session: after warm-up an
-hour of minute scans and screen polls makes no database calls; an alert costs five writes (signal, alert, delivery,
-unit state, paper trade); a paper exit one; the Paper tab then shows it from memory.
+hour of minute scans and screen polls makes no database calls; an alert costs four writes (signal, alert, delivery,
+unit state); its paper trade and the exit none until the close, then one write for the day; the Paper tab shows them
+from memory.
 
 **Paging.** Alerts and signals are listed newest first, ties by id; a page ends at a row and the next page is
 everything older than it (`before=<time>|<id>`; Postgres compares the time to the millisecond, as the app sees it).
@@ -138,7 +139,8 @@ alerts on page 1 without a re-read, page 2 continuing).
 
 ### Saving in the background
 
-Event writes — signal, alert, delivery, alert status, unit state, paper trade open / close — never hold an alert up.
+Event writes — signal, alert, delivery, alert status, unit state — never hold an alert up (paper trades wait for the
+end-of-day sync instead, above).
 The record exists in memory at once (with its id), and the write goes to a queue
 ([writeQueue.ts](../src/server/v2/persistence/writeQueue.ts)) that one writer saves in order:
 

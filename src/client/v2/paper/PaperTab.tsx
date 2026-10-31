@@ -11,9 +11,9 @@
  */
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, Download, Pencil, RefreshCw, Trash2, Wallet, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, CloudOff, CloudUpload, Download, HardDrive, Pencil, RefreshCw, Trash2, Wallet, X } from 'lucide-react';
 import clsx from 'clsx';
-import type { PaperStats, PaperSummary, PaperTrade } from '@/shared/v2';
+import type { PaperBookStatus, PaperStats, PaperSummary, PaperTrade } from '@/shared/v2';
 import { pageCursor, paperGroups } from '@/shared/v2';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { Badge, EmptyState, IconButton, StatCard } from '../../components/ui';
@@ -566,6 +566,25 @@ export function TradeTable({ trades, names, opened, footer }: { trades: PaperTra
 const LOG_PAGE = 50;
 const count = (n: number | undefined) => (n === undefined ? '' : ` (${n.toLocaleString('en-IN')})`);
 
+/** Where the paper trades stand: on this computer until the next close, synced, or a sync waiting for the database. */
+function SyncChip({ s }: { s: PaperBookStatus }) {
+  const waiting = s.waiting + s.pricesWaiting;
+  const when = (iso: string | null) => (iso ? istStampIso(iso) : '');
+  const [icon, text, tone] = s.lastError
+    ? [<CloudOff key="i" className="h-3.5 w-3.5" />, `Database sync waiting — the database can’t be reached; ${s.waiting} trade(s) safe on this computer`, 'text-warn']
+    : waiting
+      ? [<HardDrive key="i" className="h-3.5 w-3.5" />, `${s.waiting} trade(s) saved on this computer · to the database after the close${s.nextSyncAt ? ` (${when(s.nextSyncAt)})` : ''}`, 'text-slate-400']
+      : [<CloudUpload key="i" className="h-3.5 w-3.5" />, s.lastSyncAt ? `Synced with the database · ${when(s.lastSyncAt)}` : 'Nothing waiting for the database', 'text-slate-500'];
+  return (
+    <Tooltip content={{ ...H.paper.sync, example: s.lastSyncAt ? `Last sync: ${when(s.lastSyncAt)}` : undefined }}>
+      <span tabIndex={0} className={clsx('inline-flex items-center gap-1.5 text-[11px] outline-none', tone)}>
+        {icon}
+        {text}
+      </span>
+    </Tooltip>
+  );
+}
+
 export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrategyId?: string; onEditStrategy: (strategyId?: string) => void }) {
   const qc = useQueryClient();
   const [filters, setFilters] = useFilters('paper', { strategyIds: initialStrategyId ? [initialStrategyId] : undefined });
@@ -579,6 +598,7 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
   const counts = useQuery({ queryKey: ['v2-paper', 'counts', qAll], queryFn: () => v2Api.paperCounts(qAll), enabled: ready, placeholderData: keepPreviousData, refetchInterval: 60_000 });
   const summary = useQuery({ queryKey: ['v2-paper', 'summary', q], queryFn: () => v2Api.paperSummary(q), refetchInterval: 60_000, enabled: ready, placeholderData: keepPreviousData });
   const open = useQuery({ queryKey: ['v2-paper', 'open', qOpen], queryFn: () => v2Api.paperTrades({ ...qOpen, status: 'OPEN', limit: 500 }), refetchInterval: 5_000, enabled: ready, placeholderData: keepPreviousData });
+  const sync = useQuery({ queryKey: ['v2-paper', 'sync'], queryFn: v2Api.paperSync, refetchInterval: 60_000 });
   // The trade log a page at a time; every filter (and winners / losers) is applied by the server.
   const result = logView === 'all' ? undefined : logView;
   const log = useInfiniteQuery({
@@ -616,6 +636,7 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
         <IconButton help={H.paper.refresh} onClick={refresh} className="btn-ghost py-1.5 text-xs">
           <RefreshCw className={clsx('w-3.5 h-3.5', (summary.isFetching || open.isFetching) && 'animate-spin')} /> Refresh
         </IconButton>
+        {sync.data && <SyncChip s={sync.data} />}
         {sum && (
           <Tooltip content={{ ...H.tabs.paper, note: 'Switched-on connections that paper trade their alerts. Switch one off, or change its values, with its 📄 chip.' }} className="ml-auto">
             <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">

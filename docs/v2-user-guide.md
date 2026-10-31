@@ -209,6 +209,11 @@ connection opens a paper trade automatically, with these defaults: **₹10,000 p
 - The alert message gets a line such as `📄 Paper: BUY 1 lot (75) NIFTY…25000CE @ ₹100.50 · target ₹120.60 · stop ₹90.45`.
 - With the live worker running, targets and stop-losses are checked on every tick; without it, the per-minute scanner
   checks them on the latest price once a minute.
+- **Saved on this computer, synced at the close.** Every paper trade is saved on your computer the moment it opens
+  or closes (open positions' latest prices every 30 seconds), so closing the app or a restart loses nothing. A few
+  minutes after each market closes (NSE / BSE 15:30, MCX 23:30 or 23:55) the day's trades go to the database in one
+  go. The Paper tab shows it next to **Refresh**: how many trades wait and when they go, or when the last sync was.
+  If the app is off at a close it syncs when it starts again.
 
 **The Paper tab** — narrow it with the filter bar (strategy, period, type, market, product, timeframe, group, side):
 

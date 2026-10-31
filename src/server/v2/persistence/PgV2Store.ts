@@ -179,6 +179,38 @@ function mapPaperTrade(r: any): PaperTrade {
   return { ...(r.trade as PaperTrade), id: r.id };
 }
 
+/**
+ * The end-of-day paper sync's upsert: trades as they are now, by id. A trade whose connection (and so its strategy)
+ * was deleted meanwhile is left out (not RETURNed); a link to an alert that wasn't saved becomes null.
+ */
+const SAVE_PAPER_TRADES = `
+  WITH x AS (
+    SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, strategy_id uuid, connection_id uuid, product_id text, slot text, alert_id uuid,
+      status text, entry_at timestamptz, exit_at timestamptz, net_pnl float8, trade jsonb)
+  )
+  INSERT INTO v2_paper_trades (id, strategy_id, connection_id, product_id, slot, alert_id, status, entry_at, exit_at, net_pnl, trade, updated_at)
+  SELECT x.id, x.strategy_id, x.connection_id, x.product_id, x.slot, a.id, x.status, x.entry_at, x.exit_at, x.net_pnl, x.trade, now()
+  FROM x
+  JOIN v2_connections c ON c.id = x.connection_id AND c.strategy_id = x.strategy_id
+  LEFT JOIN v2_alerts a ON a.id = x.alert_id
+  ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, exit_at = EXCLUDED.exit_at, net_pnl = EXCLUDED.net_pnl, trade = EXCLUDED.trade,
+    alert_id = COALESCE(EXCLUDED.alert_id, v2_paper_trades.alert_id), updated_at = now()
+  RETURNING id`;
+
+const paperRow = (t: PaperTrade) => ({
+  id: t.id,
+  strategy_id: t.strategyId,
+  connection_id: t.connectionId,
+  product_id: t.productId,
+  slot: t.slot,
+  alert_id: t.alertId,
+  status: t.status,
+  entry_at: t.entryAt,
+  exit_at: t.exitAt,
+  net_pnl: t.netPnl,
+  trade: t,
+});
+
 function mapAlert(r: any, deliveries: Delivery[]): V2Alert {
   return {
     id: r.id,
@@ -735,6 +767,40 @@ export class PgV2Store implements V2Store {
       return (await this.pool.query(sql, vals)).rows.map(mapPaperTrade);
     },
     reset: async (strategyId: string) => (await this.pool.query('DELETE FROM v2_paper_trades WHERE strategy_id = $1', [strategyId])).rowCount ?? 0,
+    saveTrades: async (trades: PaperTrade[]) => {
+      const saved: string[] = [];
+      const skipped: string[] = [];
+      if (!trades.length) return { saved, skipped };
+      await this.tx(async (c) => {
+        // Closed trades first: a slot's old trade closes before its new one opens (one open trade per slot).
+        for (const group of [trades.filter((t) => t.status !== 'OPEN'), trades.filter((t) => t.status === 'OPEN')]) {
+          for (let i = 0; i < group.length; i += 200) {
+            const chunk = group.slice(i, i + 200);
+            await c.query('SAVEPOINT paper_chunk');
+            try {
+              const ok = new Set((await c.query(SAVE_PAPER_TRADES, [JSON.stringify(chunk.map(paperRow))])).rows.map((r: any) => r.id as string));
+              for (const t of chunk) (ok.has(t.id) ? saved : skipped).push(t.id);
+            } catch (err) {
+              if ((err as { code?: string }).code !== '23505') throw err;
+              // A slot the database has another open trade in (shouldn't happen): one by one, so that trade alone
+              // waits (left out of both lists, it stays on the computer) and the rest are saved.
+              await c.query('ROLLBACK TO SAVEPOINT paper_chunk');
+              for (const t of chunk) {
+                await c.query('SAVEPOINT paper_row');
+                try {
+                  const r = await c.query(SAVE_PAPER_TRADES, [JSON.stringify([paperRow(t)])]);
+                  (r.rowCount ? saved : skipped).push(t.id);
+                } catch (rowErr) {
+                  if ((rowErr as { code?: string }).code !== '23505') throw rowErr;
+                  await c.query('ROLLBACK TO SAVEPOINT paper_row');
+                }
+              }
+            }
+          }
+        }
+      });
+      return { saved, skipped };
+    },
     closedVersion: async () => {
       const r = (await this.pool.query(`SELECT count(*)::int AS n, max(updated_at) AS at FROM v2_paper_trades WHERE status = 'CLOSED'`)).rows[0];
       return `${r?.n ?? 0}|${iso(r?.at) ?? ''}`;

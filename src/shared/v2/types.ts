@@ -451,6 +451,24 @@ export interface PendingWrites {
   blocked: number;
 }
 
+/**
+ * Paper trades kept on this computer between end-of-day syncs (the one-process app): every change is saved to a
+ * local file at once, and the day's trades go to the database after each market's close (NSE, then MCX).
+ */
+export interface PaperBookStatus {
+  /** Trades opened or closed since the last sync. */
+  waiting: number;
+  /** Open trades whose latest price changed since the last sync (saved with the next sync). */
+  pricesWaiting: number;
+  /** The earliest unsynced change (ISO). */
+  oldestAt: string | null;
+  lastSyncAt: string | null;
+  /** The next sync point: a market's close + a few minutes (ISO); null when nothing waits. */
+  nextSyncAt: string | null;
+  /** The last sync failed with this (the database couldn't be reached); retried every few minutes. */
+  lastError: string | null;
+}
+
 /** Settings → Database: size, the plan's limit when known, what's kept and what's waiting. */
 export interface DatabaseInfo {
   engine: 'postgres' | 'memory';
@@ -459,6 +477,8 @@ export interface DatabaseInfo {
   tables: Array<{ name: string; bytes: number }>;
   historyDays: number | null;
   pending: PendingWrites | null;
+  /** Paper trades waiting for the end-of-day sync (memory layer only). */
+  paperBook: PaperBookStatus | null;
   /** The last history clean-up (this run). */
   lastPrune: { at: string; alerts: number; signals: number; paperTrades: number; scanRuns: number } | null;
 }

@@ -63,7 +63,9 @@ when, and the error.
 | `relation "v2_…" does not exist` | Migrations not applied | `npm run db:migrate` (or restart `npm run dev`) |
 | "N records were refused by the database" (Settings) | The database rejected them (e.g. their connection was deleted meanwhile) | Nothing to do — the app log has each one (`database refused a write — dropped`) |
 
-Don't delete `data/pending-writes.json` while it exists — it is the only copy of those records.
+Don't delete `data/pending-writes.json` while it exists — it is the only copy of those records. The same goes for
+`data/paper-book.json`: it holds the paper trades since the last end-of-day sync (the Paper tab says how many). A book
+file the app can't read is renamed `paper-book.json.unreadable-<time>` and left for you to check, never overwritten.
 
 ## 2. Kite connection
 

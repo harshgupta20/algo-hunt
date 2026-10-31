@@ -374,6 +374,25 @@ export class MemoryV2Store implements V2Store {
       this.data.paperTrades = this.data.paperTrades.filter((t) => t.strategyId !== id);
       return before - this.data.paperTrades.length;
     },
+    /** As Postgres: by id, closed trades first; deleted connection → skipped; a slot with another open trade → left out. */
+    saveTrades: async (trades: PaperTrade[]) => {
+      const saved: string[] = [];
+      const skipped: string[] = [];
+      for (const t of [...trades.filter((x) => x.status !== 'OPEN'), ...trades.filter((x) => x.status === 'OPEN')]) {
+        const conn = this.data.connections.get(t.connectionId);
+        if (!conn || conn.strategyId !== t.strategyId) {
+          skipped.push(t.id);
+          continue;
+        }
+        if (t.status === 'OPEN' && this.data.paperTrades.some((x) => x.id !== t.id && x.connectionId === t.connectionId && x.slot === t.slot && x.status === 'OPEN')) continue;
+        const row = clone({ ...t, alertId: t.alertId && this.data.alerts.some((a) => a.id === t.alertId) ? t.alertId : null });
+        const at = this.data.paperTrades.findIndex((x) => x.id === t.id);
+        if (at >= 0) this.data.paperTrades[at] = row;
+        else this.data.paperTrades.push(row);
+        saved.push(t.id);
+      }
+      return { saved, skipped };
+    },
   };
 
   maintenance = {

@@ -33,7 +33,17 @@ import type {
   V2Strategy,
   V2StrategyVersion,
   PendingWrites,
+  PaperBookStatus,
 } from '@/shared/v2';
+
+/** What an end-of-day paper sync did. */
+export interface PaperSyncResult {
+  /** Trades written to the database. */
+  saved: number;
+  /** Trades left out: their strategy or connection was deleted meanwhile. */
+  skipped: number;
+  at: string;
+}
 
 /** Filters shared by alerts and signals (times as ISO instants; `groups` = ids of the top-level groups that fired). */
 export interface RecordStoreFilters {
@@ -205,6 +215,12 @@ export interface V2Store {
     closedVersion(): Promise<string>;
     /** Delete a strategy's paper trades (start over). */
     reset(strategyId: string): Promise<number>;
+    /**
+     * Save trades as they are now (insert, or replace a saved one by id) — the end-of-day sync. Trades whose
+     * strategy or connection was deleted meanwhile are left out (`skipped`); a link to an alert that wasn't
+     * saved is dropped. Closed trades are written before open ones (a slot's old trade closes first).
+     */
+    saveTrades(trades: PaperTrade[]): Promise<{ saved: string[]; skipped: string[] }>;
   };
   /** One short value that changes when connections, strategies, settings, the calendar or products change (to skip reloading them). */
   contextStamp(): Promise<string>;
@@ -218,6 +234,11 @@ export interface V2Store {
 
   /** Records waiting to be saved (memory layer only — the others save before returning). */
   pendingWrites?(): PendingWrites;
+
+  /** Paper trades kept on this computer until the end-of-day sync (memory layer only — the others save at once). */
+  paperBook?(): Omit<PaperBookStatus, 'nextSyncAt'>;
+  /** Write the paper trades waiting on this computer to the database now (memory layer only). */
+  syncPaper?(): Promise<PaperSyncResult>;
 
   /** Live worker heartbeat / status (single row). */
   live: {

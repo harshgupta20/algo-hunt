@@ -1,16 +1,18 @@
 /**
  * The database layer for one running app (npm start: UI, API, scanner and live worker in one process).
  * Neon keeps the core records — strategies, connections, settings, calendar, paper settings, alerts and
- * paper trades — written only when you save something or a real event happens (an alert, a paper trade
- * opening or closing). Everything that changes by the second lives in this process's memory:
+ * paper trades — written only when you save something or a real event happens (an alert), and paper trades
+ * once after each market's close. Everything that changes by the second lives in this process's memory:
  *
- *   memory only        live worker status, scanner cycles, suppressed signals, paper trades' latest prices,
- *                      unit results per candle, scan lock, "has anything changed?" stamp
+ *   memory only        live worker status, scanner cycles, suppressed signals, unit results per candle,
+ *                      scan lock, "has anything changed?" stamp
  *   memory + Neon      cached on first use, written through on change: strategies, connections, settings,
- *                      calendar, products, paper plans / overrides, open paper trades, the Kite contract
- *                      list (per product), unit states (saved only when an alert decision changes them)
- *   Neon               alerts (+ deliveries) and their signals, paper trades opening / closing, alert and
- *                      paper history when you open it (kept in memory until the next change)
+ *                      calendar, products, paper plans / overrides, the Kite contract list (per product),
+ *                      unit states (saved only when an alert decision changes them)
+ *   memory + file,     paper trades (opening, closing, open trades' latest prices): kept in data/paper-book.json
+ *   Neon at the close  at once, written to Neon after each market's close (paperBook.ts, V2Service.syncPaperIfDue)
+ *   Neon               alerts (+ deliveries) and their signals, alert and paper history when you open it (kept
+ *                      in memory until the next change)
  *
  * Events never wait for the database: an alert, its delivery, the unit's state and the paper trade exist in
  * memory at once and their writes go to a queue (writeQueue.ts) that saves them in order — retrying while
@@ -45,6 +47,8 @@ import type {
 } from '@/shared/v2';
 import { newestFirst, offersKinds, olderThan } from '@/shared/v2';
 import type { AlertFilters, DatabaseSize, NewAlert, NewPaperTrade, NewSignal, ProductFilters, PruneResult, RecordStoreFilters, SignalFilters, V2Store } from './V2Store';
+import { PaperBook } from './paperBook';
+import type { PaperSyncResult } from './V2Store';
 import { WriteQueue, type WriteQueueOptions } from './writeQueue';
 
 const KEEP_SIGNALS = 1_000;
@@ -63,6 +67,8 @@ const FEED_RETRY_MS = 60_000;
 export interface RuntimeOptions {
   /** Where records waiting to be saved are kept across restarts. */
   pendingFile?: string;
+  /** Where paper trades are kept between end-of-day syncs (none = memory only). */
+  paperBookFile?: string;
   retryMs?: WriteQueueOptions['retryMs'];
   log?: WriteQueueOptions['log'];
 }
@@ -92,6 +98,8 @@ interface RuntimeState {
   loading: Map<string, Promise<unknown>>;
   /** Database writes waiting to be saved (created with the first store). */
   writes?: WriteQueue;
+  /** Paper trades waiting for the end-of-day sync (created with the first store). */
+  paperBook?: PaperBook;
   /** Alerts recorded by this run (newest last), in full — merged into lists, deliveries added here, the alarm's fallback. */
   recent: Map<string, V2Alert>;
   /** Identities of the alerting signals this run recorded (dedupe without asking the database). */
@@ -186,6 +194,7 @@ const alertItem = (a: V2Alert): V2AlertItem => {
 
 export class RuntimeV2Store implements V2Store {
   private readonly q: WriteQueue;
+  private readonly book: PaperBook;
 
   constructor(
     private readonly db: V2Store,
@@ -199,6 +208,13 @@ export class RuntimeV2Store implements V2Store {
       this.rt.writes.push({ op: 'scanRuns.prune', args: [new Date(clock() - 3 * 86_400_000).toISOString()] });
     }
     this.q = this.rt.writes;
+    if (!this.rt.paperBook) {
+      this.rt.paperBook = new PaperBook(opts.paperBookFile, opts.log);
+      // Trades closed since the last sync aren't in the database yet: they join the closed trades it has.
+      for (const e of this.rt.paperBook.entries.values()) if (e.trade.status === 'CLOSED') this.rt.closedSince.push(clone(e.trade));
+      this.rt.closedSince.sort(byEntry);
+    }
+    this.book = this.rt.paperBook;
   }
 
   /** A database call after the waiting writes are saved (so it sees them). */
@@ -450,6 +466,7 @@ export class RuntimeV2Store implements V2Store {
       for (const [tid, t] of this.rt.open ?? []) if (t.strategyId === id) this.rt.open!.delete(tid);
       for (const [aid, a] of this.rt.recent) if (a.strategyId === id) this.rt.recent.delete(aid);
       this.dropClosed((t) => t.strategyId === id);
+      this.book.forget((t) => t.strategyId === id);
       this.historyChanged();
       this.changed();
       return ok;
@@ -502,6 +519,7 @@ export class RuntimeV2Store implements V2Store {
       for (const [tid, t] of this.rt.open ?? []) if (t.connectionId === id) this.rt.open!.delete(tid);
       for (const [aid, a] of this.rt.recent) if (a.connectionId === id) this.rt.recent.delete(aid);
       this.dropClosed((t) => t.connectionId === id);
+      this.book.forget((t) => t.connectionId === id);
       this.historyChanged();
       this.changed();
       return ok;
@@ -791,7 +809,8 @@ export class RuntimeV2Store implements V2Store {
       return clone(value);
     },
     prune: async (before: string): Promise<PruneResult> => {
-      const out = await this.read(() => this.db.maintenance.prune(before));
+      const db = await this.read(() => this.db.maintenance.prune(before));
+      const out = { ...db, paperTrades: db.paperTrades + this.book.forget((t) => t.status === 'CLOSED' && !!t.exitAt && t.exitAt < before) };
       this.rt.signals = this.rt.signals.filter((x) => x.createdAt >= before);
       this.rt.runs = this.rt.runs.filter((r) => r.startedAt >= before);
       for (const [id, a] of this.rt.recent) if (a.createdAt < before) this.rt.recent.delete(id);
@@ -847,9 +866,21 @@ export class RuntimeV2Store implements V2Store {
     return this.rt.overrides!;
   }
 
+  /** Open trades: the database's, then what changed on this computer since the last sync, at their latest prices. */
   private async openMap(): Promise<Map<string, PaperTrade>> {
     await this.once('open', () => !!this.rt.open, async () => {
-      this.rt.open = new Map((await this.read(() => this.db.paper.listOpen())).map((t) => [t.id, t]));
+      const rows = await this.read(() => this.db.paper.listOpen());
+      const open = new Map(rows.map((t) => [t.id, t]));
+      for (const t of rows) this.book.savedMarks.set(t.id, t.lastPrice);
+      for (const e of this.book.entries.values()) {
+        if (e.trade.status === 'OPEN') open.set(e.trade.id, clone(e.trade));
+        else open.delete(e.trade.id);
+      }
+      for (const [id, m] of this.book.marks) {
+        const t = open.get(id);
+        if (t && (!t.lastPriceAt || m.lastPriceAt >= t.lastPriceAt)) open.set(id, { ...t, ...m });
+      }
+      this.rt.open = open;
     });
     return this.rt.open!;
   }
@@ -867,7 +898,7 @@ export class RuntimeV2Store implements V2Store {
       if ([...open.values()].some((x) => x.connectionId === t.connectionId && x.slot === t.slot)) return null; // one open trade per slot
       const trade: PaperTrade = { ...clone(t), id: t.id ?? crypto.randomUUID() };
       open.set(trade.id, trade);
-      this.q.push({ op: 'paper.insertTrade', args: [trade], provides: trade.id, dependsOn: t.alertId ? [t.alertId] : undefined });
+      this.book.record(clone(trade), this.clock()); // saved on this computer now, in the database at the close
       return clone(trade);
     },
     openFor: async (connectionId: string, slot: string) => clone([...(await this.openMap()).values()].find((t) => t.connectionId === connectionId && t.slot === slot) ?? null),
@@ -878,7 +909,8 @@ export class RuntimeV2Store implements V2Store {
       if (!t) return null; // closed already
       const closed: PaperTrade = { ...t, ...clone(patch), status: 'CLOSED' };
       open.delete(id);
-      this.q.push({ op: 'paper.closeTrade', args: [id, patch], dependsOn: [id] });
+      // Not in the book: it came from the database (opened before the last sync).
+      this.book.record(clone(closed), this.clock(), !this.book.entries.has(id));
       const into = this.rt.closedRead ?? this.rt.closedSince;
       into.unshift(closed);
       into.sort(byEntry);
@@ -886,12 +918,14 @@ export class RuntimeV2Store implements V2Store {
       this.rt.closedVersion++;
       return clone(closed);
     },
-    /** Latest prices of open trades: memory only (saved with the trade when it closes). */
+    /** Latest prices of open trades: memory, the book's file within 30 s, the database at the next sync. */
     updateMarks: async (marks: Array<{ id: string; lastPrice: number; at: string }>) => {
       const open = await this.openMap();
       for (const m of marks) {
         const t = open.get(m.id);
-        if (t) open.set(m.id, { ...t, lastPrice: m.lastPrice, lastPriceAt: m.at });
+        if (!t) continue;
+        open.set(m.id, { ...t, lastPrice: m.lastPrice, lastPriceAt: m.at });
+        this.book.mark(m.id, m.lastPrice, m.at);
       }
     },
     /** Open trades and every closed one from memory (closed ones read from the database once). */
@@ -917,7 +951,60 @@ export class RuntimeV2Store implements V2Store {
       const n = await this.read(() => this.db.paper.reset(strategyId));
       for (const [id, t] of await this.openMap()) if (t.strategyId === strategyId) this.rt.open!.delete(id);
       this.dropClosed((t) => t.strategyId === strategyId);
-      return n;
+      return n + this.book.forget((t) => t.strategyId === strategyId); // + the ones only this computer had
     },
+    saveTrades: (trades: PaperTrade[]) => this.read(() => this.db.paper.saveTrades(trades)),
   };
+
+  /** Paper trades waiting on this computer for the end-of-day sync. */
+  paperBook() {
+    const open = this.rt.open;
+    const pricesWaiting = open ? [...open.values()].filter((t) => !this.book.entries.has(t.id) && this.book.savedMarks.get(t.id) !== t.lastPrice).length : 0;
+    const oldest = this.book.oldest();
+    return {
+      waiting: this.book.entries.size,
+      pricesWaiting,
+      oldestAt: oldest === null ? null : new Date(oldest).toISOString(),
+      lastSyncAt: this.book.lastSyncAt === null ? null : new Date(this.book.lastSyncAt).toISOString(),
+      lastError: this.book.lastError,
+    };
+  }
+
+  /**
+   * The end-of-day sync: every trade that changed since the last one (one row each, closed trades first so a slot's
+   * old trade closes before its new one opens) and open trades at their latest prices go to the database. The
+   * alerts they link to are saved first. What changes while it runs waits for the next close. Throws (and keeps
+   * everything) when the database can't be reached.
+   */
+  async syncPaper(): Promise<PaperSyncResult> {
+    const book = this.book;
+    if (book.syncing) return book.syncing as Promise<PaperSyncResult>;
+    const run = (async (): Promise<PaperSyncResult> => {
+      const open = await this.openMap();
+      const batch: Array<{ trade: PaperTrade; rev?: number }> = [...book.entries.values()].map((e) => ({ trade: clone(e.trade), rev: e.rev }));
+      for (const t of open.values()) if (!book.entries.has(t.id) && book.savedMarks.get(t.id) !== t.lastPrice) batch.push({ trade: clone(t) });
+      batch.sort((a, b) => Number(a.trade.status === 'OPEN') - Number(b.trade.status === 'OPEN'));
+      const at = this.clock();
+      if (!batch.length) {
+        book.synced([], at);
+        return { saved: 0, skipped: 0, at: new Date(at).toISOString() };
+      }
+      const { saved, skipped } = await this.read(() => this.db.paper.saveTrades(batch.map((b) => b.trade)));
+      const done = new Set([...saved, ...skipped]);
+      book.synced(
+        batch.filter((b) => done.has(b.trade.id)),
+        at,
+      );
+      return { saved: saved.length, skipped: skipped.length, at: new Date(at).toISOString() };
+    })();
+    book.syncing = run;
+    try {
+      return await run;
+    } catch (err) {
+      book.lastError = err instanceof Error ? err.message : String(err);
+      throw err;
+    } finally {
+      book.syncing = null;
+    }
+  }
 }

@@ -182,6 +182,7 @@ export function v2Controller(ctx: AppContext) {
     savePaperPlan: (req) => svc().savePaperPlan(req.params.id!, parse(paperPlanSchema, req.body)),
     paperSummary: (req) => svc().paperSummary({ ...records(req.query), sides: csv(req.query.get('sides'), SIDES) }),
     paperSettings: () => svc().paperSettings(),
+    paperSync: () => svc().paperBookStatus(),
     saveConnectionPaper: (req) => svc().saveConnectionPaper(req.params.id!, parse(z.object({ override: paperOverrideSchema }), req.body).override),
     resetConnectionPaper: (req) => svc().saveConnectionPaper(req.params.id!, {}),
     paperTrades: (req) => {

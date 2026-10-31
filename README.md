@@ -96,7 +96,7 @@ into the trader's folder.
 Needs **Node.js 24 LTS** (or 22.13+), git and a database URL — **Neon** (free Postgres) is the normal choice. The
 app runs as one process (UI, API, scanner and live worker together), so everything that changes every few seconds
 stays in its memory and Neon receives only the core records: strategies, connections, settings, alerts and their
-deliveries, alerting signals, paper trades (opening and closing) and the Kite session — see
+deliveries, alerting signals, paper trades (once a day, after each market's close) and the Kite session — see
 [Database traffic](#database-traffic).
 
 ```bash
@@ -132,20 +132,28 @@ The running app reads each kind of data from the database once, then keeps it in
 | | In the database (Neon) | In memory only (since the app started) |
 | --- | --- | --- |
 | Core | Strategies, connections, settings, paper plans / overrides, Kite session, preferences, instruments (re-synced as a daily diff) | — |
-| Events | Alerts + deliveries; signals that alerted (with a short trace); paper trades on open and close; a unit's alert state when it changes | Signals that didn't alert, scanner runs, evaluation details, paper marks (live P&L) |
+| Events | Alerts + deliveries; signals that alerted (with a short trace); a unit's alert state when it changes | Signals that didn't alert, scanner runs, evaluation details |
+| Paper trades | After each market's close (NSE / BSE ~15:36, MCX ~23:36): the day's trades in one write, open positions at their closing price | Kept on this computer in the meantime — memory + `data/paper-book.json`, written at every open / close, latest prices every 30 s |
 | Status | — | Live-worker heartbeat, locks, the change stamp the screens poll |
 
-A trading hour of scans and open screens makes **no database calls** once warm; an alert costs about five writes, a
-paper exit one ([tests/v2/memoryLayer.test.ts](tests/v2/memoryLayer.test.ts) counts them). Alert and signal list
+A trading hour of scans and open screens makes **no database calls** once warm; an alert costs about four writes, a
+paper trade none until the close, then one for the whole day ([tests/v2/memoryLayer.test.ts](tests/v2/memoryLayer.test.ts)
+counts them). Alert and signal list
 pages are read once and new alerts are merged in from memory; closed paper trades are read once at start; the daily
 contract sync rewrites only the products that changed. Long lists load 50 rows at a time as you scroll. The Signals and Scanner
 tabs show history since the app last started. On Vercel, with `LIVE_WORKER=off`, or next to a separate
 `npm run live`, the app reads and writes everything in the database instead (more than one process shares it).
 
 **Alerts never wait for the database.** The alert, its Telegram message, the alarm and the paper trade happen from
-memory; their records are saved right after, in order, by a background queue. While Neon can't be reached (asleep,
-offline, over its monthly allowance) the queue retries every few seconds; the top bar shows **"N not saved yet"**
-and the records are kept in `data/pending-writes.json` across a restart.
+memory; the alert's records are saved right after, in order, by a background queue. While Neon can't be reached
+(asleep, offline, over its monthly allowance) the queue retries every few seconds; the top bar shows **"N not saved
+yet"** and the records are kept in `data/pending-writes.json` across a restart.
+
+**Paper trades are synced at the close.** They are saved on this computer the moment they open or close
+(`data/paper-book.json`) and go to Neon a few minutes after each market's close — one row per trade, however often it
+changed. If the app is off at a close it syncs on the next start; if Neon can't be reached the trades stay on this
+computer and the sync is tried again every few minutes. The Paper tab and Settings → Database show what's waiting.
+Don't delete `data/paper-book.json`: until the sync it is the only copy of the day's paper trades.
 
 **Settings → Database** shows the space used (against Neon's free 0.5 GB) and **Keep history**: everything by
 default, or alerts, signals and closed paper trades for the last 1 / 3 / 6 / 12 / 24 months (older ones deleted
@@ -167,6 +175,7 @@ project shares its compute-hours).
 | `DATABASE_URL` | yes | Postgres connection string (Neon) |
 | `LIVE_WORKER` | no | `on` (default, `npm start` and `npm run dev`) / `off` — the live worker inside the app; `off` also turns the memory layer off |
 | `PENDING_WRITES_FILE` | no | Where records waiting for the database are kept across restarts (default `data/pending-writes.json`, git-ignored) |
+| `PAPER_BOOK_FILE` | no | Where paper trades are kept between end-of-day syncs (default `data/paper-book.json`, git-ignored) |
 | `CRON_SECRET` | Vercel | Protects `/api/cron/tick` (`openssl rand -hex 32`) |
 
 ### Deploying (optional)

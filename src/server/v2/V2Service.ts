@@ -6,6 +6,7 @@ import type {
   CalendarEntry,
   ConnectionConfig,
   DatabaseInfo,
+  PaperBookStatus,
   AlertQuery,
   BacktestJob,
   BacktestRequest,
@@ -34,14 +35,18 @@ import { CandleCache } from './data/CandleCache';
 import type { Quote, V2DataProvider } from './data/DataProvider';
 import type { ProductService } from './data/ProductService';
 import { COMPARE_MAX_DAYS, COMPARE_MAX_PRODUCTS, V2Tools, type CompareRequest } from './debug/tools';
-import type { ProductFilters, PruneResult, V2Store } from './persistence/V2Store';
+import type { PaperSyncResult, ProductFilters, PruneResult, V2Store } from './persistence/V2Store';
 import { liveHealth } from './live/health';
 import { PaperTrader, unrealizedPnl } from './paper/PaperTrader';
 import { paperSummary } from './paper/summary';
+import { lastPaperSyncPoint, nextPaperSyncPoint } from './paper/paperSync';
 import { runBacktest } from './paper/backtest';
 import { BacktestJobs } from './paper/BacktestJobs';
 import { V2Scanner, type ScanOptions } from './scanner/V2Scanner';
 import { atmReference, resolveUnits, unitInstruments } from './universe/resolve';
+
+/** After a failed end-of-day paper sync, wait this long before trying again. */
+const PAPER_SYNC_RETRY_MS = 3 * 60_000;
 
 export class V2ServiceError extends Error {
   constructor(
@@ -107,6 +112,8 @@ export class V2Service {
   /** History clean-up: the IST day it last ran, and what it removed. */
   private prunedDay: string | null = null;
   private lastPrune: DatabaseInfo['lastPrune'] = null;
+  /** The last end-of-day paper sync failed then (it is tried again a few minutes later). */
+  private paperSyncFailedAt: number | null = null;
   /** Backtests: candles kept between runs, and the background jobs (memory only). */
   private readonly candleCache = new CandleCache();
   private readonly backtestJobs = new BacktestJobs(() => this.now());
@@ -711,7 +718,48 @@ export class V2Service {
 
   async databaseInfo(): Promise<DatabaseInfo> {
     const [size, settings] = await Promise.all([this.deps.store.maintenance.size(), this.deps.store.settings.get()]);
-    return { ...size, historyDays: settings.historyDays, pending: this.deps.store.pendingWrites?.() ?? null, lastPrune: this.lastPrune };
+    return { ...size, historyDays: settings.historyDays, pending: this.deps.store.pendingWrites?.() ?? null, paperBook: await this.paperBookStatus(), lastPrune: this.lastPrune };
+  }
+
+  // ---- paper: the end-of-day sync -----------------------------------------------------------------
+
+  /** Paper trades waiting on this computer for the end-of-day sync (null when the store saves them at once). */
+  async paperBookStatus(): Promise<PaperBookStatus | null> {
+    const book = this.deps.store.paperBook?.();
+    if (!book) return null;
+    const waiting = book.waiting + book.pricesWaiting > 0;
+    // The holidays come from the database; while it can't be reached, the usual weekday sessions.
+    const entries = waiting ? await this.deps.store.calendar.list().catch((): CalendarEntry[] => []) : [];
+    const next = waiting ? nextPaperSyncPoint(calendars(entries), this.now()) : null;
+    return { ...book, nextSyncAt: next === null ? null : new Date(next).toISOString() };
+  }
+
+  /**
+   * Called every minute by the app: after each market's close (NSE 15:30, MCX 23:30 / 23:55, + a few minutes for
+   * the square-off and expiry closes) the paper trades kept on this computer go to the database — and at start when
+   * a close passed while the app was off. Due when something changed before the latest close, or an open trade's
+   * price changed and nothing was synced since that close. A failed sync is tried again after a few minutes;
+   * nothing is lost meanwhile (the trades stay in the file). Null when nothing was due.
+   */
+  async syncPaperIfDue(): Promise<PaperSyncResult | null> {
+    const { store } = this.deps;
+    const book = store.paperBook?.();
+    if (!book || !store.syncPaper || (!book.waiting && !book.pricesWaiting)) return null;
+    const now = this.now();
+    const point = lastPaperSyncPoint(calendars(await store.calendar.list().catch((): CalendarEntry[] => [])), now);
+    if (point === null) return null;
+    const changed = book.oldestAt !== null && Date.parse(book.oldestAt) <= point;
+    const prices = book.pricesWaiting > 0 && (book.lastSyncAt === null || Date.parse(book.lastSyncAt) < point);
+    if (!changed && !prices) return null;
+    if (this.paperSyncFailedAt !== null && now - this.paperSyncFailedAt < PAPER_SYNC_RETRY_MS) return null;
+    try {
+      const out = await store.syncPaper();
+      this.paperSyncFailedAt = null;
+      return out;
+    } catch (err) {
+      this.paperSyncFailedAt = now;
+      throw err;
+    }
   }
 
   /** Keep alerts, signals and closed paper trades for `days` (null = everything). Older ones are deleted now and then daily. */

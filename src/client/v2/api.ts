@@ -12,6 +12,7 @@ import type {
   PaperOverride,
   PaperPlan,
   PaperSummary,
+  PaperBookStatus,
   PaperTrade,
   ScanRun,
   SignalOutcome,
@@ -226,6 +227,8 @@ export const v2Api = {
   resetConnectionPaper: (connectionId: string) => request<{ override: null }>(`/paper/connections/${connectionId}`, { method: 'DELETE' }),
   paperTrades: (q: PaperQuery = {}) => request<PaperTrade[]>(`/paper/trades?${filterParams(q)}`),
   paperCounts: (q: PaperQuery = {}) => request<StrategyCounts>(`/paper/counts?${filterParams(q)}`),
+  /** Paper trades waiting on this computer for the end-of-day sync (null: saved to the database at once). */
+  paperSync: () => request<PaperBookStatus | null>('/paper/sync'),
   closePaperTrade: (id: string) => post<PaperTrade>(`/paper/trades/${id}/close`),
   resetPaper: (strategyId: string) => request<{ deleted: number }>(`/paper/strategies/${strategyId}/trades`, { method: 'DELETE' }),
 

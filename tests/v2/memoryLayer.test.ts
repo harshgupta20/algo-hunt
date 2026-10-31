@@ -1,7 +1,8 @@
 /**
  * The one-process app keeps hot data in memory: a scanned trading session — the alarm feed every 5 s, the
  * status bar every 30 s, the Live card and Paper tab, the scanner every minute — reaches the database only
- * for core records (the alert, its delivery, the paper trade opening and closing, the unit's alert state).
+ * for core records (the alert, its delivery, the unit's alert state), and for the day's paper trades once,
+ * after the market's close.
  */
 import { describe, expect, it } from 'vitest';
 import type { StrategyDefinition } from '../../src/shared/v2';
@@ -91,12 +92,13 @@ describe('memory layer — database traffic in a session', () => {
     await store.flushWrites();
     expect(Object.fromEntries(db.calls)).toEqual({});
 
-    // 11:00 the strategy fires: the alert, its signal, the delivery, the unit's alert state and the paper trade.
+    // 11:00 the strategy fires: the alert, its signal, the delivery and the unit's alert state. The paper trade
+    // stays on this computer until the close.
     clock.now = ist(D, '11:00') + 30_000;
     const fired = await svc.scan();
     expect(fired.run.alerts).toBe(1);
     await store.flushWrites(); // the writes are saved in the background, in order
-    expect(Object.fromEntries(db.calls)).toEqual({ 'signals.insert': 1, 'alerts.insert': 1, 'alerts.addDelivery': 1, 'units.upsertMany': 1, 'paper.insertTrade': 1 });
+    expect(Object.fromEntries(db.calls)).toEqual({ 'signals.insert': 1, 'alerts.insert': 1, 'alerts.addDelivery': 1, 'units.upsertMany': 1 });
 
     // The new alert shows on the alarm feed straight from memory.
     db.reset();
@@ -104,18 +106,30 @@ describe('memory layer — database traffic in a session', () => {
     expect((await svc.paperTrades({ status: 'OPEN' })).length).toBe(1);
     expect(db.total()).toBe(0);
 
-    // 11:05 the target is hit: one write closes the trade; the Paper tab shows it from memory.
+    // 11:05 the target is hit: no write — the Paper tab shows the closed trade from memory.
     clock.now = ist(D, '11:05');
     provider.ltp.set(atmCe.token, 121);
     await svc.scan();
     await store.flushWrites();
-    expect(Object.fromEntries(db.calls)).toEqual({ 'paper.closeTrade': 1 });
-    db.reset();
+    expect(Object.fromEntries(db.calls)).toEqual({});
     await svc.paperSummary();
     await svc.paperSummary();
     expect(Object.fromEntries(db.calls)).toEqual({});
     expect((await svc.paperSummary()).overall).toMatchObject({ trades: 1, wins: 1 });
     expect(inner.data.alerts).toHaveLength(1); // the core record is in the database
-    expect(inner.data.paperTrades[0]).toMatchObject({ status: 'CLOSED', exitReason: 'TARGET' });
+    expect(inner.data.paperTrades).toEqual([]);
+
+    // Before the close nothing is due; 6 minutes after NSE's 15:30 close the day's paper trades go in one write —
+    // one row for a trade that opened and closed.
+    clock.now = ist(D, '15:00');
+    expect(await svc.syncPaperIfDue()).toBeNull();
+    clock.now = ist(D, '15:36');
+    expect(await svc.syncPaperIfDue()).toMatchObject({ saved: 1, skipped: 0 });
+    expect(Object.fromEntries(db.calls)).toEqual({ 'paper.saveTrades': 1 });
+    expect(inner.data.paperTrades).toEqual([expect.objectContaining({ status: 'CLOSED', exitReason: 'TARGET', alertId: inner.data.alerts[0]!.id })]);
+    db.reset();
+    clock.now = ist(D, '15:45');
+    expect(await svc.syncPaperIfDue()).toBeNull(); // once
+    expect(db.total()).toBe(0);
   });
 });

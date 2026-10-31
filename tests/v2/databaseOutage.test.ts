@@ -1,8 +1,9 @@
 /**
  * Alerts never wait for the database. While it can't be reached (Neon asleep, offline, over its allowance)
  * the app keeps alerting and paper trading from memory and saves the records, in order, once it's back —
- * also after a restart. Lists are reused until something changes, and history is kept until the trader
- * chooses a period (then older records are deleted daily).
+ * also after a restart. Paper trades wait on this computer for the end-of-day sync, which is tried again
+ * until the database answers. Lists are reused until something changes, and history is kept until the
+ * trader chooses a period (then older records are deleted daily).
  */
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import os from 'node:os';
@@ -105,9 +106,10 @@ describe('database unreachable', () => {
     expect(await svc.paperTrades({ status: 'OPEN' })).toHaveLength(1);
     expect((await svc.paperSummary()).overall).toMatchObject({ open: 1 });
     const waiting = store.pendingWrites();
-    expect(waiting).toMatchObject({ count: 5, dropped: 0 }); // signal, alert, paper trade, delivery, unit state
+    expect(waiting).toMatchObject({ count: 4, dropped: 0 }); // signal, alert, delivery, unit state
+    expect(store.paperBook()).toMatchObject({ waiting: 1 }); // the paper trade: on this computer until the close
     expect(waiting.failingSince).not.toBeNull();
-    expect((await svc.status()).database).toMatchObject({ count: 5 });
+    expect((await svc.status()).database).toMatchObject({ count: 4 });
     expect(inner.data.alerts).toHaveLength(0);
 
     db.state.down = false;
@@ -117,8 +119,22 @@ describe('database unreachable', () => {
     expect(inner.data.alerts).toHaveLength(1);
     expect(inner.data.alerts[0]!.deliveries).toHaveLength(1);
     expect(inner.data.alerts[0]!.signalId).toBe(inner.data.signals.find((x) => x.outcome === 'ALERTED')!.id); // same ids as in memory
-    expect(inner.data.paperTrades).toEqual([expect.objectContaining({ status: 'OPEN', alertId: inner.data.alerts[0]!.id })]);
     expect([...inner.data.units.values()].some((u) => u.state === 'TRIGGERED')).toBe(true);
+    expect(inner.data.paperTrades).toEqual([]);
+
+    // The close: the database is down again — the sync fails, the trade stays on this computer and the sync
+    // is tried again a few minutes later, once the database answers.
+    db.state.down = true;
+    clock.now = ist(D, '15:36');
+    await expect(svc.syncPaperIfDue()).rejects.toThrow('ECONNREFUSED');
+    expect(store.paperBook()).toMatchObject({ waiting: 1, lastError: expect.stringContaining('ECONNREFUSED') });
+    db.state.down = false;
+    clock.now = ist(D, '15:37');
+    expect(await svc.syncPaperIfDue()).toBeNull(); // waits a few minutes after a failure
+    clock.now = ist(D, '15:40');
+    expect(await svc.syncPaperIfDue()).toMatchObject({ saved: 1 });
+    expect(store.paperBook()).toMatchObject({ waiting: 0, lastError: null });
+    expect(inner.data.paperTrades).toEqual([expect.objectContaining({ status: 'OPEN', alertId: inner.data.alerts[0]!.id })]);
   });
 
   it('records left when the app stops are kept in a file and saved on the next start', async () => {

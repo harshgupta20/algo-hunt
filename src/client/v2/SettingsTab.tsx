@@ -408,6 +408,18 @@ function DatabaseCard() {
               </span>
             )}
           </div>
+          {d.paperBook && (d.paperBook.waiting > 0 || d.paperBook.lastError) && (
+            <div className={clsx('flex items-start gap-2 rounded-lg border p-2.5 text-xs text-slate-300', d.paperBook.lastError ? 'border-warn/30 bg-warn/5' : 'border-ink-700 bg-ink-850')}>
+              <InfoTip content={H.settings.paperBook} />
+              <p>
+                <b>{d.paperBook.waiting} paper trade(s) on this computer</b>
+                {d.paperBook.lastError
+                  ? ` — the end-of-day sync couldn’t reach the database (${d.paperBook.lastError}); it is tried again every few minutes.`
+                  : ` — written to the database after the next close${d.paperBook.nextSyncAt ? ` (${istTime(d.paperBook.nextSyncAt)})` : ''}.`}
+                {d.paperBook.lastSyncAt && ` Last sync ${istTime(d.paperBook.lastSyncAt)}.`}
+              </p>
+            </div>
+          )}
           {d.pending && (d.pending.count > 0 || d.pending.dropped > 0) && (
             <div className="flex items-start gap-2 rounded-lg border border-warn/30 bg-warn/5 p-2.5 text-xs text-slate-300">
               <InfoTip content={H.settings.pending} />
