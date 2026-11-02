@@ -111,8 +111,15 @@ instead of minutes, for as many products as Kite's stream allows.
 
 On for every connection by default. The plan a connection trades with = its strategy's plan (`v2_paper_plans`;
 the preferred defaults, switched on, when none is saved) with the connection's own values on top
-(`v2_paper_overrides`, only the changed keys; `effectivePlan` in `shared/v2/paper.ts`). When an alert is recorded,
-`commitUnit` calls the `onAlert` hook (`paper/PaperTrader.ts`) before delivery and adds its line to the message:
+(`v2_paper_overrides`, only the changed keys; `effectivePlan` in `shared/v2/paper.ts`; `normalizePlan` fills fields
+added later — plans and trades are JSONB, so new fields need no migration). Both backtests trade the same plan
+(`simulate.ts` calls `buildTrade` / `stopNow` / `settle`). When an alert is recorded, `commitUnit` calls the
+`onAlert` hook (`paper/PaperTrader.ts`) before delivery and adds its line to the message:
+
+- **Watch window:** before the policy, `commitUnit` reads the connection's effective plan (only when the result is
+  TRUE) and passes `watched` to `decide` — a trigger candle that doesn't lie inside `watchNse*` / `watchMcx*` (opens at
+  or after "from", closes by "until"; live-candle mode: the moment; 1d / 1w always inside) never fires. Compare and
+  both backtests pass the same flag (`inWatchWindow`). Transitions are still judged on every candle.
 
 - **Rule:** the top-level group whose trace is TRUE (children of a root OR), else the single "whole strategy" rule →
   leg + Buy / Sell. The leg's contract comes from the alerting unit.
@@ -120,12 +127,19 @@ the preferred defaults, switched on, when none is saved) with the connection's o
   between alerts; a partial unique index enforces it. The same group again keeps it; another group closes it
   (`OPPOSITE`) when the plan says so, then opens its own.
 - **Entry:** market price (live worker: streamed last price; scanner: Kite LTP; fallback: the leg's close on the
-  trigger candle) ± slippage, rounded against the trader to the tick; whole lots for the cash per trade (≥ 1),
-  money counted as premium (bought options, stocks) or estimated margin (futures, sold options).
-- **Exits:** stop-loss / target on every tick (live worker) or once a minute on LTP (scanner, only while the worker
-  isn't covering); square-off on the entry day or expiry close; charges from `paper/charges.ts`. Closing is
-  conditional on `status = 'OPEN'`, so two processes can't close a trade twice. The worker keeps open trades'
-  contracts subscribed even after the ATM moves.
+  trigger candle) ± slippage, rounded against the trader to the tick; futures / options `lotsPerTrade` lots, stocks
+  (Spot legs) whole shares for `cashPerTrade` (≥ 1); money counted as premium (bought options, stocks) or estimated
+  margin (futures, sold options). The trade snapshots its terms (incl. `trailPct`) and, when its group has stop /
+  target conditions, `conditions` = the trees + the strategy's legs + the unit's contracts.
+- **Exits:** stop-loss / trailing stop / target on every tick (live worker) or once a minute on LTP (scanner, only
+  while the worker isn't covering). The trailing stop = `trailPct` from `peakPrice` (best price since entry),
+  the tighter of it and the fixed stop wins (`stopNow`, shared with the client); the worker keeps tick peaks in
+  memory and saves them with `updateMarks` at the next paper step (every 10 s); the paper book keeps them on disk.
+  Stop / target conditions (`paper/exitConditions.ts`, from `monitor`): at every close of the condition's smallest
+  timeframe after entry, on Kite's candles (`CandleService`), waiting with `pendingReason` until the candle is
+  published; TRUE → closed at the market price as `STOP_RULE` / `TARGET_RULE` (the stop first). Square-off on the
+  entry day or expiry close; charges from `paper/charges.ts`. Closing is conditional on `status = 'OPEN'`, so two
+  processes can't close a trade twice. The worker keeps open trades' contracts subscribed even after the ATM moves.
 - **Results:** `paper/summary.ts` — per strategy / connection / overall stats (win rate, profit factor, average
   win / loss, today's P&L, drawdown on cumulative net P&L); money needed = the peak of capital in use at the same
   time; return = net P&L ÷ that; P&L per day, per exit reason and per entry hour; a sparkline per connection /
@@ -146,7 +160,7 @@ src/server/v2/
 ├── scanner/          V2Scanner · commit (alert decision shared with the live worker)
 ├── live/             LiveWorker · KiteStream · ticks (Kite binary protocol) · LiveCandles · plan · verify
 │                     · FetchQueue · health
-├── paper/            PaperTrader (open on alerts, exits) · charges (Zerodha charges, margin estimate) · summary
+├── paper/            PaperTrader (open on alerts, exits) · exitConditions (live stop / target conditions) · charges (Zerodha charges, margin estimate) · summary
 │                     · backtest (Compare's alerts traded with money on 1-minute candles) · simulate (the money
 │                     side shared by both backtests) · optionsBacktest (expired contracts re-picked per candle)
 ├── upstox/           UpstoxHistory (expired + live contracts, coverage, candle pieces, 10 min / 1 h built here)
@@ -163,7 +177,8 @@ src/server/db/                 pool (Postgres) · appStore (Kite and Upstox sess
 src/server/services/upstox/    upstoxClient (REST, rate gate 20/s · 450/min · 1,900/30 min, typed errors) · upstoxAuth
                                (login with a checked state, token encrypted, ends 03:30 IST)
 src/client/v2/        V2Hub (tabs) · strategies/ (editor, legs, conditions) · connections/ · compare/ · alerts, products,
-                      paper/ (Paper tab, charts, paper settings fields + connection editor) · backtest/ (Backtest and Options tabs)
+                      paper/ (Paper tab, charts, paper settings fields + connection editor) · backtest/ (Backtest tab, also the Options
+                      page's) · options/ (OptionsHub — the /options section)
                       · FilterBar · scanner, settings, dashboard · ProductPicker · ExplainView · help.ts (tooltips)
 ```
 

@@ -1,10 +1,11 @@
 'use client';
 
 /**
- * Backtest: "if I had traded this strategy on these products with this money, what would I have made?"
- *   setup    strategy · products · period · starting capital · paper settings (from the strategy, editable
- *            here only) · what each group trades · alert settings
- *   results  final capital and return, the paper-trading figures and charts, by product, every trade,
+ * Backtest: "if I had traded this strategy on these products, what would I have made?"
+ *   setup    strategy · products · period · the strategy's trade plan — size, target / stop-loss / trailing stop,
+ *            watch window, what each group trades, stop / target conditions (editable to try out; "Save to
+ *            strategy" makes it the plan paper trading uses) · alert settings
+ *   results  P&L, return on the money needed, the paper-trading figures and charts, by product, every trade,
  *            alerts that weren't traded (and why), how it was tested
  * Two sources, one page: Kite (the Backtest tab — today's contracts) and Upstox (the Options tab — expired
  * contracts re-picked at every candle, NSE / BSE only, complete past days only, an Upstox login).
@@ -13,21 +14,20 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Download, FlaskConical, LogIn, LogOut, Plus, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Download, FlaskConical, LogIn, LogOut, Save, X } from 'lucide-react';
 import clsx from 'clsx';
-import type { BacktestJob, BacktestRequest, BacktestResult, ConnectionConfig, ExprNode, GroupNode, PaperPlan, PaperRule, StrategyDefinition } from '@/shared/v2';
-import { BACKTEST_DEFAULT_CAPITAL, EXPIRY_MODES, TIMEFRAME, defaultPaperPlan, paperGroups, resolveRules } from '@/shared/v2';
+import type { BacktestJob, BacktestRequest, BacktestResult, ConnectionConfig, PaperPlan } from '@/shared/v2';
+import { EXPIRY_MODES, TIMEFRAME, defaultPaperPlan, hasCondition, paperGroups, planSizing, resolveRules, watchWindowIssue } from '@/shared/v2';
 import { InfoTip, Tooltip } from '../../components/Tooltip';
 import { EmptyState, StatCard } from '../../components/ui';
 import { InlineSpinner } from '../../components/loaders';
 import { v2Api } from '../api';
-import { Cell, LegBadge, NumberInput, Section, Segmented, Toggle } from '../components';
+import { Cell, LegBadge, Section, Segmented } from '../components';
 import { daysAgo, istStampIso, istToday } from '../format';
 import { H } from '../help';
 import { ProductPicker } from '../ProductPicker';
 import { PaperRulesEditor } from '../strategies/PaperPlanEditor';
-import { ExpressionEditor } from '../strategies/ExpressionEditor';
-import { indicatorOperand, legSeries, newGroup } from '../strategies/defaults';
+import { ConditionsEditor } from '../paper/ConditionsEditor';
 import { Sparkline } from '../paper/charts';
 import { inr, pct, pnlClass, signedInr } from '../paper/money';
 import { PaperTermsFields } from '../paper/PaperFields';
@@ -65,100 +65,15 @@ const duration = (seconds: number) => {
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
 };
 
-// ---- exit rules ----------------------------------------------------------------------------------
-
-const ruleKey = (r: Pick<PaperRule, 'group'>) => r.group ?? '*';
-const uid = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `x${Math.random().toString(36).slice(2)}`);
-
-/** The trader's usual exits, on the traded contract (mirrored for a sell). */
-function quickExit(kind: 'rsi' | 'ma' | 'low', rule: PaperRule, def: StrategyDefinition): ExprNode {
-  const s = legSeries(rule.leg!, def.evaluation.triggerTimeframe);
-  const sell = rule.side === 'SELL';
-  const close = { kind: 'FIELD' as const, series: s, field: 'close' as const };
-  if (kind === 'rsi') return { type: 'CONDITION', id: uid(), left: indicatorOperand(s, 'RSI'), operator: sell ? 'CROSSED_ABOVE' : 'CROSSED_BELOW', right: { kind: 'CONSTANT', value: sell ? 60 : 40 } };
-  if (kind === 'ma') return { type: 'CONDITION', id: uid(), left: close, operator: sell ? 'CROSSED_ABOVE' : 'CROSSED_BELOW', right: indicatorOperand(s, 'SMA') };
-  return { type: 'CONDITION', id: uid(), left: close, operator: sell ? 'CROSSED_ABOVE' : 'CROSSED_BELOW', right: { ...indicatorOperand(s, 'RANGE'), output: sell ? 'high' : 'low' } };
-}
-
-/** Exit rules per trade rule: an AND / OR condition tree (the strategy editor's) that closes those trades. */
-function ExitRulesEditor({ def, rules, exits, onChange }: { def: StrategyDefinition; rules: PaperRule[]; exits: Record<string, GroupNode>; onChange: (e: Record<string, GroupNode>) => void }) {
-  const groups = paperGroups(def);
-  const label = (r: PaperRule) => (r.group === null ? 'Every trade' : `${groups.find((g) => g.id === r.group)?.label ?? 'Group'} trades`);
-  const set = (key: string, g: GroupNode | null) => {
-    const next = { ...exits };
-    if (g) next[key] = g;
-    else delete next[key];
-    onChange(next);
-  };
-  const traded = rules.filter((r) => r.leg);
-  if (!traded.length) return null;
-  return (
-    <div className="rounded-lg border border-ink-700/60 bg-ink-950/30 p-3">
-      <p className="mb-2 flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-        Exit rules — close a trade when… <InfoTip content={H.backtest.exitRules} />
-      </p>
-      <div className="flex flex-col gap-3">
-        {traded.map((r) => {
-          const key = ruleKey(r);
-          const tree = exits[key];
-          const leg = def.legs.find((l) => l.id === r.leg);
-          const quick = (
-            <span className="flex flex-wrap gap-1.5">
-              {(
-                [
-                  ['rsi', 'RSI turns', H.backtest.exitRsi],
-                  ['ma', 'Price crosses SMA', H.backtest.exitMa],
-                  ['low', r.side === 'SELL' ? '3-candle high' : '3-candle low', H.backtest.exitLow],
-                ] as const
-              ).map(([kind, text, help]) => (
-                <Tooltip key={kind} content={help}>
-                  <button type="button" className="btn-ghost py-0.5 text-[11px]" onClick={() => set(key, { ...(tree ?? newGroup('OR')), children: [...(tree?.children ?? []), quickExit(kind, r, def)] })}>
-                    <Plus className="w-3 h-3" /> {text}
-                  </button>
-                </Tooltip>
-              ))}
-            </span>
-          );
-          return (
-            <div key={key} className="flex flex-col gap-2 rounded-lg border border-ink-700 bg-ink-950/40 px-2.5 py-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold text-slate-200">{label(r)}</span>
-                <span className="text-[11px] text-slate-500">
-                  {r.side === 'SELL' ? 'sell' : 'buy'} {leg ? `${r.leg} · ${leg.kind}` : r.leg}
-                </span>
-                {tree ? (
-                  <Tooltip content={H.backtest.exitRemove} className="ml-auto">
-                    <button type="button" className="btn-ghost py-0.5 text-[11px] text-slate-400" onClick={() => set(key, null)}>
-                      <Trash2 className="w-3 h-3" /> No exit rule
-                    </button>
-                  </Tooltip>
-                ) : (
-                  <Tooltip content={H.backtest.exitAdd} className="ml-auto">
-                    <button type="button" className="btn-ghost py-0.5 text-[11px]" onClick={() => set(key, newGroup('OR', [quickExit('rsi', r, def)]))}>
-                      <LogOut className="w-3 h-3" /> Add exit rule
-                    </button>
-                  </Tooltip>
-                )}
-              </div>
-              {tree ? (
-                <>
-                  <ExpressionEditor expression={tree} onChange={(root) => set(key, root as GroupNode)} defaultSeries={legSeries(r.leg!, def.evaluation.triggerTimeframe)} legs={def.legs} />
-                  {quick}
-                </>
-              ) : (
-                <span className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">Or start from: {quick}</span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+/** A plan as text for "changed?" — conditions that are absent, null or empty all read as none. */
+const planKey = (p: PaperPlan) =>
+  JSON.stringify({
+    ...p,
+    rules: p.rules.map((r) => ({ group: r.group, leg: r.leg, side: r.side, stopWhen: hasCondition(r.stopWhen) ? r.stopWhen : null, targetWhen: hasCondition(r.targetWhen) ? r.targetWhen : null })),
+  });
 
 /** What to change when alerts were skipped for this reason. */
 function skipHint(reason: string): string | null {
-  if (reason.startsWith('Not enough money')) return 'Raise the starting capital (a futures lot needs its margin) or switch on “No limit”.';
   if (reason.startsWith('After the')) return 'Switch “Square off daily” off in the trades settings to hold positions overnight.';
   if (reason.startsWith('An index can’t be traded')) return 'In “What each group trades”, pick the future or an option leg instead of the index.';
   if (/doesn['’]t trade/.test(reason)) return 'In “What each group trades”, choose a leg for that group.';
@@ -250,21 +165,9 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
       <ResultNotice r={r} />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <StatCard
-          label="Final capital"
-          value={r.finalCapital === null ? '—' : inr(r.finalCapital, 0)}
-          tone={tone(o.netPnl)}
-          hint={r.capital === null ? 'no capital limit' : `from ${inr(r.capital, 0)}${r.lowestCapital !== null ? ` · lowest ${inr(r.lowestCapital, 0)}` : ''}`}
-          help={{ ...H.backtest.finalCapital, note: H.backtest.lowest.body }}
-        />
         <StatCard label="Net P&L" value={signedInr(o.netPnl)} tone={tone(o.netPnl)} hint={`${inr(o.charges, 0)} charges · ${o.trades} trade(s)`} help={{ ...H.paper.net, note: `Gross ${signedInr(o.grossPnl)} − charges ${inr(o.charges)}.` }} />
-        <StatCard
-          label="Return"
-          value={pct(r.returnOnCapitalPct ?? o.returnPct)}
-          tone={tone(r.returnOnCapitalPct ?? o.returnPct)}
-          hint={r.capital !== null ? `on ${inr(r.capital, 0)} capital` : o.capitalPeak ? `on ${inr(o.capitalPeak, 0)} needed` : undefined}
-          help={r.capital !== null ? H.backtest.returnOnCapital : H.paper.ret}
-        />
+        <StatCard label="Money needed" value={inr(o.capitalPeak, 0)} hint="most in use at once" help={H.paper.capital} />
+        <StatCard label="Return" value={pct(o.returnPct)} tone={tone(o.returnPct)} hint={o.capitalPeak ? `on ${inr(o.capitalPeak, 0)} needed` : undefined} help={H.paper.ret} />
         <StatCard label="Win rate" value={o.winRate === null ? '—' : `${o.winRate.toFixed(0)}%`} hint={`${o.wins} won · ${o.losses} lost`} help={H.paper.winRate} />
         <StatCard
           label="Profit factor"
@@ -521,12 +424,10 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
   // Upstox serves complete past days: the period ends yesterday at the latest.
   const lastDay = upstox ? daysAgo(1) : istToday();
   const [range, setRange] = useState(upstox ? { from: daysAgo(30), to: daysAgo(1) } : { from: daysAgo(4), to: istToday() });
-  const [capital, setCapital] = useState<number | null>(BACKTEST_DEFAULT_CAPITAL);
   const [plan, setPlan] = useState<PaperPlan | null>(null);
   const [expiry, setExpiry] = useState<ConnectionConfig['expiry']>({ mode: 'CURRENT' });
   const [shift, setShift] = useState(0);
   const [trigger, setTrigger] = useState<'ON_TRANSITION' | 'WHILE_TRUE'>('ON_TRANSITION');
-  const [exits, setExits] = useState<Record<string, GroupNode>>({});
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ['v2-status'], queryFn: v2Api.status, staleTime: 30_000 });
   const marketOpen = Boolean(status.data && (status.data.markets.NSE.open || status.data.markets.MCX.open));
@@ -560,7 +461,6 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
         setStrategyId(r.strategyId);
         setProducts(r.products);
         setRange({ from: r.from, to: r.to });
-        setCapital(r.capital);
         setExpiry(r.expiry ?? { mode: 'CURRENT' });
         setShift(r.strikeShift ?? 0);
         setTrigger(r.trigger ?? 'ON_TRANSITION');
@@ -576,32 +476,40 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
   const def = strategy?.definition;
   const tf = def?.evaluation.triggerTimeframe;
   const hasOptions = def?.legs.some((l) => l.kind === 'CE' || l.kind === 'PE');
-  // Start from the strategy's paper settings each time the strategy changes.
+  // The strategy's plan as saved (what paper trading trades); the form starts from it each time the strategy changes.
+  const saved = useMemo(() => {
+    if (!def) return null;
+    const p = settings.data?.plans[strategyId];
+    return p ? { ...p, rules: resolveRules(def, p.rules) } : defaultPaperPlan(def);
+  }, [def, settings.data, strategyId]);
   useEffect(() => {
     if (!def) return setPlan(null);
     const r = restore.current;
     if (r?.strategyId === strategyId && settings.data) {
       restore.current = null;
-      setPlan({ ...r.plan, rules: resolveRules(def, r.plan.rules) });
-      setExits(Object.fromEntries((r.exits ?? []).flatMap((x): Array<[string, GroupNode]> => (x.when.type === 'AND' || x.when.type === 'OR' ? [[ruleKey(x), x.when]] : []))));
+      setPlan({ ...saved!, ...r.plan, rules: resolveRules(def, r.plan.rules) });
       return;
     }
-    const saved = settings.data?.plans[strategyId];
-    setPlan(saved ? { ...saved, rules: resolveRules(def, saved.rules) } : defaultPaperPlan(def));
-    setExits({});
-  }, [strategyId, def, settings.data]);
+    setPlan(saved);
+  }, [strategyId, def, settings.data, saved]);
+  const rules = def && plan ? resolveRules(def, plan.rules) : [];
+  const sizing = def ? planSizing(def, rules) : { lots: true, cash: true };
+  // The form differs from the strategy's plan (rules resolved to the current groups; a removed condition = none).
+  const changed = !!plan && !!saved && planKey({ ...plan, rules }) !== planKey(saved);
+  const planIssue = plan ? watchWindowIssue(upstox ? { ...plan, watchMcxFrom: '00:00', watchMcxTo: '23:59' } : plan) : null;
+  const savePlan = useMutation({
+    mutationFn: () => v2Api.savePaperPlan(strategyId, { ...plan!, rules }),
+    onSuccess: () => {
+      for (const k of ['v2-paper-settings', 'v2-paper-plan', 'v2-paper']) qc.invalidateQueries({ queryKey: [k] });
+    },
+  });
   const names = useMemo(() => new Map((strategies.data ?? []).map((s) => [s.id, s.name])), [strategies.data]);
   const reversed = range.from > range.to;
   // Rough, per product: one request per leg, one for the price that sets ATM and ~1–2 for the traded contracts' minutes.
   const estimate = def ? products.length * (def.legs.length + 2.5) * SECONDS_PER_REQUEST : 0;
 
   const run = useMutation({
-    mutationFn: () => {
-      // Exit rules of the groups that still trade (a group switched to "don't trade" drops its rule).
-      const rules = resolveRules(def!, plan!.rules);
-      const sent = rules.filter((r) => r.leg && exits[ruleKey(r)]?.children.length).map((r) => ({ group: r.group, when: exits[ruleKey(r)]! }));
-      return jobs.start({ strategyId, products, from: range.from, to: range.to, plan: plan!, capital, expiry, strikeShift: shift, trigger, exits: sent });
-    },
+    mutationFn: () => jobs.start({ strategyId, products, from: range.from, to: range.to, plan: { ...plan!, rules }, expiry, strikeShift: shift, trigger }),
     onSuccess: (started) => {
       qc.setQueryData([jobs.key, started.id], started);
       setJobId(started.id);
@@ -615,7 +523,7 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
 
   return (
     <div className="flex flex-col gap-4">
-      <Section title={upstox ? 'Backtest options on expired contracts' : 'Backtest a strategy with money'} help={upstox ? H.options.section : H.backtest.section}>
+      <Section title={upstox ? 'Backtest options on expired contracts' : 'Backtest a strategy'} help={upstox ? H.options.section : H.backtest.section}>
         <div className="flex flex-col gap-4">
           {upstox && <UpstoxConnection />}
           <div className="flex flex-wrap items-center gap-3">
@@ -646,43 +554,48 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
                   <input type="date" aria-label="To" className="input py-1 text-xs" value={range.to} min={range.from} max={lastDay} onChange={(e) => setRange({ ...range, to: e.target.value })} />
                 </Cell>
                 <Cell label="Quick" help={upstox ? H.options.quick : H.backtest.quick}>
-                  {(upstox ? QUICK_OPTIONS : QUICK).map((q) => (
-                    <Tooltip key={q.days} content={{ ...(upstox ? H.options.quick : H.backtest.quick), title: `Last ${q.days} days` }}>
-                      <button type="button" className="btn-ghost py-1 text-xs" onClick={() => setRange(upstox ? { from: daysAgo(q.days), to: lastDay } : { from: daysAgo(q.days - 1), to: istToday() })}>
-                        {q.label}
-                      </button>
-                    </Tooltip>
-                  ))}
-                </Cell>
-                <Cell label="Starting capital" help={H.backtest.capital}>
-                  <span className="text-xs text-slate-400">₹</span>
-                  <NumberInput
-                    label="Starting capital"
-                    min={1000}
-                    max={1e10}
-                    step={10_000}
-                    disabled={capital === null}
-                    className="input py-1 text-xs w-32 tabular-nums disabled:opacity-40"
-                    value={capital}
-                    placeholder="no limit"
-                    onChange={setCapital}
-                  />
-                  <Toggle checked={capital === null} onChange={(off) => setCapital(off ? null : BACKTEST_DEFAULT_CAPITAL)} label="No limit" help={H.backtest.noLimit} />
+                  {(upstox ? QUICK_OPTIONS : QUICK).map((q) => {
+                    const quick = upstox ? { from: daysAgo(q.days), to: lastDay } : { from: daysAgo(q.days - 1), to: istToday() };
+                    // Selected while the period is exactly this one (editing a date unselects it).
+                    const on = range.from === quick.from && range.to === quick.to;
+                    return (
+                      <Tooltip key={q.days} content={{ ...(upstox ? H.options.quick : H.backtest.quick), title: `Last ${q.days} days`, note: on ? 'Selected — the period above is exactly this.' : undefined }}>
+                        <button type="button" aria-pressed={on} className={clsx('py-1 text-xs', on ? 'btn-primary' : 'btn-ghost')} onClick={() => setRange(quick)}>
+                          {q.label}
+                        </button>
+                      </Tooltip>
+                    );
+                  })}
                 </Cell>
               </div>
               {reversed && <p className="-mt-2 text-xs text-warn">“From” must be on or before “to”.</p>}
 
               <div className="rounded-lg border border-ink-700/60 bg-ink-950/30 p-3">
-                <p className="mb-2 flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                  Trades — from the strategy’s paper settings, changed here only for this test <InfoTip content={H.backtest.section} />
-                </p>
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                    Trades — the strategy’s plan (paper trading uses the same) <InfoTip content={H.backtest.plan} />
+                  </p>
+                  {changed ? (
+                    <Tooltip content={H.backtest.saveToStrategy} className="ml-auto">
+                      <button type="button" className="btn-ghost py-0.5 text-[11px]" disabled={savePlan.isPending || !!planIssue} onClick={() => savePlan.mutate()}>
+                        {savePlan.isPending ? <InlineSpinner className="w-3 h-3" /> : <Save className="w-3 h-3" />} Save to strategy
+                      </button>
+                    </Tooltip>
+                  ) : (
+                    <Tooltip content={H.backtest.savedPlan} className="ml-auto">
+                      <span className="flex items-center gap-1 text-[11px] text-slate-500">
+                        <Check className="w-3 h-3" /> Same as the strategy
+                      </span>
+                    </Tooltip>
+                  )}
+                </div>
                 <div className="flex flex-col gap-3">
-                  <PaperTermsFields value={plan} onChange={setPlan} hasGroups={paperGroups(def).length > 0} />
-                  <PaperRulesEditor def={def} rules={resolveRules(def, plan.rules)} onChange={(rules) => setPlan({ ...plan, rules })} />
+                  <PaperTermsFields value={plan} onChange={setPlan} base={saved ?? undefined} hasGroups={paperGroups(def).length > 0} sizing={sizing} nseOnly={upstox} />
+                  <PaperRulesEditor def={def} rules={rules} onChange={(r) => setPlan({ ...plan, rules: r })} />
+                  <ConditionsEditor def={def} rules={rules} onChange={(r) => setPlan({ ...plan, rules: r })} />
+                  {savePlan.error && <p className="text-xs text-bear">{(savePlan.error as Error).message}</p>}
                 </div>
               </div>
-
-              <ExitRulesEditor def={def} rules={resolveRules(def, plan.rules)} exits={exits} onChange={setExits} />
 
               <div className="flex flex-wrap items-end gap-5">
                 <Cell label={hasOptions ? 'Option expiry' : 'Futures expiry'} help={H.connection.expiry}>
@@ -717,7 +630,7 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
                   />
                 </Cell>
                 <Tooltip content={upstox ? (upstoxReady ? H.options.run : { ...H.options.run, note: 'Connect Upstox above first.' }) : H.backtest.run}>
-                  <button type="button" className="btn-primary" disabled={!products.length || run.isPending || running || reversed || !upstoxReady} onClick={() => run.mutate()}>
+                  <button type="button" className="btn-primary" disabled={!products.length || run.isPending || running || reversed || !upstoxReady || !!planIssue} onClick={() => run.mutate()}>
                     {run.isPending || running ? <InlineSpinner /> : <FlaskConical className="w-4 h-4" />} Backtest {products.length || ''} product{products.length === 1 ? '' : 's'}
                   </button>
                 </Tooltip>

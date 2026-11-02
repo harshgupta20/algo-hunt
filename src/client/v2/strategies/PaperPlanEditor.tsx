@@ -4,14 +4,16 @@
  * Step 4 of the strategy editor: paper trading — on for every connection of the strategy by default.
  * These are the defaults its connections trade with (each connection can change its own values in
  * Connections or on the Paper tab), plus one rule per top-level group (or one for the whole
- * strategy): which leg to trade, Buy or Sell.
+ * strategy): which leg to trade, Buy or Sell, and its stop-loss / target conditions. Both backtests
+ * start from this plan.
  */
 import { RotateCcw } from 'lucide-react';
 import type { LegId, PaperPlan, PaperRule, PaperSide, StrategyDefinition } from '@/shared/v2';
-import { PAPER_DEFAULTS, legName, paperGroups, resolveRules } from '@/shared/v2';
+import { PAPER_DEFAULTS, legName, paperGroups, planSizing, resolveRules } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { Cell, Segmented, Toggle } from '../components';
 import { H } from '../help';
+import { ConditionsEditor } from '../paper/ConditionsEditor';
 import { PaperTermsFields } from '../paper/PaperFields';
 
 /** What each top-level group (or the whole strategy) trades: the leg and Buy / Sell ("Don't trade" = exit only). */
@@ -57,6 +59,13 @@ export function PaperRulesEditor({ def, rules, onChange }: { def: StrategyDefini
   );
 }
 
+/** Default legs / sides with each group's stop / target conditions kept (built by hand — "Defaults" never wipes them). */
+const keepConditions = (fresh: PaperRule[], cur: PaperRule[]): PaperRule[] =>
+  fresh.map((r) => {
+    const was = cur.find((x) => x.group === r.group);
+    return { ...r, stopWhen: was?.stopWhen ?? null, targetWhen: was?.targetWhen ?? null };
+  });
+
 export function PaperPlanEditor({ def, plan, onChange }: { def: StrategyDefinition; plan: PaperPlan; onChange: (p: PaperPlan) => void }) {
   const groups = paperGroups(def);
   const rules = resolveRules(def, plan.rules);
@@ -68,7 +77,7 @@ export function PaperPlanEditor({ def, plan, onChange }: { def: StrategyDefiniti
         <Toggle checked={plan.enabled} onChange={(enabled) => set({ enabled })} label="Paper trade this strategy’s alerts (every connection)" help={H.paper.enabled} />
         {plan.enabled && (
           <Tooltip content={H.paper.defaults} className="ml-auto">
-            <button type="button" className="btn-ghost py-1 text-xs" onClick={() => set({ ...PAPER_DEFAULTS, rules: resolveRules(def) })}>
+            <button type="button" className="btn-ghost py-1 text-xs" onClick={() => set({ ...PAPER_DEFAULTS, rules: keepConditions(resolveRules(def), rules) })}>
               <RotateCcw className="w-3.5 h-3.5" /> Defaults
             </button>
           </Tooltip>
@@ -79,9 +88,10 @@ export function PaperPlanEditor({ def, plan, onChange }: { def: StrategyDefiniti
         <p className="text-xs text-warn">Off for every connection of this strategy — its alerts won’t open paper trades. Tick the box to simulate them again.</p>
       ) : (
         <>
-          <PaperTermsFields value={plan} onChange={(p) => onChange({ ...p, rules })} hasGroups={groups.length > 0} />
+          <PaperTermsFields value={plan} onChange={(p) => onChange({ ...p, rules })} hasGroups={groups.length > 0} sizing={planSizing(def, rules)} />
 
           <PaperRulesEditor def={def} rules={rules} onChange={(r) => set({ rules: r })} />
+          <ConditionsEditor def={def} rules={rules} onChange={(r) => set({ rules: r })} />
           <Tooltip content={H.paper.savedWith}>
             <p className="text-[11px] text-slate-500">Defaults for every connection of this strategy — a connection can change its own values in Connections or on the Paper tab. Saved with the strategy; open trades keep their settings.</p>
           </Tooltip>

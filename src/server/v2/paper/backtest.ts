@@ -1,7 +1,7 @@
 /**
- * Backtest a strategy on products with money: the alerts it would have sent over past candles (the same
- * evaluation as Compare), each traded exactly like a paper trade (simulate.ts), the exits found on the traded
- * contract's 1-minute Kite candles.
+ * Backtest a strategy on products: the alerts it would have sent over past candles (the same evaluation as
+ * Compare, with the plan's watch window), each traded exactly like a paper trade (simulate.ts), the exits found on
+ * the traded contract's 1-minute Kite candles and the stop / target conditions on the unit's candles.
  *
  * Any number of products and any period: candles come product by product through Kite's request queue (the
  * cost is only waiting), through the candle cache so a re-run is quick; a job reports progress and can cancel.
@@ -10,20 +10,19 @@
  * (optionsBacktest.ts) replays expired contracts from Upstox instead.
  */
 import type { BacktestJob, BacktestProduct, BacktestRequest, BacktestResult, CompareProductResult, StrategyDefinition, V2Instrument, V2Strategy } from '@/shared/v2';
-import { nodeText, paperGroups, resolveRules } from '@/shared/v2';
+import { normalizePlan, planConditions, resolveRules } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { calendars, dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
 import { CandleCache, type CandleStats } from '../data/CandleCache';
 import type { V2DataProvider } from '../data/DataProvider';
-import { exitDefinition, type V2Tools } from '../debug/tools';
+import type { V2Tools } from '../debug/tools';
 import type { RawCandle } from '../engine/candles';
 import type { V2Store } from '../persistence/V2Store';
-import { exitKey, ruleFor as ruleOf, simulate, type SimAlert } from './simulate';
+import { planNotes, ruleFor as ruleOf, simulate, type SimAlert } from './simulate';
 import { breakdowns, paperStats, spark } from './summary';
 
 const DAY = 86_400_000;
 const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
-const round2 = (n: number) => Math.round(n * 100) / 100;
 const msg = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export interface BacktestDeps {
@@ -48,10 +47,10 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
   const tf = d.evaluation.triggerTimeframe;
   const now = deps.now();
   const ids = [...new Set(req.products)];
-  const exitRules = (req.exits ?? []).map((x) => ({ key: exitKey(x.group), when: x.when }));
   const cals = calendars(await deps.store.calendar.list());
   const products = new Map((await deps.store.products.list({ ids })).map((p) => [p.id, p]));
-  const plan = { ...req.plan, enabled: true, rules: resolveRules(d, req.plan.rules) };
+  const plan = { ...normalizePlan(req.plan), enabled: true, rules: resolveRules(d, req.plan.rules) };
+  const exitRules = planConditions(plan.rules).map((x) => ({ key: x.key, when: x.when }));
   const end = Math.min(now, dateStartMs(addDays(req.to, 1)));
   const calOf = (productId: string): MarketCalendar => cals[products.get(productId)?.market ?? 'NSE'];
   const symbolOf = (productId: string) => products.get(productId)?.symbol ?? productId.split(':')[1] ?? productId;
@@ -86,7 +85,7 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
 
   const cmp = await deps.tools.compare(
     d,
-    { products: ids, from: req.from, to: req.to, expiry: req.expiry, strikeShift: req.strikeShift, trigger: req.trigger, cooldownMinutes: req.cooldownMinutes ?? null, exits: exitRules },
+    { products: ids, from: req.from, to: req.to, expiry: req.expiry, strikeShift: req.strikeShift, trigger: req.trigger, cooldownMinutes: req.cooldownMinutes ?? null, watch: plan, exits: exitRules },
     {
       provider,
       checkpoint: (i, id) => {
@@ -110,7 +109,6 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
   const { closed, skipped } = simulate({
     strategy,
     plan,
-    capital: req.capital,
     products,
     calOf,
     alerts,
@@ -139,34 +137,19 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
   });
 
   const overall = paperStats(closed, end);
-  let cum = 0;
-  let low = 0;
-  for (const t of [...closed].sort((a, b) => (a.exitAt ?? '').localeCompare(b.exitAt ?? ''))) low = Math.min(low, (cum += t.netPnl ?? 0));
-  const capital = req.capital;
   return {
     strategyId: strategy.id,
     strategyName: strategy.name,
     from: req.from,
     to: req.to,
     triggerTimeframe: tf,
-    capital,
-    finalCapital: capital === null ? null : round2(capital + overall.netPnl),
-    returnOnCapitalPct: capital ? round2((overall.netPnl / capital) * 100) : null,
-    lowestCapital: capital === null ? null : round2(capital + low),
     summary: { from: req.from, overall, strategies: [], connections: [], ...breakdowns(closed) },
     products: results.sort((a, b) => b.stats.netPnl - a.stats.netPnl),
     trades: [...closed].sort((a, b) => b.entryAt.localeCompare(a.entryAt)),
     skipped,
     requests: stats.fetched,
     notes: [
-      ...(plan.squareOff && (tf === '1d' || tf === '1w')
-        ? ['Daily / weekly candles close after the day’s square-off time, so with “Square off daily” on no alert can be traded — switch it off to hold positions overnight.']
-        : []),
-      'Each alert is entered at its trigger candle’s close (± slippage) and exited on the traded contract’s 1-minute candles; if the target and stop-loss fall in the same minute the stop counts.',
-      ...(req.exits ?? []).map((x) => {
-        const group = paperGroups(d).find((g) => g.id === x.group)?.label;
-        return `Exit rule${group ? ` (${group})` : ''}: ${nodeText(x.when, d.legs)} — checked at each ${exitDefinition(d, x.when).evaluation.triggerTimeframe} candle close; the trade exits at that close.`;
-      }),
+      ...planNotes(d, plan, { conditionLegs: '', markets: [...new Set([...products.values()].map((p) => p.market))] }),
       ...cmp.notes.map((x) => x.replace('Alerts only (no trade scoring). ', '')),
     ],
   };

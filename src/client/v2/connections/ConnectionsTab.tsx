@@ -9,7 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Link2, Pencil, PlayCircle, Plus, Power, PowerOff, RefreshCw, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
 import type { ConnectionConfig, PaperOverride, PaperPlan, StrategyDefinition, V2Strategy } from '@/shared/v2';
-import { TIMEFRAME, candleRequestsPerProduct, defaultPaperPlan, effectivePlan, expiryText, legName, paperGroups, policyText } from '@/shared/v2';
+import { TIMEFRAME, candleRequestsPerProduct, defaultPaperPlan, effectivePlan, expiryText, legName, paperGroups, planSizing, policyText, resolveRules } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { Badge, Card, EmptyState, IconButton, Spinner } from '../../components/ui';
 import { V2ApiError, v2Api, type ConnectionRow, type ExplainResult } from '../api';
@@ -243,7 +243,7 @@ function ConnectionRowView({ c, definition, paper }: { c: ConnectionRow; definit
           {hasOptions && c.config.strikeShifts.length > 1 ? ` · ${c.config.strikeShifts.length} strike positions` : ''} · {policyText(c.config.alert)}
           {c.enabled && c.enabledAt && <> · on since {istStampIso(c.enabledAt)}</>}
         </span>
-        {eff && <PaperChip enabled={eff.enabled} brief={paperBrief(eff)} custom={!!override && Object.keys(override).length > 0} onClick={() => setPanel(panel === 'paper' ? null : 'paper')} active={panel === 'paper'} />}
+        {eff && <PaperChip enabled={eff.enabled} brief={paperBrief(eff, definition ? planSizing(definition, resolveRules(definition, eff.rules)) : undefined)} custom={!!override && Object.keys(override).length > 0} onClick={() => setPanel(panel === 'paper' ? null : 'paper')} active={panel === 'paper'} />}
         <Tooltip content={c.enabled ? H.connection.disable : H.connection.enable}>
           <button type="button" className={clsx('btn py-1 text-xs', c.enabled ? 'btn-ghost' : 'btn-primary')} disabled={toggle.isPending} onClick={() => toggle.mutate()}>
             {toggle.isPending ? <InlineSpinner className="w-3.5 h-3.5" /> : c.enabled ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
@@ -302,6 +302,7 @@ function ConnectionRowView({ c, definition, paper }: { c: ConnectionRow; definit
             strategyPlan={strategyPlan}
             override={override}
             hasGroups={paperGroups(definition).length > 0}
+            sizing={planSizing(definition, resolveRules(definition, strategyPlan.rules))}
             onClose={() => setPanel(null)}
           />
         </div>

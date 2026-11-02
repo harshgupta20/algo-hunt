@@ -9,7 +9,9 @@
  *   any ──strategy disabled──▶ DISABLED ──enabled──▶ IDLE
  *
  * "Fires" = ON_TRANSITION: previous result FALSE and current TRUE (UNKNOWN is
- * never treated as false); WHILE_TRUE: current TRUE.
+ * never treated as false); WHILE_TRUE: current TRUE. Nothing fires on a trigger
+ * candle outside the plan's watch window (the transition is still judged on
+ * every candle, as TradingView's session filters do).
  */
 import type { AlertPolicy, SignalOutcome, TriState, UnitState } from '@/shared/v2';
 import { MAX_ALERT_LAG_MS } from '@/shared/v2';
@@ -28,6 +30,8 @@ export interface PolicyInput {
   /** ISO time the strategy was enabled; candles closing before it never alert. */
   enabledAt: string | null;
   mode: 'COMPLETED_CANDLE' | 'LIVE_CANDLE';
+  /** The trigger candle lies inside the watch window (absent = true): outside it nothing fires. */
+  watched?: boolean;
 }
 
 export interface PolicyDecision {
@@ -67,7 +71,7 @@ export function decide(i: PolicyInput): PolicyDecision {
   if (state === 'ACKNOWLEDGED' && i.result === 'FALSE') state = 'IDLE';
 
   const base: UnitState = { ...s, state, lastResult: i.result };
-  if (!fires(i.policy, i.result, i.prevResult)) return { next: base };
+  if (i.watched === false || !fires(i.policy, i.result, i.prevResult)) return { next: base };
 
   const onceGuard = (i.mode === 'COMPLETED_CANDLE' || i.policy.oncePerCandle) && s.lastSignalCandle === i.triggerCandle;
   if (onceGuard) return { next: base };

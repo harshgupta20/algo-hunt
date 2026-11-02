@@ -14,8 +14,8 @@
  *  10 evaluate     expression per unit (three-valued), seeded previous result
  *  11 alert        policy → signal (deduped by identity) → alert → paper trade → delivery; persist
  *
- * Before the gate: open paper trades are checked for their exits (target / stop / square-off / expiry)
- * — only while the live worker is off; it checks them on every tick.
+ * Before the gate: open paper trades are checked for their exits (target / stop / trailing stop / stop and
+ * target conditions / square-off / expiry) — only while the live worker is off; it checks them itself.
  */
 import { randomUUID } from 'node:crypto';
 import type { Market, ScanError, ScanRun, StrategyDefinition, Timeframe, UnitEvaluation, UnitState, V2Connection, V2Instrument, V2Product, V2Settings, V2Strategy, V2Unit } from '@/shared/v2';
@@ -96,7 +96,7 @@ export class V2Scanner {
   private cals: Record<Market, MarketCalendar> | null = null;
 
   constructor(private readonly deps: ScannerDeps) {
-    this.paper = new PaperTrader({ store: deps.store, now: () => this.now(), prices: (list) => deps.provider.getLtp(list) });
+    this.paper = new PaperTrader({ store: deps.store, now: () => this.now(), prices: (list) => deps.provider.getLtp(list), provider: deps.provider });
   }
 
   private commitDeps(): CommitDeps {

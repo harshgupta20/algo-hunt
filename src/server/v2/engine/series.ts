@@ -3,6 +3,7 @@
  * for sharing series within a cycle, and the series a strategy needs.
  */
 import type { ExprNode, LegId, Operand, SeriesSpec, StrategyDefinition, V2Instrument, V2Unit } from '@/shared/v2';
+import { TIMEFRAMES } from '@/shared/v2';
 
 export function candleKey(s: SeriesSpec): string {
   return s.candle.type === 'VOLUME' ? `VOLUME:${s.candle.volumePerCandle}` : s.candle.type;
@@ -58,4 +59,11 @@ export function leafCount(d: StrategyDefinition): number {
   let n = 0;
   forEachLeaf(d.expression, () => n++);
   return n;
+}
+
+/** An exit condition (stop / target) as a definition of its own: same legs, checked on its smallest timeframe's candle closes. */
+export function exitDefinition(d: Pick<StrategyDefinition, 'legs' | 'evaluation'> & Partial<StrategyDefinition>, when: ExprNode): StrategyDefinition {
+  const tfs = seriesOf({ ...d, expression: when } as StrategyDefinition).map((s) => s.timeframe);
+  const smallest = TIMEFRAMES.find((t) => tfs.includes(t.key))?.key ?? d.evaluation.triggerTimeframe;
+  return { schemaVersion: 1, name: d.name ?? 'exit', legs: d.legs, expression: when, evaluation: { mode: 'COMPLETED_CANDLE', triggerTimeframe: smallest } };
 }

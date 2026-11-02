@@ -3,7 +3,7 @@
  * the equity curve, P&L per day, how trades closed and P&L by the hour they were entered.
  */
 import type { PaperExitReason, PaperPlan, PaperOverride, PaperStats, PaperSummary, PaperTrade, V2Connection, V2Strategy } from '@/shared/v2';
-import { defaultPaperPlan, effectivePlan } from '@/shared/v2';
+import { defaultPaperPlan, effectivePlan, normalizePlan } from '@/shared/v2';
 import { IST_OFFSET_MS, istDate } from '../../utils/marketTime';
 import { unrealizedPnl } from './PaperTrader';
 
@@ -141,7 +141,7 @@ export function paperSummary(x: SummaryInput): PaperSummary {
   const byConnection = group((t) => t.connectionId);
   const strategies = x.strategies.filter((s) => (!x.strategyId || s.id === x.strategyId) && (!x.strategyIds?.length || x.strategyIds.includes(s.id)));
   const stored = new Map(x.plans.map((p) => [p.strategyId, p.plan]));
-  const planOf = (s: V2Strategy) => stored.get(s.id) ?? defaultPaperPlan(s.definition);
+  const planOf = (s: V2Strategy) => normalizePlan(stored.get(s.id) ?? defaultPaperPlan(s.definition));
   const overrides = new Map(x.overrides.map((o) => [o.connectionId, o.override]));
   const byId = new Map(strategies.map((s) => [s.id, s]));
   const conns = x.connections.filter((c) => byId.has(c.strategyId) && (c.enabled || byConnection.has(c.id)));
@@ -154,7 +154,7 @@ export function paperSummary(x: SummaryInput): PaperSummary {
       .map((s) => {
         const plan = planOf(s);
         const list = byStrategy.get(s.id) ?? [];
-        return { strategyId: s.id, name: s.name, enabled: plan.enabled, cashPerTrade: plan.cashPerTrade, connections: conns.filter((c) => c.strategyId === s.id).length, stats: paperStats(list, now), spark: spark(list) };
+        return { strategyId: s.id, name: s.name, enabled: plan.enabled, lotsPerTrade: plan.lotsPerTrade, cashPerTrade: plan.cashPerTrade, connections: conns.filter((c) => c.strategyId === s.id).length, stats: paperStats(list, now), spark: spark(list) };
       }),
     connections: conns.map((c) => {
       const s = byId.get(c.strategyId)!;
@@ -168,7 +168,16 @@ export function paperSummary(x: SummaryInput): PaperSummary {
         productId: c.productId,
         symbol: c.productId.split(':')[1] ?? c.productId,
         switchedOn: c.enabled,
-        paper: { enabled: eff.enabled, cashPerTrade: eff.cashPerTrade, targetPct: eff.targetPct, stopPct: eff.stopPct, squareOff: eff.squareOff, custom: !!o && Object.keys(o).length > 0 },
+        paper: {
+          enabled: eff.enabled,
+          lotsPerTrade: eff.lotsPerTrade,
+          cashPerTrade: eff.cashPerTrade,
+          targetPct: eff.targetPct,
+          stopPct: eff.stopPct,
+          trailPct: eff.trailPct,
+          squareOff: eff.squareOff,
+          custom: !!o && Object.keys(o).length > 0,
+        },
         stats: paperStats(list, now),
         spark: spark(list),
       };

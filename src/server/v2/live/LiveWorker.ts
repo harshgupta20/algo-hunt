@@ -16,7 +16,8 @@
  *   plan      contracts to stream: legs at the current ATM + nearby strikes (every 60 s)
  *   candles   close finished minutes
  *   evaluate  connections whose trigger candle just closed (live-candle mode: every minute)
- *   paper     open paper trades: stop / target on every tick; square-off, expiry and prices (every 10 s)
+ *   paper     open paper trades: stop / trailing stop / target on every tick; square-off, expiry, prices and
+ *             stop / target conditions on Kite's candles (every 10 s)
  *   status    heartbeat row for the app and the backup scanner (every 5 s)
  */
 import { randomUUID } from 'node:crypto';
@@ -34,7 +35,7 @@ import { buildSeries } from '../engine/candles';
 import { evaluateUnit, type SeriesLookup, type SeriesResult, type UnitEvalInput } from '../engine/evaluator';
 import { seriesKey, seriesOf } from '../engine/series';
 import type { V2Store } from '../persistence/V2Store';
-import { PaperTrader, paperHit } from '../paper/PaperTrader';
+import { PaperTrader, newPeak, paperHit, type PaperMark } from '../paper/PaperTrader';
 import { commitUnit, previousResult, type Clock, type CommitDeps, type CommitStats, type UnitTarget } from '../scanner/commit';
 import { clockFor } from '../scanner/V2Scanner';
 import { resolveUnits } from '../universe/resolve';
@@ -162,6 +163,8 @@ export class LiveWorker {
   /** Open paper trades by contract token (checked on every tick). */
   private paperOpen = new Map<number, PaperTrade[]>();
   private readonly paperClosing = new Set<string>();
+  /** Best prices seen on ticks since the last paper step (saved by it, before it reads the trades again). */
+  private readonly paperPeaks = new Map<string, PaperMark>();
   private paperAt = -Infinity;
 
   private state: LiveState = 'STARTING';
@@ -186,7 +189,7 @@ export class LiveWorker {
     this.now = deps.clock ?? Date.now;
     this.sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.candles = new LiveCandles(calendars([]));
-    this.paper = new PaperTrader({ store: deps.store, now: this.now, prices: (list) => this.pricesFor(list) });
+    this.paper = new PaperTrader({ store: deps.store, now: this.now, prices: (list) => this.pricesFor(list), provider: deps.provider });
   }
 
   // ---- lifecycle ---------------------------------------------------------------------------
@@ -711,6 +714,11 @@ export class LiveWorker {
   private async paperStep(now: number): Promise<void> {
     this.paperAt = now;
     try {
+      if (this.paperPeaks.size) {
+        const peaks = [...this.paperPeaks.values()];
+        this.paperPeaks.clear();
+        await this.deps.store.paper.updateMarks(peaks);
+      }
       const { open, closed } = await this.paper.monitor(this.ctx!.cals);
       const next = new Map<number, PaperTrade[]>();
       for (const t of open) next.set(t.instrument.token, [...(next.get(t.instrument.token) ?? []), t]);
@@ -723,15 +731,22 @@ export class LiveWorker {
     }
   }
 
-  /** Stop-loss / target on each tick of a contract with an open paper trade. */
+  /** Stop-loss / trailing stop / target on each tick of a contract with an open paper trade; new best prices move the trailing stop. */
   private paperTicks(ticks: Tick[]): void {
     for (const tick of ticks) {
       const list = this.paperOpen.get(tick.token);
       if (!list) continue;
-      for (const trade of list) {
+      for (const [i, trade] of list.entries()) {
         if (this.paperClosing.has(trade.id)) continue;
         const hit = paperHit(trade, tick.price);
-        if (!hit) continue;
+        if (!hit) {
+          const peak = newPeak(trade, tick.price);
+          if (peak !== undefined) {
+            list[i] = { ...trade, peakPrice: peak };
+            this.paperPeaks.set(trade.id, { id: trade.id, lastPrice: tick.price, at: new Date(this.now()).toISOString(), peakPrice: peak });
+          }
+          continue;
+        }
         this.paperClosing.add(trade.id);
         this.track(
           this.paper

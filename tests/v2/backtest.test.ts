@@ -1,10 +1,10 @@
 /**
- * Backtest: the strategy's past alerts (as Compare finds them) traded like paper trades with the chosen
- * money — exits found on the contract's 1-minute candles (target, stop-loss, square-off, end of test),
- * trades skipped when the capital can't cover them.
+ * Backtest: the strategy's past alerts (as Compare finds them) traded like paper trades with the plan — futures /
+ * options in lots, no account limit — exits found on the contract's 1-minute candles (target, stop-loss, trailing
+ * stop, stop / target conditions, square-off, end of test); nothing alerts outside the watch window.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { PaperPlan, StrategyDefinition } from '../../src/shared/v2';
+import type { PaperPlan, PaperRule, StrategyDefinition } from '../../src/shared/v2';
 import { backtestRequestSchema, defaultPaperPlan } from '../../src/shared/v2';
 import { ProductService } from '../../src/server/v2/data/ProductService';
 import { RuntimeV2Store, createRuntimeState } from '../../src/server/v2/persistence/RuntimeV2Store';
@@ -49,23 +49,26 @@ describe('backtest', () => {
   });
 
   const plan = (patch: Partial<PaperPlan>): PaperPlan => ({ ...defaultPaperPlan(S), slippagePct: 0, targetPct: 1, stopPct: 0.5, ...patch });
-  const run = (p: Partial<PaperPlan>, capital: number | null = 500_000) => svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan(p), capital });
+  const run = (p: Partial<PaperPlan>) => svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan(p) });
+  /** The whole strategy's rule with a stop / target condition. */
+  const withConditions = (c: Pick<PaperRule, 'stopWhen' | 'targetWhen'>, p: Partial<PaperPlan> = {}): PaperPlan => plan({ ...p, rules: [{ group: null, leg: 'A', side: 'BUY', ...c }] });
 
   it('enters at the alert candle’s close and exits at the target found in 1-minute candles', async () => {
     provider.set(niftyFut, '1m', risingMinutes(40));
     const r = await run({});
     expect(r.products[0]).toMatchObject({ productId: 'NSE:NIFTY', alerts: 1, trades: 1, skipped: 0 });
     const [t] = r.trades;
-    // 1 lot of 75 (estimated margin ₹2,26,080 > ₹10,000 per trade → over budget), target +1 %, stop −0.5 %.
-    expect(t).toMatchObject({ side: 'BUY', lots: 1, quantity: 75, entryPrice: 25_120, targetPrice: 25_371.2, stopPrice: 24_994.4, overBudget: true, marginEstimated: true, capitalUsed: 226_080 });
+    // The plan's 1 lot of 75 (futures are sized in lots — never over budget; estimated margin ₹2,26,080), target +1 %, stop −0.5 %.
+    expect(t).toMatchObject({ side: 'BUY', lots: 1, quantity: 75, entryPrice: 25_120, targetPrice: 25_371.2, stopPrice: 24_994.4, overBudget: false, marginEstimated: true, capitalUsed: 226_080 });
     expect(t!.entryAt).toBe(new Date(ist(D, '10:00')).toISOString());
     // The 10:24 minute's high (25,372) reaches the target.
     expect(t).toMatchObject({ exitReason: 'TARGET', exitPrice: 25_371.2, exitAt: new Date(ist(D, '10:25')).toISOString(), grossPnl: 18_840 });
     const charges = roundTripCharges(niftyFut, 75, 25_120, 25_371.2);
     expect(t!.netPnl).toBeCloseTo(18_840 - charges, 2);
-    expect(r).toMatchObject({ capital: 500_000, finalCapital: Math.round((500_000 + 18_840 - charges) * 100) / 100 });
-    expect(r.returnOnCapitalPct).toBeCloseTo(((18_840 - charges) / 500_000) * 100, 2);
-    expect(r.summary.overall).toMatchObject({ trades: 1, wins: 1 });
+    // Return on the money the trades needed (no starting capital, like paper trading).
+    expect(r.summary.overall).toMatchObject({ trades: 1, wins: 1, capitalPeak: 226_080 });
+    expect(r.summary.overall.returnPct).toBeCloseTo(((18_840 - charges) / 226_080) * 100, 1);
+    expect(r).not.toHaveProperty('capital');
     expect(r.summary.reasons).toEqual([{ reason: 'TARGET', trades: 1, pnl: t!.netPnl }]);
   });
 
@@ -77,12 +80,42 @@ describe('backtest', () => {
     expect(t).toMatchObject({ exitReason: 'STOP', exitPrice: 24_900 });
   });
 
-  it('skips a trade the money can’t cover', async () => {
+  it('futures trade the plan’s lots per trade, whatever they cost (no account limit)', async () => {
     provider.set(niftyFut, '1m', risingMinutes(40));
-    const r = await run({}, 100_000);
-    expect(r.trades).toEqual([]);
-    expect(r.skipped).toEqual([{ productId: 'NSE:NIFTY', at: new Date(ist(D, '10:00')).toISOString(), reason: 'Not enough money: needs ₹2,26,080 margin (est.), ₹1,00,000 free' }]);
-    expect(r).toMatchObject({ finalCapital: 100_000, returnOnCapitalPct: 0 });
+    const r = await run({ lotsPerTrade: 2, cashPerTrade: 100 });
+    expect(r.skipped).toEqual([]);
+    expect(r.trades[0]).toMatchObject({ lots: 2, quantity: 150, capitalUsed: 452_160, overBudget: false, exitReason: 'TARGET', grossPnl: 37_680 });
+    expect(r.notes).toContain('Futures and options: 2 lots per trade, at each contract’s own lot size.');
+  });
+
+  it('trailing stop: follows the best price of the minutes before, closes when the price comes back', async () => {
+    // Ten minutes up (highest high 25,222), then a minute that spikes to 25,300 and drops to 25,150.
+    const m = [...risingMinutes(10), { time: Math.floor(ist(D, '10:10') / 1000), open: 25_220, high: 25_300, low: 25_150, close: 25_160, volume: 10 }];
+    provider.set(niftyFut, '1m', m);
+    const r = await run({ targetPct: null, stopPct: 0.5, trailPct: 0.2 });
+    // 25,222 × 0.998 = 25,171.556 → 25,171.55 (tick 0.05) — the 10:10 minute's own high doesn't count yet.
+    expect(r.trades[0]).toMatchObject({ exitReason: 'TRAIL', exitPrice: 25_171.55, exitAt: new Date(ist(D, '10:11')).toISOString(), peakPrice: 25_222 });
+    expect(r.notes.some((n) => /^Trailing stop-loss 0.2% from the best price since entry/.test(n))).toBe(true);
+  });
+
+  it('a trailing stop looser than the fixed stop-loss: the fixed one counts (and says so)', async () => {
+    provider.set(niftyFut, '1m', [...risingMinutes(10), { time: Math.floor(ist(D, '10:10') / 1000), open: 25_220, high: 25_300, low: 25_050, close: 25_160, volume: 10 }]);
+    const r = await run({ targetPct: null, stopPct: 0.1, trailPct: 5 });
+    expect(r.trades[0]).toMatchObject({ exitReason: 'STOP', exitPrice: 25_094.9 });
+  });
+
+  it('watch window: a trigger candle that doesn’t lie inside sends no alert and opens no trade', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    // The 09:45–10:00 candle crosses: it closes after 09:45, so a window ending 09:45 misses it.
+    const out = await run({ watch: true, watchNseFrom: '09:15', watchNseTo: '09:45' });
+    expect(out.products[0]).toMatchObject({ alerts: 0, trades: 0 });
+    expect(out.notes).toContain('Watched only 09:15–09:45: trigger candles outside it sent no alert and opened no trade.');
+    const inside = await run({ watch: true, watchNseFrom: '09:45', watchNseTo: '10:00' });
+    expect(inside.products[0]).toMatchObject({ alerts: 1, trades: 1 });
+    // An ON_TRANSITION cross outside the window isn't alerted later just because the window opens.
+    const late = await run({ watch: true, watchNseFrom: '10:00', watchNseTo: '15:00' });
+    expect(late.products[0]).toMatchObject({ alerts: 0 });
+    await expect(run({ watch: true, watchNseFrom: '15:00', watchNseTo: '10:00' })).rejects.toThrow();
   });
 
   it('squares off at 15:20 at the last price; positional trades run to the end of the test', async () => {
@@ -109,11 +142,11 @@ describe('backtest', () => {
     provider.set(niftyFut, '1d', candlesAt(dayTimes, [25_050, 25_080, 25_150]));
     provider.set(niftyFut, '1m', risingMinutes(40));
     const p = { ...defaultPaperPlan(daily), slippagePct: 0, targetPct: 1, stopPct: 0.5 };
-    const intraday = await svc.backtest({ strategyId: id, products: ['NSE:NIFTY'], from: '2026-10-02', to: '2026-10-07', plan: p, capital: null });
+    const intraday = await svc.backtest({ strategyId: id, products: ['NSE:NIFTY'], from: '2026-10-02', to: '2026-10-07', plan: p });
     expect(intraday.trades).toEqual([]);
     expect(intraday.skipped[0]?.reason).toMatch(/After the 15:20 square-off — switch “Square off daily” off/);
     expect(intraday.notes[0]).toMatch(/Daily \/ weekly candles close after the day’s square-off time/);
-    const positional = await svc.backtest({ strategyId: id, products: ['NSE:NIFTY'], from: '2026-10-02', to: '2026-10-07', plan: { ...p, squareOff: false }, capital: null });
+    const positional = await svc.backtest({ strategyId: id, products: ['NSE:NIFTY'], from: '2026-10-02', to: '2026-10-07', plan: { ...p, squareOff: false } });
     expect(positional.trades).toHaveLength(1);
     expect(positional.trades[0]).toMatchObject({ entryPrice: 25_150, exitReason: 'TARGET' }); // held overnight, the target met the next morning
     expect(positional.notes.join(' ')).not.toMatch(/square-off time/);
@@ -126,30 +159,33 @@ describe('backtest', () => {
     const app = new V2Service({ store, provider, products: new ProductService(store, provider), channels: new RecordingChannels(), clock: () => clock.now });
     await app.syncProducts();
     const id = (await app.createStrategy(S)).id;
-    const r = await app.backtest({ strategyId: id, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}), capital: 500_000 });
+    const r = await app.backtest({ strategyId: id, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}) });
     expect(r.trades[0]).toMatchObject({ exitReason: 'TARGET', exitPrice: 25_371.2, grossPnl: 18_840 });
   });
 
-  it('exit rules: the trade closes at the first candle close where its condition is true', async () => {
+  it('stop / target conditions: the trade closes at the first candle close where one is true', async () => {
     provider.set(niftyFut, '1m', risingMinutes(60));
     // Entered at 10:00 (close 25,120); 15-minute closes rise by 1 → above 25,122 first on the 10:30–10:45 candle.
-    const exits = [{ group: null, when: cond(field(legSeries('A')), 'GT', num(25_122)) }];
-    const r = await svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({ targetPct: null, stopPct: null }), capital: null, exits });
-    expect(r.trades[0]).toMatchObject({ exitReason: 'EXIT_RULE', exitAt: new Date(ist(D, '10:45')).toISOString(), exitPrice: 25_570 }); // the 10:44 minute's close
-    expect(r.notes.some((n) => /^Exit rule: .*checked at each 15m candle close/.test(n))).toBe(true);
-    // A target that comes first still wins.
-    const target = await svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}), capital: null, exits });
-    expect(target.trades[0]).toMatchObject({ exitReason: 'TARGET' });
+    const above = cond(field(legSeries('A')), 'GT', num(25_122));
+    const bt = (p: PaperPlan) => svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: p });
+    const r = await bt(withConditions({ targetWhen: above }, { targetPct: null, stopPct: null }));
+    expect(r.trades[0]).toMatchObject({ exitReason: 'TARGET_RULE', exitAt: new Date(ist(D, '10:45')).toISOString(), exitPrice: 25_570 }); // the 10:44 minute's close
+    expect(r.notes.some((n) => /^Target condition: .*checked at each 15m candle close/.test(n))).toBe(true);
+    // The same condition as a stop: named as a stop.
+    expect((await bt(withConditions({ stopWhen: above }, { targetPct: null, stopPct: null }))).trades[0]).toMatchObject({ exitReason: 'STOP_RULE', exitAt: new Date(ist(D, '10:45')).toISOString() });
+    // Both true on the same close: the stop counts.
+    expect((await bt(withConditions({ stopWhen: above, targetWhen: above }, { targetPct: null, stopPct: null }))).trades[0]).toMatchObject({ exitReason: 'STOP_RULE' });
+    // A % target that comes first still wins.
+    expect((await bt(withConditions({ targetWhen: above }))).trades[0]).toMatchObject({ exitReason: 'TARGET' });
     // Several conditions: AND needs both — never true here, so the trade runs to the square-off.
-    const both = [{ group: null, when: and(cond(field(legSeries('A')), 'GT', num(25_122)), cond(field(legSeries('A')), 'LT', num(25_000))) }];
-    const r2 = await svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({ targetPct: null, stopPct: null }), capital: null, exits: both });
+    const r2 = await bt(withConditions({ stopWhen: and(above, cond(field(legSeries('A')), 'LT', num(25_000))) }, { targetPct: null, stopPct: null }));
     expect(r2.trades[0]).toMatchObject({ exitReason: 'SQUARE_OFF' });
   });
 
-  it('exit rules are checked like the strategy’s own conditions', async () => {
-    const bad = [{ group: null, when: cond(field(legSeries('D')), 'GT', num(1)) }];
-    await expect(svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}), capital: null, exits: bad })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^Exit rule: /) });
-    await expect(svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}), capital: null, exits: [{ group: 'nope', when: cond(field(legSeries('A')), 'GT', num(1)) }] })).rejects.toMatchObject({ status: 400 });
+  it('stop / target conditions are checked like the strategy’s own conditions (backtest and saving the plan)', async () => {
+    const bad = withConditions({ stopWhen: cond(field(legSeries('D')), 'GT', num(1)) });
+    await expect(svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: bad })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^Stop-loss condition: /) });
+    await expect(svc.savePaperPlan(strategyId, bad)).rejects.toMatchObject({ status: 400 });
   });
 
   it('N-candle low / high: the previous N candles, not the current one', () => {
@@ -169,7 +205,7 @@ describe('backtest', () => {
     }
     throw new Error('backtest job did not finish');
   };
-  const jobRequest = () => ({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}), capital: 500_000 });
+  const jobRequest = () => ({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}) });
 
   it('runs as a background job: progress, the same result, and a re-run answered from memory', async () => {
     provider.set(niftyFut, '1m', risingMinutes(40));
@@ -224,7 +260,7 @@ describe('backtest', () => {
   });
 
   it('refuses a missing strategy or a reversed period', async () => {
-    await expect(svc.backtest({ strategyId: 'nope', products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}), capital: null })).rejects.toThrow(/not found/i);
-    await expect(svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: '2026-10-01', plan: plan({}), capital: null })).rejects.toThrow(/on or before/);
+    await expect(svc.backtest({ strategyId: 'nope', products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}) })).rejects.toThrow(/not found/i);
+    await expect(svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: '2026-10-01', plan: plan({}) })).rejects.toThrow(/on or before/);
   });
 });

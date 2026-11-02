@@ -27,7 +27,24 @@ import type {
   V2Strategy,
   ValidationIssue,
 } from '@/shared/v2';
-import { DEFAULT_TELEGRAM_BOT, TIMEFRAME, defaultPaperPlan, hasErrors, newestFirst, olderThan, parseCursor, resolveRules, incompatibility, strategySummary, validateConnection, validateStrategy } from '@/shared/v2';
+import {
+  DEFAULT_TELEGRAM_BOT,
+  TIMEFRAME,
+  defaultPaperPlan,
+  effectivePlan,
+  hasErrors,
+  newestFirst,
+  normalizePlan,
+  olderThan,
+  parseCursor,
+  planConditions,
+  resolveRules,
+  incompatibility,
+  strategySummary,
+  validateConnection,
+  validateStrategy,
+  watchWindowIssue,
+} from '@/shared/v2';
 import { istDate } from '../utils/marketTime';
 import { envChannelFactory, recentTelegramChats, telegramBotInfo, type ChannelFactory, type ChannelName } from './alerts/notifications';
 import { getConfig } from '../config/index';
@@ -414,7 +431,11 @@ export class V2Service {
   async explainConnection(id: string) {
     const c = await this.getConnection(id);
     const [s, p] = await Promise.all([this.getStrategy(c.strategyId), this.product(c.productId)]);
-    return this.tools.explain({ definition: s.definition, strategyId: s.id, version: s.version, product: p, config: c.config, connectionId: c.id, enabledAt: c.enabledAt });
+    // The connection's watch window, as its alerts follow it.
+    const watch = await Promise.all([this.deps.store.paper.getPlan(s.id), this.deps.store.paper.getOverride(c.id)])
+      .then(([plan, override]) => effectivePlan(plan ?? defaultPaperPlan(s.definition), override))
+      .catch(() => undefined);
+    return this.tools.explain({ definition: s.definition, strategyId: s.id, version: s.version, product: p, config: c.config, connectionId: c.id, enabledAt: c.enabledAt, watch });
   }
 
   async explainDraft(input: { definition: StrategyDefinition; productId: string; config?: ConnectionConfig }) {
@@ -437,8 +458,10 @@ export class V2Service {
     if ((Date.parse(input.to) - Date.parse(input.from)) / 86_400_000 + 1 > COMPARE_MAX_DAYS[tf]) throw new V2ServiceError(400, `Comparisons on ${TIMEFRAME[tf].label} candles are limited to ${COMPARE_MAX_DAYS[tf]} days`);
     if (new Set(input.products).size > COMPARE_MAX_PRODUCTS) throw new V2ServiceError(400, `Compare at most ${COMPARE_MAX_PRODUCTS} products at a time`);
     await this.requireKite('compare');
+    // A saved strategy's alerts follow its plan's watch window.
+    const watch = input.watch ?? (input.strategyId ? await this.paperPlan(input.strategyId).catch(() => undefined) : undefined);
     try {
-      return await this.tools.compare(definition, input);
+      return await this.tools.compare(definition, { ...input, watch });
     } catch (err) {
       if (/limited to|must be on or before|at least one|at most/.test(msg(err))) throw new V2ServiceError(400, msg(err));
       throw err;
@@ -509,18 +532,22 @@ export class V2Service {
     return s;
   }
 
-  /** The request's strategy, its period and exit rules checked (the same for both backtests). */
+  /** The request's strategy, its period and the plan's stop / target conditions checked (the same for both backtests). */
   private async checkedBacktest(req: BacktestRequest): Promise<V2Strategy> {
     const s = await this.getStrategy(req.strategyId);
     if (req.from > req.to) throw new V2ServiceError(400, '“From” must be on or before “to”');
-    // Exit rules use the strategy's legs and indicators: the same checks as the strategy's own conditions.
-    const groups = new Set(resolveRules(s.definition, req.plan.rules).map((r) => r.group));
-    for (const x of req.exits ?? []) {
-      if (!groups.has(x.group)) throw new V2ServiceError(400, 'An exit rule is for a group the strategy doesn’t have');
-      const issue = validateStrategy({ ...s.definition, expression: x.when }).find((i) => i.severity === 'error');
-      if (issue) throw new V2ServiceError(400, `Exit rule: ${issue.message}`);
-    }
+    this.checkPlan(s, req.plan);
     return s;
+  }
+
+  /** A plan's watch window, and its stop / target conditions with the same checks as the strategy's own conditions. */
+  private checkPlan(s: V2Strategy, plan: PaperPlan): void {
+    const window = watchWindowIssue(normalizePlan(plan));
+    if (window) throw new V2ServiceError(400, window);
+    for (const x of planConditions(resolveRules(s.definition, plan.rules))) {
+      const issue = validateStrategy({ ...s.definition, expression: x.when }).find((i) => i.severity === 'error');
+      if (issue) throw new V2ServiceError(400, `${x.kind === 'STOP' ? 'Stop-loss' : 'Target'} condition: ${issue.message}`);
+    }
   }
 
   private backtestDeps() {
@@ -617,14 +644,15 @@ export class V2Service {
     return paperTables(async () => {
       const s = await this.getStrategy(strategyId);
       const plan = await this.deps.store.paper.getPlan(strategyId);
-      return plan ? { ...plan, rules: resolveRules(s.definition, plan.rules) } : defaultPaperPlan(s.definition);
+      return plan ? { ...normalizePlan(plan), rules: resolveRules(s.definition, plan.rules) } : defaultPaperPlan(s.definition);
     });
   }
 
   async savePaperPlan(strategyId: string, plan: PaperPlan): Promise<PaperPlan> {
     return paperTables(async () => {
       const s = await this.getStrategy(strategyId);
-      return this.deps.store.paper.savePlan(strategyId, { ...plan, rules: resolveRules(s.definition, plan.rules) });
+      this.checkPlan(s, plan);
+      return this.deps.store.paper.savePlan(strategyId, { ...normalizePlan(plan), rules: resolveRules(s.definition, plan.rules) });
     });
   }
 
@@ -702,7 +730,7 @@ export class V2Service {
       const [strategies, plans, overrides] = await Promise.all([store.strategies.list(), store.paper.listPlans(), store.paper.listOverrides()]);
       const saved = new Map(plans.map((p) => [p.strategyId, p.plan]));
       return {
-        plans: Object.fromEntries(strategies.map((s) => [s.id, saved.get(s.id) ? { ...saved.get(s.id)!, rules: resolveRules(s.definition, saved.get(s.id)!.rules) } : defaultPaperPlan(s.definition)])),
+        plans: Object.fromEntries(strategies.map((s) => [s.id, saved.get(s.id) ? { ...normalizePlan(saved.get(s.id)!), rules: resolveRules(s.definition, saved.get(s.id)!.rules) } : defaultPaperPlan(s.definition)])),
         overrides: Object.fromEntries(overrides.map((o) => [o.connectionId, o.override])),
       };
     });
@@ -711,8 +739,11 @@ export class V2Service {
   /** A connection's own paper values (empty = follow the strategy). */
   async saveConnectionPaper(connectionId: string, override: PaperOverride): Promise<{ override: PaperOverride | null }> {
     return paperTables(async () => {
-      await this.getConnection(connectionId);
+      const c = await this.getConnection(connectionId);
       const clean = Object.fromEntries(Object.entries(override).filter(([, v]) => v !== undefined)) as PaperOverride;
+      const s = await this.getStrategy(c.strategyId);
+      const issue = watchWindowIssue(effectivePlan((await this.deps.store.paper.getPlan(s.id)) ?? defaultPaperPlan(s.definition), clean));
+      if (issue) throw new V2ServiceError(400, issue);
       return { override: await this.deps.store.paper.saveOverride(connectionId, clean) };
     });
   }

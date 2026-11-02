@@ -92,27 +92,29 @@ The first time, run `npm run live -- --check`. It connects to Kite, prints a few
    - **Coverage** shows how many candles had enough data. Low coverage means the count isn't reliable, e.g. an option that didn't exist yet.
 4. Press **Connect** on the products you want to follow.
 
-## 2b. Backtest with money (Backtest tab)
+## 2b. Backtest (Backtest tab)
 
-"If I had traded this strategy on these products with this money, what would I have made?" Nothing is saved or sent.
+"If I had traded this strategy on these products, what would I have made?" The backtest trades exactly what paper
+trading trades — the strategy's **paper plan** (section 5). Nothing is saved or sent unless you press **Save to
+strategy**.
 
 1. Pick a strategy (or press **Backtest** on its card), up to 20 products and a period (**5 days / 10 days / Max** —
    as far back as the trigger timeframe allows, e.g. 20 days of 15-minute candles).
-2. Set the **starting capital** (₹1,00,000 by default, or **No limit**). The trade settings start from the strategy's
-   paper settings — cash per trade, target, stop-loss, square-off, charges, slippage, and what each group trades —
-   change them here just for this test.
+2. **Trades — the strategy's plan**: lots per trade (₹ per trade for stocks), target, stop-loss, trailing stop, watch
+   window, square-off, charges, slippage, what each group trades and its stop / target conditions — exactly what
+   paper trading uses. Change anything to try it out: changed values are highlighted (↺ goes back), and **Save to
+   strategy** makes them the strategy's plan so paper trading uses them from the next alert. "Same as the strategy"
+   means paper trading trades exactly this. There is **no starting capital**: like paper trading, every alert trades.
 3. **Backtest**: every alert the strategy would have sent is traded like a paper trade — entered at the alert
    candle's close (± slippage), followed minute by minute on the contract's Kite 1-minute candles to the target,
-   stop-loss (if both fall in the same minute the stop counts; a gap through the stop fills at that minute's open),
-   the other group, the 15:20 / 23:20 square-off, expiry, or the end of the test. A trade opens only if the money
-   that's free (capital + profit so far − money in open trades) covers it; otherwise it's listed under **Alerts not
-   traded** with the reason.
-4. Results: **final capital** (and the lowest the account went), net P&L, return on capital, win rate, profit factor,
+   stop-loss or trailing stop (a stop and the target in the same minute → the stop counts; a gap through the stop
+   fills at that minute's open; the trailing stop follows the best price of the minutes before), a stop / target
+   condition, the other group, the 15:20 / 23:20 square-off, expiry, or the end of the test.
+4. Results: net P&L, **money needed** (the most in use at once) and the return on it, win rate, profit factor,
    drawdown, the P&L charts, **by product** (open a row for the contracts used and data notes), every trade (CSV).
    When nothing was traded, a box at the top says why — no alerts in the period, or every alert skipped (grouped by
-   reason, with what to change: e.g. *Not enough money* → raise the capital, a futures lot needs its margin of about
-   ₹1.4–2.3 lakh; *After the square-off* → switch **Square off daily** off). Products whose candles couldn't be read
-   are listed there too.
+   reason, with what to change: e.g. *After the square-off* → switch **Square off daily** off). Products whose
+   candles couldn't be read are listed there too.
 
 Needs a **Kite login** (candles come from Kite) — without one it says so instead of running. **Daily / weekly
 strategies** alert at the 15:30 close, after the square-off time: switch **Square off daily** off to trade them
@@ -121,29 +123,28 @@ strategies** alert at the 15:30 close, after the square-off time: switch **Squar
 Limits (as Compare): contracts are the ones listed today, with option strikes fixed around ATM at the start of the
 period; Kite has no candles for expired contracts.
 
-**Exit rules** (Backtest only for now): under the trade settings, each group that trades can get its own
-**Exit when…** conditions — the same builder as the strategy's (any leg, timeframe and indicator; AND / OR).
-Quick buttons add the usual ones on the traded contract: **RSI turns** (crossed below 40), **Price crosses SMA**
-(close crossed below SMA 20) and **3-candle low** (close crossed below the lowest low of the previous 3 candles; for a
-sell they are mirrored). They're checked at every close of the smallest timeframe used; the trade exits at that
-close (*Exit rule* in the trade list). Target, stop-loss, square-off and the other exits still apply — whichever
-comes first. The results' notes repeat the rules in words.
+Stop-loss / target conditions, the trailing stop and the watch window are part of the plan — see section 5. The
+results' notes repeat them in words.
 
 MCX quantities are in the exchange's units: one CRUDEOIL lot is 100 barrels, Gold Mini 100 g (priced per 10 g),
-Copper 2,500 kg, … — so a single lot often needs more than the cash per trade (shown *over budget*).
+Copper 2,500 kg, … — the money a lot needs follows from that.
 
-## 2c. Backtest options on expired contracts (Options tab)
+## 2c. Backtest options on expired contracts (Options section)
 
-The Backtest on contracts **as they were listed** — expired ones included — from **Upstox** instead of Kite. Use it
-for option (and futures) strategies over weeks and months: Kite only has today's contracts.
+**Options** in the sidebar (`/options`): the Backtest on contracts **as they were listed** — expired ones included —
+from **Upstox** instead of Kite, on the strategies you build in V2 → Strategies. Use it for option (and futures)
+strategies over weeks and months: Kite only has today's contracts.
 
 - **Every trigger candle re-picks the legs the way the live scanner does**: the expiry of that day (current / next /
   far among the expiries listed then — on an expiry day the expiring contract is still current) and the strike
   nearest the index's (or stock's) close on that candle, plus the strike position. Each contract keeps **its own lot
   size** (NIFTY was 75 a lot before 65, …). A unit met for the first time takes its previous result from that unit,
   exactly like the scanner, so "becomes true" alerts behave the same.
-- Trades are the Backtest's (the same code): entry at the alert candle's close ± slippage, exits on the traded
-  contract's 1-minute candles, charges, capital. **Exit rules** are checked on the legs the trade was opened with.
+- Trades are the Backtest's (the same code, the same plan): entry at the alert candle's close ± slippage, exits on the
+  traded contract's 1-minute candles, charges. **Stop / target conditions** are checked on the legs the trade was
+  opened with.
+- **Trades are sized in lots** (the plan's *Lots per trade*, 1 by default) × each contract's own lot size — the money
+  follows from the premium (or an estimated margin for futures and sold options). No starting capital.
 - **Products**: NSE and BSE indices and stocks with F&O. **No MCX** — Upstox has no expired MCX contracts.
 - **Period**: complete past days (it ends yesterday at the latest). Upstox keeps about **six months** of expired
   contracts. Days before Upstox's first known expiry, or around an expiry missing from its list, are **not tested**
@@ -155,7 +156,7 @@ for option (and futures) strategies over weeks and months: Kite only has today's
 order), an app at https://account.upstox.com/developer/apps with Redirect URL `http://localhost:3000/redirect/upstox`,
 and in `.env`: `UPSTOX_API_KEY`, `UPSTOX_API_SECRET`, `UPSTOX_REDIRECT_URI=http://localhost:3000/redirect/upstox`
 (exactly as saved on the app). Restart the app (it adds the `upstox_session` table). **Each day**: **Connect Upstox**
-on the Options tab — Upstox ends every login at 3:30 AM IST.
+on the Options page — Upstox ends every login at 3:30 AM IST.
 
 Upstox allows about 2,000 requests per 30 minutes; the app paces itself under that, so a long period on many products
 just takes longer. A re-run reuses what was already fetched while the app keeps running.
@@ -208,35 +209,54 @@ One filter bar on both tabs, remembered in your browser (separately for each tab
 ## 5. Paper trading (on for every connection)
 
 See what your alerts would have made — nothing is ever sent to your broker. Every alert of every switched-on
-connection opens a paper trade automatically, with these defaults: **₹10,000 per trade**, target **+20 %**, stop-loss
-**−10 %**, intraday square-off **15:20** (NSE / BSE) and **23:20** (MCX), exit when the other group fires, charges and
-**0.5 %** slippage on.
+connection opens a paper trade automatically, with these defaults: **1 lot per trade** (futures and options;
+**₹10,000** per trade for stocks), target **+20 %**, stop-loss **−10 %**, no trailing stop, the whole session watched,
+intraday square-off **15:20** (NSE / BSE) and **23:20** (MCX), exit when the other group fires, charges and **0.5 %**
+slippage on. Both backtests trade the same plan.
 
 **Changing the values**
 
 - **For a whole strategy:** open it (Strategies → ✎) → **4 · Paper trading**. These are the defaults all its
   connections use, plus **what to trade**: one row per top-level group (a strategy whose top level is OR — e.g.
   Bullish / Bearish), or one for the whole strategy — the leg (by default the group's option leg, else its future)
-  and **Buy** or **Sell**. "Don't trade" turns a group into an exit signal only. Untick the box to stop paper trading
-  the strategy. Changing only the paper settings doesn't create a new strategy version.
+  and **Buy** or **Sell**, and each group's **stop-loss / target conditions**. "Don't trade" turns a group into an
+  exit signal only. Untick the box to stop paper trading the strategy. Changing only the paper settings doesn't
+  create a new strategy version. (A backtest's **Save to strategy** saves here too.)
 - **For one connection:** click its **📄 chip** (Connections tab, or the ranking on the Paper tab) — e.g.
-  `📄 ₹10,000 · +20/−10%`. Change cash, target, stop-loss, square-off, slippage or charges, or switch paper trading
-  off for that connection only. Values that differ from the strategy's are highlighted **own** (click ↺ to go back);
+  `📄 1 lot · +20/−10% · trail 10%`. Change lots (₹ for stocks), target, stop-loss, trailing stop, watch window,
+  square-off, slippage or charges, or switch paper trading off for that connection only. Values that differ from the strategy's are highlighted **own** (click ↺ to go back);
   **Use strategy's settings** forgets them all. The chip is marked **OWN** when a connection has its own values.
 
 **How trades work**
 
-- **Size:** as many whole lots as the cash per trade covers — at least one lot, flagged **over budget** when one lot
-  costs more. Bought options and stocks count the premium / price; futures and sold options count an estimated
-  margin (≈12 % of the contract value for indices, 20 % stocks, 10 % MCX).
+- **Size:** futures and options take the plan's **lots per trade** × each contract's own lot size (the way Kite's
+  F&O order window and Streak size them); stocks take as many whole shares as the **₹ per trade** buys (at least one,
+  flagged **over budget** when one share costs more) — a ₹ amount keeps stocks of very different prices comparable.
+  Money used: the premium / price for bought options and stocks, an estimated margin for futures and sold options
+  (≈12 % of the contract value for indices, 20 % stocks, 10 % MCX).
+- **Trailing stop-loss** (optional): a stop that sits this % below the best price since entry (above the lowest,
+  for a sell) and only moves in your favour. Buy at ₹100 with 10 %: stop ₹90; the price reaches ₹130 → stop ₹117.
+  With a fixed stop-loss too, the tighter one counts. Live it moves on every tick; backtests move it after each
+  1-minute candle.
+- **Stop-loss / target conditions** (optional, per group): **Stop-loss when…** and **Target when…** — the strategy's
+  condition builder (any leg, timeframe, indicator; AND / OR). Quick buttons add the usual ones on the traded
+  contract: price crosses **SMA**, the **previous candle's low** broken, the **3-candle low** broken, **RSI turns**
+  (stop); **RSI overbought**, the **upper Bollinger band** (target) — mirrored for a sell. Checked at every close of
+  the smallest timeframe used, on Kite's candles (live: a few seconds after the close, once Kite publishes it); the
+  trade closes at that close (live: the price right after). Shown as *Stop condition* / *Target condition*.
+- **Watch window** (optional): **Only between set times** — e.g. 09:30 – 15:00 to skip the jumpy last half hour. A
+  trigger candle has to lie inside (open at or after "from", closed by "until"): outside it **no alert is sent** and
+  no trade opens — in paper trading, Compare and both backtests. Trades already open are still managed. Times for
+  NSE / BSE and MCX; intraday timeframes only. Set it per strategy, per connection (📄 chip) or per backtest.
 - **One position per connection and strike position.** The same group firing again keeps it; the other group firing
   closes it (if "Exit when another group fires" is on) and opens its own.
-- **Closes** at the target (at the target price), the stop-loss (at the price that crossed it, with slippage — if
-  both are reached at once the stop counts), the daily square-off, or the contract's expiry (square-off off). No new
+- **Closes** at the target (at the target price), the stop-loss or trailing stop (at the price that crossed it, with
+  slippage — if a stop and the target are reached at once the stop counts), a stop / target condition, the daily
+  square-off, or the contract's expiry (square-off off). No new
   trades after the square-off time or while the market is closed. An index Spot leg can't be traded.
 - The alert message gets a line such as `📄 Paper: BUY 1 lot (75) NIFTY…25000CE @ ₹100.50 · target ₹120.60 · stop ₹90.45`.
-- With the live worker running, targets and stop-losses are checked on every tick; without it, the per-minute scanner
-  checks them on the latest price once a minute.
+- With the live worker running, targets, stop-losses and trailing stops are checked on every tick (conditions every
+  10 seconds, once a candle closes); without it, the per-minute scanner checks them once a minute.
 - **Saved on this computer, synced at the close.** Every paper trade is saved on your computer the moment it opens
   or closes (open positions' latest prices every 30 seconds), so closing the app or a restart loses nothing. A few
   minutes after each market closes (NSE / BSE 15:30, MCX 23:30 or 23:55) the day's trades go to the database in one

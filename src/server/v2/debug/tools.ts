@@ -15,6 +15,7 @@ import type {
   ConditionTrace,
   ConnectionConfig,
   ExprTrace,
+  PaperPlan,
   SignalOutcome,
   StrategyDefinition,
   Timeframe,
@@ -25,7 +26,7 @@ import type {
   V2Product,
   V2Unit,
 } from '@/shared/v2';
-import { COMPARE_MAX_DAYS, TIMEFRAME, TIMEFRAMES, legNameById } from '@/shared/v2';
+import { COMPARE_MAX_DAYS, TIMEFRAME, inWatchWindow, legNameById, watchWindow } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { decide, initialState } from '../alerts/alertPolicy';
 import { calendars, dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
@@ -33,7 +34,7 @@ import { CandleService } from '../data/CandleService';
 import type { V2DataProvider } from '../data/DataProvider';
 import type { ProductService } from '../data/ProductService';
 import { alignIndex, evaluateUnit, type UnitEvalInput } from '../engine/evaluator';
-import { legInstrument, seriesOf } from '../engine/series';
+import { exitDefinition, legInstrument, seriesOf } from '../engine/series';
 import type { V2Store } from '../persistence/V2Store';
 import { clockFor } from '../scanner/V2Scanner';
 import { atmReference, resolveUnits } from '../universe/resolve';
@@ -74,7 +75,9 @@ export interface CompareRequest {
   strikeShift?: number;
   trigger?: AlertPolicy['trigger'];
   cooldownMinutes?: number | null;
-  /** Backtest exit conditions: for each, the candle closes (ms) where it is true are returned in `exits[key]`. */
+  /** The plan's watch window: trigger candles outside it don't alert (absent = the whole session). */
+  watch?: Pick<PaperPlan, 'watch' | 'watchNseFrom' | 'watchNseTo' | 'watchMcxFrom' | 'watchMcxTo'>;
+  /** Backtest stop / target conditions: for each, the candle closes (ms) where it is true are returned in `exits[key]`. */
   exits?: Array<{ key: string; when: ExprNode }>;
 }
 
@@ -88,15 +91,8 @@ export interface CompareRun {
   onProduct?: (r: CompareProductResult) => Promise<void>;
 }
 
-/** An exit condition as a definition of its own: same legs, checked on its smallest timeframe's candle closes. */
-export function exitDefinition(d: StrategyDefinition, when: ExprNode): StrategyDefinition {
-  const tfs = seriesOf({ ...d, expression: when }).map((s) => s.timeframe);
-  const smallest = TIMEFRAMES.find((t) => tfs.includes(t.key))?.key ?? d.evaluation.triggerTimeframe;
-  return { ...d, expression: when, evaluation: { mode: 'COMPLETED_CANDLE', triggerTimeframe: smallest } };
-}
-
 export const COMPARE_MAX_PRODUCTS = 20;
-export { COMPARE_MAX_DAYS };
+export { COMPARE_MAX_DAYS, exitDefinition };
 
 const DAY = 86_400_000;
 const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
@@ -172,6 +168,8 @@ export class V2Tools {
     config: ConnectionConfig;
     connectionId?: string;
     enabledAt?: string | null;
+    /** The connection's watch window (absent = the whole session). */
+    watch?: CompareRequest['watch'];
   }): Promise<ExplainResult> {
     const now = this.now();
     const { definition: d, product, config } = input;
@@ -228,6 +226,7 @@ export class V2Tools {
           now,
           enabledAt: input.enabledAt ?? null,
           mode: d.evaluation.mode,
+          watched: inWatchWindow(input.watch ? watchWindow(input.watch, product.market) : null, d.evaluation.triggerTimeframe, d.evaluation.mode === 'LIVE_CANDLE' ? clock.at : clock.triggerOpenMs, clock.at),
         });
         return { unit, evaluation, prevResult, outcome: decision.outcome, state };
       } catch (err) {
@@ -277,6 +276,7 @@ export class V2Tools {
       }
       try {
         const cal = cals[product.market];
+        const window = req.watch ? watchWindow(req.watch, product.market) : null;
         const candles = new CandleService(provider, cals, until, Infinity, { from: req.from, to: req.to });
         const all = await this.deps.products.instruments(id, now);
         const opens = triggerOpens(cal, req.from, req.to, tf, until);
@@ -330,12 +330,12 @@ export class V2Tools {
           const at = cal.candleClose(open, tf);
           const e = evaluateUnit({ ...base, triggerOpenMs: open, at });
           if (e.result !== 'UNKNOWN') r.decided++;
-          const decision = decide({ policy, state, result: e.result, prevResult: prev, triggerCandle: e.triggerCandle, at, now: at, enabledAt: null, mode: 'COMPLETED_CANDLE' });
+          const decision = decide({ policy, state, result: e.result, prevResult: prev, triggerCandle: e.triggerCandle, at, now: at, enabledAt: null, mode: 'COMPLETED_CANDLE', watched: inWatchWindow(window, tf, open, at) });
           state = { ...decision.next, lastEvaluatedCandle: e.triggerCandle };
           if (decision.outcome) r.alerts.push({ candleTime: e.triggerCandle, prices: e.prices, trace: e.trace });
           prev = e.result;
         }
-        // Exit conditions: every close of their own timeframe where they are true.
+        // Stop / target conditions: every close of their own timeframe where they are true.
         if (exits.length) {
           r.exits = {};
           for (const x of exits) {

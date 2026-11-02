@@ -102,15 +102,34 @@ describe('paper trading — end to end through the scanner', () => {
 
   it('a connection can use its own values over the strategy’s — or switch paper trading off', async () => {
     const { c } = await connect();
-    await env.svc.saveConnectionPaper(c.id, { cashPerTrade: 20_000, stopPct: null });
+    await env.svc.saveConnectionPaper(c.id, { lotsPerTrade: 2, stopPct: null, trailPct: 15 });
     await env.svc.scan();
-    expect(env.store.data.paperTrades[0]).toMatchObject({ lots: 2, quantity: 150, cashPerTrade: 20_000, stopPrice: null, targetPrice: 120.6 });
+    expect(env.store.data.paperTrades[0]).toMatchObject({ lots: 2, quantity: 150, stopPrice: null, targetPrice: 120.6, terms: expect.objectContaining({ trailPct: 15 }) });
     const sum = await env.svc.paperSummary();
-    expect(sum.connections[0]!.paper).toEqual({ enabled: true, cashPerTrade: 20_000, targetPct: 20, stopPct: null, squareOff: true, custom: true });
+    expect(sum.connections[0]!.paper).toEqual({ enabled: true, lotsPerTrade: 2, cashPerTrade: 10_000, targetPct: 20, stopPct: null, trailPct: 15, squareOff: true, custom: true });
 
     // Back to the strategy's values.
     expect(await env.svc.saveConnectionPaper(c.id, {})).toEqual({ override: null });
-    expect((await env.svc.paperSummary()).connections[0]!.paper).toMatchObject({ cashPerTrade: 10_000, custom: false });
+    expect((await env.svc.paperSummary()).connections[0]!.paper).toMatchObject({ lotsPerTrade: 1, custom: false });
+    // A watch window that ends before it starts is refused.
+    await expect(env.svc.saveConnectionPaper(c.id, { watch: true, watchNseFrom: '14:00', watchNseTo: '10:00' })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('watch window: a trigger candle outside it sends no alert and opens no trade (the strategy’s, or a connection’s own)', async () => {
+    // The scan at 11:00:30 evaluates the 10:45–11:00 candle.
+    const { c } = await connect((p) => ({ ...p, watch: true, watchNseFrom: '09:15', watchNseTo: '10:45' }));
+    await env.svc.scan();
+    expect(env.store.data.alerts).toHaveLength(0);
+    expect(env.store.data.paperTrades).toHaveLength(0);
+    // The connection's own window takes it in: the next candle that turns true alerts.
+    await env.svc.saveConnectionPaper(c.id, { watchNseTo: '15:00' });
+    const fresh = setup();
+    await fresh.svc.syncProducts();
+    env = fresh;
+    const again = await connect((p) => ({ ...p, watch: true, watchNseFrom: '09:15', watchNseTo: '11:00' }));
+    await env.svc.scan();
+    expect(env.store.data.alerts).toHaveLength(1);
+    expect(again.c.id).toBeTruthy();
   });
 
   it('switched off for one connection: the alert still goes out, no paper trade', async () => {
@@ -238,7 +257,7 @@ function evaluation(fired: 'bull' | 'bear'): UnitEvaluation {
   };
 }
 
-function trader(start = ist(D, '11:00')) {
+function trader(start = ist(D, '11:00'), provider?: FixtureV2Provider) {
   const clock = { now: start };
   const store = new MemoryV2Store(() => clock.now);
   const prices = new Map<number, number>([
@@ -247,12 +266,64 @@ function trader(start = ist(D, '11:00')) {
     [futI.token, 25_000],
     [spotI.token, 24_990],
   ]);
-  const t = new PaperTrader({ store, now: () => clock.now, prices: async (list) => new Map(list.flatMap((i) => (prices.has(i.token) ? [[i.token, prices.get(i.token)!] as [number, number]] : []))) });
+  const t = new PaperTrader({ store, now: () => clock.now, prices: async (list) => new Map(list.flatMap((i) => (prices.has(i.token) ? [[i.token, prices.get(i.token)!] as [number, number]] : []))), provider });
   const alert = (fired: 'bull' | 'bear') => t.onAlert({ connection, strategy: strat, product, unit, evaluation: evaluation(fired), alertId: null, cal: cals.NSE });
   return { clock, store, prices, t, alert };
 }
 
 describe('paper trader', () => {
+  it('stop / target conditions: checked live on Kite’s candles once each candle after entry closes, on the legs the trade opened on', async () => {
+    const provider = new FixtureV2Provider([spotI, futI, ceI, peI]);
+    const times = timesEndingAt(ist(D, '11:00'), 15, 40, NSE_SESSION);
+    const env = trader(ist(D, '11:00'), provider);
+    // The call's 15-minute closes: 100 … then 94 on the 11:00–11:15 candle — not published yet.
+    provider.set(ceI, '15m', candlesAt(times.slice(0, -1), times.slice(0, -1).map(() => 100)));
+    const stopWhen = cond(field(legSeries('B')), 'LT', num(95));
+    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), targetPct: null, stopPct: null, rules: [{ group: bull.id, leg: 'B', side: 'BUY', stopWhen }, { group: bear.id, leg: 'C', side: 'BUY' }] });
+    expect(await env.alert('bull')).toMatch(/· stop condition/);
+    const [opened] = env.store.data.paperTrades;
+    expect(opened!.conditions).toMatchObject({ stopWhen, legs: { B: ceI } });
+
+    // Before the candle closes: nothing to check. Just after, Kite hasn't published it: wait (not decided on old data).
+    env.clock.now = ist(D, '11:14');
+    expect((await env.t.monitor(cals)).closed).toEqual([]);
+    env.clock.now = ist(D, '11:15') + 5_000;
+    expect((await env.t.monitor(cals)).closed).toEqual([]);
+    // Published: 94 < 95 → closed as a stop condition at the market price.
+    provider.set(ceI, '15m', candlesAt(times, [...times.slice(0, -1).map(() => 100), 94]));
+    env.prices.set(ceI.token, 93.5);
+    env.clock.now = ist(D, '11:15') + 20_000;
+    const { closed } = await env.t.monitor(cals);
+    expect(closed).toHaveLength(1);
+    expect(closed[0]).toMatchObject({ exitReason: 'STOP_RULE', exitAt: new Date(env.clock.now).toISOString() });
+    expect(closed[0]!.exitPrice).toBe(93); // 93.5 − 0.5 % slippage, ticked down
+  });
+
+  it('trailing stop: the best price moves it (only in the trade’s favour); the fixed stop counts while it is tighter', async () => {
+    const env = trader();
+    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), targetPct: null, stopPct: 10, trailPct: 5 });
+    // Entry 100.5 × 0.95 = 95.475 → 95.45 (the half tick rounds down in floating point, as fixed stops do).
+    expect(await env.alert('bull')).toMatch(/stop ₹90\.45 · trailing 5% \(₹95\.45 now\)/);
+    const at = (price: number) => env.prices.set(ceI.token, price);
+    at(120);
+    expect((await env.t.monitor(cals)).closed).toEqual([]);
+    expect(env.store.data.paperTrades[0]).toMatchObject({ peakPrice: 120 });
+    at(115); // a lower price doesn't move it back
+    expect((await env.t.monitor(cals)).closed).toEqual([]);
+    expect(env.store.data.paperTrades[0]).toMatchObject({ peakPrice: 120 });
+    at(113.9); // 120 × 0.95 = 114
+    const { closed } = await env.t.monitor(cals);
+    expect(closed[0]).toMatchObject({ exitReason: 'TRAIL' });
+    expect(paperHit({ ...closed[0]!, status: 'OPEN', peakPrice: 100.5, terms: { ...closed[0]!.terms, trailPct: 20 } }, 90)).toBe('STOP'); // trail 80.4 is looser than the fixed 90.45
+  });
+
+  it('sizes futures / options in the plan’s lots, stocks in ₹ per trade', async () => {
+    const env = trader();
+    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), lotsPerTrade: 3, cashPerTrade: 100_000 });
+    expect(await env.alert('bull')).toMatch(/BUY 3 lots \(225\) NIFTY2026101325000CE/);
+    expect(env.store.data.paperTrades[0]).toMatchObject({ lots: 3, quantity: 225, overBudget: false });
+  });
+
   it('groups: each trades its own leg; the other group firing closes the open trade and opens its own', async () => {
     const env = trader();
     const plan = defaultPaperPlan(grouped, true);
@@ -288,12 +359,12 @@ describe('paper trader', () => {
     expect(env2.store.data.paperTrades).toHaveLength(1);
   });
 
-  it('selling a future: estimated margin, flagged over budget, stop above the entry (and the stop wins)', async () => {
+  it('selling a future: the plan’s lots on an estimated margin (never over budget), stop above the entry (and the stop wins)', async () => {
     const env = trader();
     await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), rules: [{ group: bull.id, leg: 'A', side: 'SELL' }, { group: bear.id, leg: 'C', side: 'BUY' }] });
-    expect(await env.alert('bull')).toMatch(/SELL 1 lot \(75\) NIFTY20261027FUT @ ₹24,875 · target ₹19,900 · stop ₹27,362\.5 · 1 lot needs ₹2,23,875 margin \(est\.\)/);
+    expect(await env.alert('bull')).toMatch(/SELL 1 lot \(75\) NIFTY20261027FUT @ ₹24,875 · target ₹19,900 · stop ₹27,362\.5$/);
     const [t] = env.store.data.paperTrades;
-    expect(t).toMatchObject({ side: 'SELL', entryPrice: 24_875, marginEstimated: true, overBudget: true, capitalUsed: 223_875 });
+    expect(t).toMatchObject({ side: 'SELL', entryPrice: 24_875, marginEstimated: true, overBudget: false, capitalUsed: 223_875 });
     expect(paperHit(t!, 27_400)).toBe('STOP');
     expect(paperHit(t!, 19_800)).toBe('TARGET');
     expect(paperHit(t!, 25_000)).toBeNull();

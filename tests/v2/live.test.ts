@@ -5,7 +5,7 @@
  * confirmed on Kite's candles, and the alert says which.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ExprTrace, LiveSocketStatus, StrategyDefinition, UnitEvaluation, V2Connection, V2Strategy } from '../../src/shared/v2';
+import type { ExprTrace, LiveSocketStatus, PaperPlan, StrategyDefinition, UnitEvaluation, V2Connection, V2Strategy } from '../../src/shared/v2';
 import { calendars } from '../../src/server/v2/calendar/MarketCalendar';
 import type { RawCandle } from '../../src/server/v2/engine/candles';
 import { ProductService } from '../../src/server/v2/data/ProductService';
@@ -270,7 +270,7 @@ const nFut = fut('NSE:NIFTY', '2026-10-27');
 const MINUTES = ['09:15', '09:16', '09:17', '09:18', '09:19'];
 
 /** Future's 5-min close vs a level (the 09:15–09:20 candle is the first of the day). */
-async function liveEnv(o: { close: number; level: number; officialClose?: number; failToday?: boolean; gap?: boolean; paper?: boolean }) {
+async function liveEnv(o: { close: number; level: number; officialClose?: number; failToday?: boolean; gap?: boolean; paper?: boolean | Partial<PaperPlan> }) {
   let t = at('09:05:00');
   const store = new MemoryV2Store(() => t);
   const provider = new FixtureV2Provider([nSpot, nFut]);
@@ -286,7 +286,7 @@ async function liveEnv(o: { close: number; level: number; officialClose?: number
   const s = await svc.createStrategy({ ...strategy([{ id: 'A', kind: 'FUT' }], cond(field(legSeries('A', '5m')), 'GT', num(o.level)), '5m'), name: 'Future above level' });
   const [c] = await svc.createConnections(s.id, ['NSE:NIFTY'], config());
   await svc.enableConnection(c!.id);
-  if (o.paper) await svc.savePaperPlan(s.id, { ...(await svc.paperPlan(s.id)), enabled: true });
+  if (o.paper) await svc.savePaperPlan(s.id, { ...(await svc.paperPlan(s.id)), enabled: true, ...(o.paper === true ? {} : o.paper) });
 
   const stream = new FakeStream(() => t);
   const worker = new LiveWorker({
@@ -378,14 +378,35 @@ describe('live worker end to end', () => {
   it('a live alert opens a paper trade at the streamed price; a tick through the stop closes it at once', async () => {
     const e = await liveEnv({ close: 25_160, level: 25_150, paper: true });
     const [open] = e.store.data.paperTrades;
-    // ₹10,000 against ≈12 % margin on ₹25,286 a unit → 3 units (lot size 1 in this fixture).
-    expect(open).toMatchObject({ status: 'OPEN', side: 'BUY', leg: 'A', entryRef: 25_160, entryPrice: 25_285.8, quantity: 3, marginEstimated: true, stopPrice: 22_757.2 });
-    expect(e.channels.sent[0]!.message.text).toMatch(/✓ Verified[\s\S]*📄 Paper: BUY 3 NIFTY20261027FUT @ ₹25,285\.8 · target ₹30,342\.95 · stop ₹22,757\.2/);
+    // The plan's 1 lot (lot size 1 in this fixture), on an estimated margin.
+    expect(open).toMatchObject({ status: 'OPEN', side: 'BUY', leg: 'A', entryRef: 25_160, entryPrice: 25_285.8, quantity: 1, marginEstimated: true, stopPrice: 22_757.2 });
+    expect(e.channels.sent[0]!.message.text).toMatch(/✓ Verified[\s\S]*📄 Paper: BUY 1 NIFTY20261027FUT @ ₹25,285\.8 · target ₹30,342\.95 · stop ₹22,757\.2/);
     await e.step('09:21:00'); // the worker starts watching the new trade
     const tt = e.t() + 500;
     e.worker.events.ticks([{ token: nFut.token, price: 22_700, volume: 900, tradeTime: tt, exchangeTime: tt, dayOpen: 25_100, index: false }], tt + 100);
     await e.worker.idle();
     expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'CLOSED', exitReason: 'STOP', exitPrice: 22_586.5 }); // 22,700 − 0.5 %
+  });
+
+  it('a trailing stop moves up with the ticks, is saved by the next paper step, and closes the trade when the price comes back', async () => {
+    const e = await liveEnv({ close: 25_160, level: 25_150, paper: { targetPct: null, trailPct: 1 } });
+    expect(e.channels.sent[0]!.message.text).toMatch(/trailing 1% \(₹25,032\.95 now\)/); // 25,285.8 × 0.99
+    await e.step('09:21:00');
+    const tick = (price: number) => {
+      const tt = e.t() + 500;
+      e.worker.events.ticks([{ token: nFut.token, price, volume: 900, tradeTime: tt, exchangeTime: tt, dayOpen: 25_100, index: false }], tt + 100);
+    };
+    tick(26_000); // best price → stop 25,740
+    await e.worker.idle();
+    expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'OPEN' });
+    await e.step('09:21:15'); // the paper step saves the best price
+    expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'OPEN', peakPrice: 26_000 });
+    tick(25_800); // above the trailing stop: still open
+    await e.worker.idle();
+    expect(e.store.data.paperTrades[0]!.status).toBe('OPEN');
+    tick(25_700); // through 25,740 → closed (market order, − 0.5 % slippage)
+    await e.worker.idle();
+    expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'CLOSED', exitReason: 'TRAIL', exitPrice: 25_571.5 });
   });
 
   it('the cron scanner steps aside while the worker streams, and warns once if it dies', async () => {

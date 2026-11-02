@@ -24,7 +24,8 @@ export interface BookEntry {
   rev: number;
 }
 
-type Mark = { lastPrice: number; lastPriceAt: string };
+/** An open trade's latest price, and its best price so far (what a trailing stop follows) once it moved. */
+type Mark = { lastPrice: number; lastPriceAt: string; peakPrice?: number };
 
 interface BookFile {
   lastSyncAt: number | null;
@@ -62,16 +63,18 @@ export class PaperBook {
       e.rev++;
     } else this.entries.set(trade.id, { trade, since: now, saved, rev: 1 });
     if (trade.status === 'OPEN' && trade.lastPrice !== null && trade.lastPriceAt)
-      this.marks.set(trade.id, { lastPrice: trade.lastPrice, lastPriceAt: trade.lastPriceAt });
+      this.marks.set(trade.id, { lastPrice: trade.lastPrice, lastPriceAt: trade.lastPriceAt, ...(trade.peakPrice !== undefined ? { peakPrice: trade.peakPrice } : {}) });
     else this.marks.delete(trade.id);
     this.save();
   }
 
-  /** An open trade's latest price: in the file within 30 s (not a change the sync is due for by itself). */
-  mark(id: string, lastPrice: number, lastPriceAt: string): void {
-    this.marks.set(id, { lastPrice, lastPriceAt });
+  /** An open trade's latest price (and best price, when it moved): in the file within 30 s (not a change the sync is due for by itself). */
+  mark(id: string, lastPrice: number, lastPriceAt: string, peakPrice?: number): void {
+    const peak = peakPrice ?? this.marks.get(id)?.peakPrice;
+    const m: Mark = { lastPrice, lastPriceAt, ...(peak !== undefined ? { peakPrice: peak } : {}) };
+    this.marks.set(id, m);
     const e = this.entries.get(id);
-    if (e?.trade.status === 'OPEN') e.trade = { ...e.trade, lastPrice, lastPriceAt };
+    if (e?.trade.status === 'OPEN') e.trade = { ...e.trade, ...m };
     if (!this.marksTimer && this.file) {
       this.marksTimer = setTimeout(() => {
         this.marksTimer = null;
@@ -155,7 +158,7 @@ export class PaperBook {
       const data = JSON.parse(readFileSync(this.file, 'utf8')) as BookFile;
       this.lastSyncAt = typeof data.lastSyncAt === 'number' ? data.lastSyncAt : null;
       for (const e of data.entries ?? []) this.entries.set(e.trade.id, { ...e, rev: 1 });
-      for (const m of data.marks ?? []) this.marks.set(m.id, { lastPrice: m.lastPrice, lastPriceAt: m.lastPriceAt });
+      for (const m of data.marks ?? []) this.marks.set(m.id, { lastPrice: m.lastPrice, lastPriceAt: m.lastPriceAt, ...(typeof m.peakPrice === 'number' ? { peakPrice: m.peakPrice } : {}) });
       if (this.entries.size) this.log?.info('paper trades kept on this computer since the last sync', { trades: this.entries.size });
     } catch (err) {
       const aside = `${this.file}.unreadable-${Date.now()}`;

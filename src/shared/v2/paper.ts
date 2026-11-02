@@ -1,16 +1,20 @@
 /**
  * Paper trading — on by default for every connection: every alert opens a simulated trade on one of the
- * strategy's legs, closed by target / stop-loss / intraday square-off / the opposite group / expiry.
- * The strategy's plan holds the defaults (and which leg each group trades); each connection can override
- * the money and exit settings. Nothing is ever sent to a broker.
+ * strategy's legs, closed by target / stop-loss / trailing stop / a stop or target condition / intraday
+ * square-off / the opposite group / expiry. The strategy's plan holds the defaults (and what each group
+ * trades, with its conditions); each connection can override the money, exit and watch settings. The
+ * backtests trade the same plan. Nothing is ever sent to a broker.
  */
 import { z } from 'zod';
-import type { AlertSide, ExprNode, ExprTrace, LegDef, LegId, StrategyDefinition, V2Instrument } from './types';
+import { exprNode } from './schema';
+import type { AlertSide, ExprNode, ExprTrace, LegDef, LegId, Market, StrategyDefinition, Timeframe, V2Instrument } from './types';
 
 export type PaperSide = 'BUY' | 'SELL';
-/** END: a backtest ended with the trade still open (closed at the last price). */
-/** EXIT_RULE: a backtest exit condition (BacktestExitRule) came true. */
-export type PaperExitReason = 'TARGET' | 'STOP' | 'SQUARE_OFF' | 'OPPOSITE' | 'EXPIRY' | 'MANUAL' | 'END' | 'EXIT_RULE';
+/**
+ * TRAIL: the trailing stop-loss. STOP_RULE / TARGET_RULE: the group's stop-loss / target condition came true.
+ * END: a backtest ended with the trade still open (closed at the last price).
+ */
+export type PaperExitReason = 'TARGET' | 'STOP' | 'TRAIL' | 'STOP_RULE' | 'TARGET_RULE' | 'SQUARE_OFF' | 'OPPOSITE' | 'EXPIRY' | 'MANUAL' | 'END';
 
 /** What to trade when a group (or the whole strategy) fires. `leg: null` = don't trade that group. */
 export interface PaperRule {
@@ -18,16 +22,36 @@ export interface PaperRule {
   group: string | null;
   leg: LegId | null;
   side: PaperSide;
+  /**
+   * Close the trade as a stop-loss / at target when this comes true — an AND / OR condition tree on any of the
+   * strategy's legs (e.g. "close crossed below SMA 20", "close below the previous candle's low"). Checked at every
+   * close of the smallest timeframe it uses; the trade exits at that close. Absent / null = none.
+   */
+  stopWhen?: ExprNode | null;
+  targetWhen?: ExprNode | null;
 }
 
 export interface PaperPlan {
   enabled: boolean;
-  /** ₹ per trade: as many lots as fit at the entry price (at least 1). */
+  /** Futures and options: lots per trade, at each contract's own lot size. */
+  lotsPerTrade: number;
+  /** Stocks (Spot legs): ₹ per trade — as many shares as fit at the entry price (at least 1). */
   cashPerTrade: number;
   rules: PaperRule[];
   /** % move from entry that closes the trade in profit / loss; null = none. */
   targetPct: number | null;
   stopPct: number | null;
+  /** Trailing stop-loss: this % below the best price since entry (above it, for a sell) — it only moves in the trade's favour. null = none. */
+  trailPct: number | null;
+  /**
+   * Watch only between these times (IST, per market): trigger candles that don't lie inside send no alert and open
+   * no trade — open trades are still managed (stops, target, square-off). Intraday timeframes only.
+   */
+  watch: boolean;
+  watchNseFrom: string;
+  watchNseTo: string;
+  watchMcxFrom: string;
+  watchMcxTo: string;
   /** Close open trades at the square-off time each day (and don't open after it). */
   squareOff: boolean;
   squareOffNse: string;
@@ -41,9 +65,16 @@ export interface PaperPlan {
 }
 
 export const PAPER_DEFAULTS = {
+  lotsPerTrade: 1,
   cashPerTrade: 10_000,
   targetPct: 20,
   stopPct: 10,
+  trailPct: null,
+  watch: false,
+  watchNseFrom: '09:15',
+  watchNseTo: '15:00',
+  watchMcxFrom: '09:00',
+  watchMcxTo: '23:00',
   squareOff: true,
   squareOffNse: '15:20',
   squareOffMcx: '23:20',
@@ -52,17 +83,40 @@ export const PAPER_DEFAULTS = {
   slippagePct: 0.5,
 } as const;
 
-/** The exit settings a trade was opened with (later plan edits don't change open trades). */
-export type PaperTerms = Pick<PaperPlan, 'targetPct' | 'stopPct' | 'squareOff' | 'squareOffNse' | 'squareOffMcx' | 'exitOnOpposite' | 'charges' | 'slippagePct'>;
+/** The exit settings a trade was opened with (later plan edits don't change open trades). `trailPct` is absent on trades opened before it existed. */
+export type PaperTerms = Pick<PaperPlan, 'targetPct' | 'stopPct' | 'squareOff' | 'squareOffNse' | 'squareOffMcx' | 'exitOnOpposite' | 'charges' | 'slippagePct'> & Partial<Pick<PaperPlan, 'trailPct'>>;
 
 /** Settings a connection can change from its strategy's plan (absent = the strategy's value; null target / stop = none). */
-export const PAPER_OVERRIDE_KEYS = ['enabled', 'cashPerTrade', 'targetPct', 'stopPct', 'squareOff', 'squareOffNse', 'squareOffMcx', 'exitOnOpposite', 'charges', 'slippagePct'] as const;
+export const PAPER_OVERRIDE_KEYS = [
+  'enabled',
+  'lotsPerTrade',
+  'cashPerTrade',
+  'targetPct',
+  'stopPct',
+  'trailPct',
+  'watch',
+  'watchNseFrom',
+  'watchNseTo',
+  'watchMcxFrom',
+  'watchMcxTo',
+  'squareOff',
+  'squareOffNse',
+  'squareOffMcx',
+  'exitOnOpposite',
+  'charges',
+  'slippagePct',
+] as const;
 export type PaperOverrideKey = (typeof PAPER_OVERRIDE_KEYS)[number];
 export type PaperOverride = Partial<Pick<PaperPlan, PaperOverrideKey>>;
 
+/** A saved plan with every field — one saved before a field existed gets its default. */
+export function normalizePlan(plan: PaperPlan): PaperPlan {
+  return { ...PAPER_DEFAULTS, ...plan };
+}
+
 /** The plan a connection trades with: its strategy's plan with the connection's own values on top. */
 export function effectivePlan(plan: PaperPlan, override?: PaperOverride | null): PaperPlan {
-  const out: PaperPlan = { ...plan };
+  const out: PaperPlan = normalizePlan(plan);
   if (override) for (const k of PAPER_OVERRIDE_KEYS) if (override[k] !== undefined) (out as unknown as Record<string, unknown>)[k] = override[k];
   return out;
 }
@@ -93,12 +147,13 @@ export interface PaperTrade {
   lots: number;
   lotSize: number;
   quantity: number;
+  /** The plan's ₹ per trade (what a stock trade was sized on). */
   cashPerTrade: number;
   /** Money the trade ties up: premium × quantity for bought options and stocks, estimated margin for futures and sold options. */
   capitalUsed: number;
   /** capitalUsed is an estimated margin (futures, sold options). */
   marginEstimated: boolean;
-  /** One lot needed more than the cash per trade (1 lot taken anyway). */
+  /** A stock trade: one share needed more than the cash per trade (1 taken anyway). Futures / options are sized in lots — never over. */
   overBudget: boolean;
   entryAt: string;
   /** Market price when the alert went out. */
@@ -106,7 +161,12 @@ export interface PaperTrade {
   /** Filled price (with slippage). */
   entryPrice: number;
   targetPrice: number | null;
+  /** The fixed stop-loss (a trailing stop follows peakPrice — see the server's stopNow). */
   stopPrice: number | null;
+  /** Best price since entry — the highest for a buy, the lowest for a sell; what a trailing stop follows. */
+  peakPrice?: number;
+  /** The group's stop / target conditions the trade was opened with, and the legs (contracts) they are checked on. */
+  conditions?: PaperConditions;
   terms: PaperTerms;
   status: 'OPEN' | 'CLOSED';
   lastPrice: number | null;
@@ -119,6 +179,14 @@ export interface PaperTrade {
   netPnl: number | null;
   /** Open trades in API responses: P&L if closed at the last price now (after slippage and charges). */
   openPnl?: number;
+}
+
+export interface PaperConditions {
+  stopWhen?: ExprNode;
+  targetWhen?: ExprNode;
+  /** The strategy's legs and the contracts of the unit the trade opened on. */
+  legDefs: LegDef[];
+  legs: Partial<Record<LegId, V2Instrument | null>>;
 }
 
 export interface PaperStats {
@@ -176,18 +244,29 @@ export const EMPTY_PAPER_STATS: PaperStats = {
   lastExitAt: null,
 };
 
+const BRIEF_DEFAULTS: PaperSettingsBrief = {
+  enabled: true,
+  lotsPerTrade: PAPER_DEFAULTS.lotsPerTrade,
+  cashPerTrade: PAPER_DEFAULTS.cashPerTrade,
+  targetPct: PAPER_DEFAULTS.targetPct,
+  stopPct: PAPER_DEFAULTS.stopPct,
+  trailPct: PAPER_DEFAULTS.trailPct,
+  squareOff: true,
+  custom: false,
+};
+
 /** A summary with every field present (defaults for anything missing). */
 export function normalizePaperSummary(s: Partial<PaperSummary>): PaperSummary {
   const st = (x?: Partial<PaperStats>): PaperStats => ({ ...EMPTY_PAPER_STATS, ...(x ?? {}) });
   return {
     from: s.from ?? null,
     overall: st(s.overall),
-    strategies: (s.strategies ?? []).map((x) => ({ ...x, connections: x.connections ?? 0, spark: x.spark ?? [], stats: st(x.stats) })),
+    strategies: (s.strategies ?? []).map((x) => ({ ...x, lotsPerTrade: x.lotsPerTrade ?? PAPER_DEFAULTS.lotsPerTrade, connections: x.connections ?? 0, spark: x.spark ?? [], stats: st(x.stats) })),
     connections: (s.connections ?? []).map((c) => ({
       ...c,
       strategyName: c.strategyName ?? '',
       switchedOn: c.switchedOn ?? true,
-      paper: c.paper ?? { enabled: true, cashPerTrade: PAPER_DEFAULTS.cashPerTrade, targetPct: PAPER_DEFAULTS.targetPct, stopPct: PAPER_DEFAULTS.stopPct, squareOff: true, custom: false },
+      paper: { ...BRIEF_DEFAULTS, ...c.paper },
       spark: c.spark ?? [],
       stats: st(c.stats),
     })),
@@ -201,9 +280,11 @@ export function normalizePaperSummary(s: Partial<PaperSummary>): PaperSummary {
 /** A connection's paper settings as shown in results (its effective plan). */
 export interface PaperSettingsBrief {
   enabled: boolean;
+  lotsPerTrade: number;
   cashPerTrade: number;
   targetPct: number | null;
   stopPct: number | null;
+  trailPct: number | null;
   squareOff: boolean;
   /** The connection has its own values (not only the strategy's). */
   custom: boolean;
@@ -213,7 +294,7 @@ export interface PaperSummary {
   /** Trades entered on or after this IST date (null = all). */
   from: string | null;
   overall: PaperStats;
-  strategies: Array<{ strategyId: string; name: string; enabled: boolean; cashPerTrade: number; connections: number; stats: PaperStats; spark: number[] }>;
+  strategies: Array<{ strategyId: string; name: string; enabled: boolean; lotsPerTrade: number; cashPerTrade: number; connections: number; stats: PaperStats; spark: number[] }>;
   /** Every connection with trades in the period or switched on (so none is missed). */
   connections: Array<{ connectionId: string; strategyId: string; strategyName: string; productId: string; symbol: string; switchedOn: boolean; paper: PaperSettingsBrief; stats: PaperStats; spark: number[] }>;
   /** Cumulative net P&L after each closed trade (oldest first). */
@@ -282,18 +363,109 @@ export function resolveRules(d: StrategyDefinition, rules: PaperRule[] = []): Pa
   });
 }
 
-/** A new plan with the preferred settings (on, ₹10,000 per trade, +20 % / −10 %, square-off 15:20 / 23:20). */
+/** A new plan with the preferred settings (on, 1 lot / ₹10,000 per trade, +20 % / −10 %, square-off 15:20 / 23:20). */
 export function defaultPaperPlan(d: StrategyDefinition, enabled = true): PaperPlan {
   return { enabled, ...PAPER_DEFAULTS, rules: resolveRules(d) };
 }
 
+/** How a plan sizes trades on these rules' legs: lots (futures / options) and / or ₹ (stocks — Spot legs). */
+export function planSizing(d: Pick<StrategyDefinition, 'legs'>, rules: PaperRule[]): { lots: boolean; cash: boolean } {
+  const kinds = rules.filter((r) => r.leg).map((r) => d.legs.find((l) => l.id === r.leg)?.kind);
+  return { lots: kinds.some((k) => k && k !== 'SPOT'), cash: kinds.some((k) => k === 'SPOT') };
+}
+
+// ---- stops ------------------------------------------------------------------------------------
+
+/** Nearest multiple of the contract's tick (0.05 when unknown), in paise. */
+const nearTick = (n: number, tick: number) => {
+  const t = tick > 0 ? tick : 0.05;
+  return Math.round(Math.round(n / t) * t * 100) / 100;
+};
+
+/** The trailing stop's level now: trailPct from the best price since entry (null when the trade has none). */
+export function trailLevel(t: Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice' | 'terms' | 'instrument'>): number | null {
+  const pct = t.terms.trailPct ?? null;
+  if (pct === null) return null;
+  const peak = t.peakPrice ?? t.entryPrice;
+  return nearTick(peak * (t.side === 'BUY' ? 1 - pct / 100 : 1 + pct / 100), t.instrument.tickSize);
+}
+
+/** The stop a trade has now: its fixed stop-loss or the trailing stop, whichever is tighter (the fixed one on a tie). */
+export function stopNow(t: Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice' | 'terms' | 'instrument' | 'stopPrice'>): { price: number; reason: 'STOP' | 'TRAIL' } | null {
+  const trail = trailLevel(t);
+  const fixed = t.stopPrice;
+  if (trail === null) return fixed === null ? null : { price: fixed, reason: 'STOP' };
+  if (fixed === null) return { price: trail, reason: 'TRAIL' };
+  const tighter = t.side === 'BUY' ? trail > fixed : trail < fixed;
+  return tighter ? { price: trail, reason: 'TRAIL' } : { price: fixed, reason: 'STOP' };
+}
+
+/** A condition tree with something in it (an empty AND / OR = none). */
+export function hasCondition(n: ExprNode | null | undefined): n is ExprNode {
+  return !!n && !((n.type === 'AND' || n.type === 'OR') && !n.children.length);
+}
+
+export type ConditionKind = 'STOP' | 'TARGET';
+/** Key of a rule's condition: `<group or *>|STOP` / `|TARGET`. */
+export const conditionKey = (group: string | null, kind: ConditionKind) => `${group ?? '*'}|${kind}`;
+
+/** The stop / target conditions of the rules that trade. */
+export function planConditions(rules: PaperRule[]): Array<{ key: string; group: string | null; kind: ConditionKind; when: ExprNode }> {
+  const out: Array<{ key: string; group: string | null; kind: ConditionKind; when: ExprNode }> = [];
+  for (const r of rules) {
+    if (!r.leg) continue;
+    if (hasCondition(r.stopWhen)) out.push({ key: conditionKey(r.group, 'STOP'), group: r.group, kind: 'STOP', when: r.stopWhen });
+    if (hasCondition(r.targetWhen)) out.push({ key: conditionKey(r.group, 'TARGET'), group: r.group, kind: 'TARGET', when: r.targetWhen });
+  }
+  return out;
+}
+
+// ---- watch window -----------------------------------------------------------------------------
+
+const IST_MS = 330 * 60_000;
+const DAY_MS = 86_400_000;
+const clockMin = (s: string) => {
+  const [h, m] = s.split(':').map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+};
+/** Minutes after IST midnight of a moment. */
+const istMinute = (ms: number) => Math.floor((((ms + IST_MS) % DAY_MS) + DAY_MS) % DAY_MS / 60_000);
+
+/** A market's watch window as the plan has it ('HH:MM' from / to), or null when the plan watches the whole session. */
+export function watchWindow(plan: Pick<PaperPlan, 'watch' | 'watchNseFrom' | 'watchNseTo' | 'watchMcxFrom' | 'watchMcxTo'>, market: Market): { from: string; to: string } | null {
+  if (!plan.watch) return null;
+  return market === 'MCX' ? { from: plan.watchMcxFrom, to: plan.watchMcxTo } : { from: plan.watchNseFrom, to: plan.watchNseTo };
+}
+
+/**
+ * Whether a trigger candle is watched: it opens at or after `from` and closes by `to` (IST) — e.g. 09:30–15:00 on
+ * 15-minute candles watches 09:30 … 14:45 (closing 15:00). Live-candle mode passes the moment for both. Daily and
+ * weekly candles span the whole session, so the window doesn't apply to them.
+ */
+export function inWatchWindow(w: { from: string; to: string } | null, tf: Timeframe, openMs: number, closeMs: number): boolean {
+  if (!w || tf === '1d' || tf === '1w') return true;
+  const close = istMinute(closeMs - 1) + 1; // a candle closing 15:00 ends in minute 14:59
+  return istMinute(openMs) >= clockMin(w.from) && close <= clockMin(w.to);
+}
+
 const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Time as HH:MM');
+const lots = z.number().int().min(1).max(1_000);
+const cash = z.number().min(100).max(1e9);
+const target = z.number().gt(0).max(1000).nullable();
+const stop = z.number().gt(0).max(100).nullable();
 
 const overrideShape = {
   enabled: z.boolean().optional(),
-  cashPerTrade: z.number().min(100).max(1e9).optional(),
-  targetPct: z.number().gt(0).max(1000).nullable().optional(),
-  stopPct: z.number().gt(0).max(100).nullable().optional(),
+  lotsPerTrade: lots.optional(),
+  cashPerTrade: cash.optional(),
+  targetPct: target.optional(),
+  stopPct: stop.optional(),
+  trailPct: stop.optional(),
+  watch: z.boolean().optional(),
+  watchNseFrom: clock.optional(),
+  watchNseTo: clock.optional(),
+  watchMcxFrom: clock.optional(),
+  watchMcxTo: clock.optional(),
   squareOff: z.boolean().optional(),
   squareOffNse: clock.optional(),
   squareOffMcx: clock.optional(),
@@ -303,16 +475,48 @@ const overrideShape = {
 };
 export const paperOverrideSchema = z.object(overrideShape).strict() as unknown as z.ZodType<PaperOverride>;
 
-export const paperPlanSchema = z.object({
-  enabled: z.boolean(),
-  cashPerTrade: z.number().min(100).max(1e9),
-  rules: z.array(z.object({ group: z.string().nullable(), leg: z.enum(['A', 'B', 'C', 'D']).nullable(), side: z.enum(['BUY', 'SELL']) })).max(8),
-  targetPct: z.number().gt(0).max(1000).nullable(),
-  stopPct: z.number().gt(0).max(100).nullable(),
-  squareOff: z.boolean(),
-  squareOffNse: clock,
-  squareOffMcx: clock,
-  exitOnOpposite: z.boolean(),
-  charges: z.boolean(),
-  slippagePct: z.number().min(0).max(10),
-}) as z.ZodType<PaperPlan>;
+/** A watch window that ends before it starts (a plan, or a connection's plan with its own values on top). */
+export function watchWindowIssue(p: Pick<PaperPlan, 'watch' | 'watchNseFrom' | 'watchNseTo' | 'watchMcxFrom' | 'watchMcxTo'>): string | null {
+  if (!p.watch) return null;
+  if (clockMin(p.watchNseFrom) >= clockMin(p.watchNseTo)) return `Watch window (NSE / BSE): ${p.watchNseFrom} is not before ${p.watchNseTo}`;
+  if (clockMin(p.watchMcxFrom) >= clockMin(p.watchMcxTo)) return `Watch window (MCX): ${p.watchMcxFrom} is not before ${p.watchMcxTo}`;
+  return null;
+}
+
+const D = PAPER_DEFAULTS;
+/** Fields added later default for plans saved (or sent) without them. */
+export const paperPlanSchema = z
+  .object({
+    enabled: z.boolean(),
+    lotsPerTrade: lots.default(D.lotsPerTrade),
+    cashPerTrade: cash,
+    rules: z
+      .array(
+        z.object({
+          group: z.string().nullable(),
+          leg: z.enum(['A', 'B', 'C', 'D']).nullable(),
+          side: z.enum(['BUY', 'SELL']),
+          stopWhen: exprNode.nullable().optional(),
+          targetWhen: exprNode.nullable().optional(),
+        }),
+      )
+      .max(8),
+    targetPct: target,
+    stopPct: stop,
+    trailPct: stop.default(D.trailPct),
+    watch: z.boolean().default(D.watch),
+    watchNseFrom: clock.default(D.watchNseFrom),
+    watchNseTo: clock.default(D.watchNseTo),
+    watchMcxFrom: clock.default(D.watchMcxFrom),
+    watchMcxTo: clock.default(D.watchMcxTo),
+    squareOff: z.boolean(),
+    squareOffNse: clock,
+    squareOffMcx: clock,
+    exitOnOpposite: z.boolean(),
+    charges: z.boolean(),
+    slippagePct: z.number().min(0).max(10),
+  })
+  .superRefine((p, ctx) => {
+    const issue = watchWindowIssue(p);
+    if (issue) ctx.addIssue({ code: 'custom', message: issue, path: ['watch'] });
+  }) as unknown as z.ZodType<PaperPlan>;

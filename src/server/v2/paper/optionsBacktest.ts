@@ -8,34 +8,34 @@
  *             then) and the strike nearest ATM (+ strike position), resolved by the scanner's own resolveUnits —
  *             each contract with its own lot size and tick
  *   alert     the scanner's policy per unit (unit = expiry + base strike): a unit seen for the first time, or
- *             again after ATM moved away, has its previous candle re-evaluated, exactly as the scanner does
- *   trade     simulate.ts — the same money, fills and exits as the Backtest and paper trading; exit rules are
- *             checked on the legs of the unit the trade was opened on
+ *             again after ATM moved away, has its previous candle re-evaluated, exactly as the scanner does;
+ *             nothing fires outside the plan's watch window
+ *   trade     simulate.ts — the same plan, fills and exits as the Backtest and paper trading; stop / target
+ *             conditions are checked on the legs of the unit the trade was opened on
  *
  * Only days whose expiry schedule is fully known are tested (see OptionsHistory.coveredFrom); the rest are
  * named in the notes. Candles: the history serves past days, so the test ends on the last complete day.
  */
 import type { BacktestProduct, BacktestRequest, BacktestResult, ConnectionConfig, LegId, SeriesSpec, StrategyDefinition, TriState, UnitState, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
-import { TIMEFRAME, legNameById, nodeText, paperGroups, resolveRules } from '@/shared/v2';
+import { TIMEFRAME, inWatchWindow, legNameById, normalizePlan, planConditions, resolveRules, watchWindow } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { decide, initialState } from '../alerts/alertPolicy';
 import { calendars, dateStartMs, lastCompleteDay, type MarketCalendar } from '../calendar/MarketCalendar';
 import { LOOKBACK_DAYS } from '../data/CandleService';
 import type { NativeInterval } from '../data/DataProvider';
 import type { HistoryStats, OptionsHistory } from '../data/OptionsHistory';
-import { exitDefinition, triggerOpens } from '../debug/tools';
+import { triggerOpens } from '../debug/tools';
 import { buildSeries, type Candle, type RawCandle } from '../engine/candles';
 import { alignIndex, evaluateUnit, type SeriesLookup, type UnitEvalInput } from '../engine/evaluator';
-import { legInstrument, seriesKey, seriesOf } from '../engine/series';
+import { exitDefinition, legInstrument, seriesKey, seriesOf } from '../engine/series';
 import type { V2Store } from '../persistence/V2Store';
 import { hasOptionLegs, resolveUnits } from '../universe/resolve';
 import type { BacktestRun } from './backtest';
-import { exitKey, ruleFor, simulate, type SimAlert } from './simulate';
+import { planNotes, ruleFor, simulate, type SimAlert } from './simulate';
 import { breakdowns, paperStats, spark } from './summary';
 
 const DAY = 86_400_000;
 const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
-const round2 = (n: number) => Math.round(n * 100) / 100;
 const msg = (err: unknown) => (err instanceof Error ? err.message : String(err));
 const NORMAL: SeriesSpec['candle'] = { type: 'NORMAL' };
 /** Span fetches in flight at once (the history's rate gate paces them). */
@@ -141,7 +141,8 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
   const cals = calendars(await deps.store.calendar.list());
   const cal = cals.NSE;
   const products = new Map((await deps.store.products.list({ ids })).map((p) => [p.id, p]));
-  const plan = { ...req.plan, enabled: true, rules: resolveRules(d, req.plan.rules) };
+  const plan = { ...normalizePlan(req.plan), enabled: true, rules: resolveRules(d, req.plan.rules) };
+  const window = watchWindow(plan, 'NSE');
   const stats = run?.stats ?? { fetched: 0, cached: 0 };
   const checkpoint = () => run?.checkpoint();
   const notes: string[] = [];
@@ -156,7 +157,7 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
   const futures = d.legs.some((l) => l.kind === 'FUT');
   const config: Pick<ConnectionConfig, 'expiry' | 'strikeShifts'> = { expiry: req.expiry ?? { mode: 'CURRENT' }, strikeShifts: [req.strikeShift ?? 0] };
   const policy = { channels: { telegram: false, email: false }, trigger: req.trigger ?? 'ON_TRANSITION', cooldownMinutes: req.cooldownMinutes ?? null, oncePerCandle: true } as const;
-  const exitDefs = (req.exits ?? []).map((x) => ({ key: exitKey(x.group), def: exitDefinition(d, x.when) }));
+  const exitDefs = planConditions(plan.rules).map((x) => ({ key: x.key, def: exitDefinition(d, x.when) }));
   const series = seriesOf(d);
   const triggerNative = TIMEFRAME[tf].native;
   const lookbackFrom = (date: string, interval: NativeInterval) => addDays(date, -LOOKBACK_DAYS[interval]);
@@ -269,7 +270,7 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
         const prevOpen = cal.lastCompletedOpen(open, tf);
         let prev: TriState | null = null;
         if (prevOpen !== null) prev = state.lastEvaluatedCandle === Math.floor(prevOpen / 1000) ? state.lastResult : evaluateUnit({ ...input, triggerOpenMs: prevOpen, at: cal.candleClose(prevOpen, tf) }).result;
-        const decision = decide({ policy, state, result: e.result, prevResult: prev, triggerCandle: e.triggerCandle, at, now: at, enabledAt: null, mode: 'COMPLETED_CANDLE' });
+        const decision = decide({ policy, state, result: e.result, prevResult: prev, triggerCandle: e.triggerCandle, at, now: at, enabledAt: null, mode: 'COMPLETED_CANDLE', watched: inWatchWindow(window, tf, open, at) });
         states.set(unit.key, { ...decision.next, lastEvaluatedCandle: e.triggerCandle });
         if (decision.outcome) r.alerts.push({ at, productId: id, unit, prices: e.prices, trace: e.trace });
       }
@@ -330,7 +331,6 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
   const { closed, skipped } = simulate({
     strategy,
     plan,
-    capital: req.capital,
     products,
     calOf: (productId) => cals[products.get(productId)?.market ?? 'NSE'],
     alerts,
@@ -369,10 +369,6 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
   });
 
   const overall = paperStats(closed, end);
-  let cum = 0;
-  let low = 0;
-  for (const t of [...closed].sort((a, b) => (a.exitAt ?? '').localeCompare(b.exitAt ?? ''))) low = Math.min(low, (cum += t.netPnl ?? 0));
-  const capital = req.capital;
   const expiryName = config.expiry.mode === 'SPECIFIC' ? config.expiry.date : config.expiry.mode.toLowerCase();
   const shift = req.strikeShift ?? 0;
   return {
@@ -381,10 +377,6 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
     from,
     to,
     triggerTimeframe: tf,
-    capital,
-    finalCapital: capital === null ? null : round2(capital + overall.netPnl),
-    returnOnCapitalPct: capital ? round2((overall.netPnl / capital) * 100) : null,
-    lowestCapital: capital === null ? null : round2(capital + low),
     summary: { from, overall, strategies: [], connections: [], ...breakdowns(closed) },
     products: results.sort((a, b) => b.stats.netPnl - a.stats.netPnl),
     trades: [...closed].sort((a, b) => b.entryAt.localeCompare(a.entryAt)),
@@ -398,15 +390,7 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
             `Contracts as they were listed, from ${deps.history.name} (expired ones included): at every trigger candle the ${expiryName} expiry of that day and the strike nearest the index’s close${shift ? ` ${shift > 0 ? '+' : '−'}${Math.abs(shift)}` : ''} — re-picked like the live scanner, each contract with its own lot size.`,
           ]
         : []),
-      ...(plan.squareOff && (tf === '1d' || tf === '1w')
-        ? ['Daily / weekly candles close after the day’s square-off time, so with “Square off daily” on no alert can be traded — switch it off to hold positions overnight.']
-        : []),
-      'Each alert is entered at its trigger candle’s close (± slippage) and exited on the traded contract’s 1-minute candles; if the target and stop-loss fall in the same minute the stop counts.',
-      ...(req.exits ?? []).map((x) => {
-        const group = paperGroups(d).find((g) => g.id === x.group)?.label;
-        return `Exit rule${group ? ` (${group})` : ''}: ${nodeText(x.when, d.legs)} — checked at each ${exitDefinition(d, x.when).evaluation.triggerTimeframe} candle close on the legs the trade was opened with; the trade exits at that close.`;
-      }),
+      ...planNotes(d, plan, { conditionLegs: ' on the legs the trade was opened with', markets: ['NSE'] }),
     ],
   };
 }
-

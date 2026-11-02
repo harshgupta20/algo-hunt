@@ -98,6 +98,7 @@ describe('paper trades between end-of-day syncs', () => {
     const b = (await store.paper.insertTrade(draft(nifty.id)))!; // the slot is free again
     clock.now = ist(D, '14:00');
     const m = (await store.paper.insertTrade(draft(gold.id, 'shift:0', fut('MCX:GOLD', '2026-12-04', 'MCX'))))!;
+    await store.paper.updateMarks([{ id: b.id, lastPrice: 106, at: new Date(ist(D, '15:28')).toISOString(), peakPrice: 106 }]);
     await store.paper.updateMarks([{ id: b.id, lastPrice: 104.5, at: new Date(ist(D, '15:29')).toISOString() }]);
     await store.flushWrites();
     expect(db.paperCalls()).toEqual([]); // nothing went to the database
@@ -112,7 +113,7 @@ describe('paper trades between end-of-day syncs', () => {
       [b.id, 'OPEN'],
       [a.id, 'CLOSED'],
     ]);
-    expect((await again.paper.openFor(nifty.id, 'shift:0'))?.lastPrice).toBe(104.5); // carries on from the real last price
+    expect(await again.paper.openFor(nifty.id, 'shift:0')).toMatchObject({ lastPrice: 104.5, peakPrice: 106 }); // carries on from the real last price — and the trailing stop's best price
     expect(again.paperBook()).toMatchObject({ waiting: 3 });
 
     // 15:36, after NSE's close: one write with the three trades — the closed one, and both open ones at their latest price.
@@ -126,6 +127,7 @@ describe('paper trades between end-of-day syncs', () => {
         [m.id, 'OPEN', 100],
       ]),
     );
+    expect(inner.data.paperTrades.find((t) => t.id === b.id)?.peakPrice).toBe(106);
     expect(again.paperBook()).toMatchObject({ waiting: 0, pricesWaiting: 0, lastSyncAt: new Date(ist(D, '15:36')).toISOString() });
 
     // Evening: gold moves and closes; the NIFTY position (unchanged) isn't written again.

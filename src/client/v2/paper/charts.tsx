@@ -9,6 +9,7 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import clsx from 'clsx';
 import type { PaperTrade } from '@/shared/v2';
+import { stopNow } from '@/shared/v2';
 import { compact, niceTicks } from './EquityChart';
 import { inr } from './money';
 
@@ -123,12 +124,13 @@ export function Sparkline({ points, width = 84, height = 26 }: { points: number[
   );
 }
 
-/** Where the last price sits between stop-loss (left) and target (right); a tick marks the entry. */
+/** Where the last price sits between the stop it has now (fixed or trailing, left) and target (right); a tick marks the entry. */
 export function RangeBar({ t }: { t: PaperTrade }) {
-  if (t.lastPrice === null || t.stopPrice === null || t.targetPrice === null) return <span className="text-[10px] text-slate-500">no stop / target</span>;
+  const stop = stopNow(t);
+  if (t.lastPrice === null || stop === null || t.targetPrice === null) return <span className="text-[10px] text-slate-500">no stop / target</span>;
   const buy = t.side === 'BUY';
   // Progress from the stop (0) to the target (1), whichever side the trade is on.
-  const at = (p: number) => Math.min(1, Math.max(0, (p - t.stopPrice!) / (t.targetPrice! - t.stopPrice!)));
+  const at = (p: number) => Math.min(1, Math.max(0, (p - stop.price) / (t.targetPrice! - stop.price)));
   const pos = at(t.lastPrice);
   const entry = at(t.entryPrice);
   const good = buy ? t.lastPrice >= t.entryPrice : t.lastPrice <= t.entryPrice;
@@ -142,7 +144,7 @@ export function RangeBar({ t }: { t: PaperTrade }) {
         />
       </div>
       <div className="mt-1 flex justify-between text-[9px] text-slate-500 tabular-nums">
-        <span>stop</span>
+        <span>{stop.reason === 'TRAIL' ? 'trail' : 'stop'}</span>
         <span>{Math.round(pos * 100)}%</span>
         <span>target</span>
       </div>

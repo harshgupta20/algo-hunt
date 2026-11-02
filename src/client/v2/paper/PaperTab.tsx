@@ -14,7 +14,7 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClie
 import { ArrowDown, ArrowUp, CloudOff, CloudUpload, Download, HardDrive, Pencil, RefreshCw, Trash2, Wallet, X } from 'lucide-react';
 import clsx from 'clsx';
 import type { PaperBookStatus, PaperStats, PaperSummary, PaperTrade } from '@/shared/v2';
-import { pageCursor, paperGroups } from '@/shared/v2';
+import { pageCursor, paperGroups, planSizing, resolveRules, stopNow } from '@/shared/v2';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { Badge, EmptyState, IconButton, StatCard } from '../../components/ui';
 import { InlineSpinner, SkeletonRows, SkeletonStatGrid } from '../../components/loaders';
@@ -185,7 +185,15 @@ function Headline({ o }: { o: PaperStats }) {
 
 // ---- charts ----------------------------------------------------------------------------------
 
-const REASON_ORDER = ['TARGET', 'STOP', 'SQUARE_OFF', 'OPPOSITE', 'EXPIRY', 'MANUAL', 'END'] as const;
+/** The stop (fixed, or trailing with its % and best price), entry and target of an open trade, in words. */
+function rangeNote(t: PaperTrade): string {
+  const stop = stopNow(t);
+  const stopText = stop === null ? 'Stop —' : stop.reason === 'TRAIL' ? `Trailing stop ${inr(stop.price)} (${t.terms.trailPct}% from the best ${inr(t.peakPrice ?? t.entryPrice)})` : `Stop ${inr(stop.price)}`;
+  const conditions = [t.conditions?.stopWhen ? 'a stop condition' : null, t.conditions?.targetWhen ? 'a target condition' : null].filter(Boolean);
+  return `${stopText} · entry ${inr(t.entryPrice)} · target ${t.targetPrice === null ? '—' : inr(t.targetPrice)}${conditions.length ? ` · plus ${conditions.join(' and ')}` : ''}`;
+}
+
+const REASON_ORDER = ['TARGET', 'TARGET_RULE', 'STOP', 'TRAIL', 'STOP_RULE', 'SQUARE_OFF', 'OPPOSITE', 'EXPIRY', 'MANUAL', 'END'] as const;
 
 export function HowClosed({ sum }: { sum: PaperSummary }) {
   const total = sum.reasons.reduce((a, r) => a + r.trades, 0);
@@ -426,7 +434,7 @@ function Ranking({ sum, onEditStrategy, onReset, resetting }: { sum: PaperSummar
                       </td>
                       <StatCells s={c.stats} />
                       <td className={td}>
-                        <PaperChip enabled={c.paper.enabled} brief={paperBrief(c.paper)} custom={c.paper.custom} onClick={() => setEditing(editing === c.connectionId ? null : c.connectionId)} active={editing === c.connectionId} />
+                        <PaperChip enabled={c.paper.enabled} brief={paperBrief(c.paper, def ? planSizing(def, resolveRules(def, plan?.rules)) : undefined)} custom={c.paper.custom} onClick={() => setEditing(editing === c.connectionId ? null : c.connectionId)} active={editing === c.connectionId} />
                       </td>
                     </tr>
                     {editing === c.connectionId && (
@@ -439,6 +447,7 @@ function Ranking({ sum, onEditStrategy, onReset, resetting }: { sum: PaperSummar
                               strategyPlan={plan}
                               override={settings.data?.overrides[c.connectionId]}
                               hasGroups={paperGroups(def).length > 0}
+                              sizing={planSizing(def, resolveRules(def, plan.rules))}
                               onClose={() => setEditing(null)}
                             />
                           ) : (
@@ -474,7 +483,7 @@ function Ranking({ sum, onEditStrategy, onReset, resetting }: { sum: PaperSummar
                       <div className="flex items-center gap-1">
                         <Tooltip content={s.enabled ? { ...H.paper.planOn, note: 'Defaults for its connections — ✎ to change them.' } : H.paper.planOff}>
                           <span className={clsx('rounded-md border px-2 py-0.5 text-[11px] tabular-nums whitespace-nowrap', s.enabled ? 'border-ink-700 bg-ink-850 text-slate-300' : 'border-ink-700 text-slate-500 line-through')}>
-                            📄 {s.enabled && plan ? paperBrief(plan) : 'paper off'}
+                            📄 {s.enabled && plan ? paperBrief(plan, defs.get(s.strategyId) ? planSizing(defs.get(s.strategyId)!, resolveRules(defs.get(s.strategyId)!, plan.rules)) : undefined) : 'paper off'}
                           </span>
                         </Tooltip>
                         <IconButton help={H.paper.editPlan} onClick={() => onEditStrategy(s.strategyId)} className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-ink-800">
@@ -724,7 +733,7 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
                       </Tooltip>
                     </td>
                     <td className={td}>
-                      <Tooltip content={{ ...H.paper.range, note: `Stop ${t.stopPrice === null ? '—' : inr(t.stopPrice)} · entry ${inr(t.entryPrice)} · target ${t.targetPrice === null ? '—' : inr(t.targetPrice)}` }}>
+                      <Tooltip content={{ ...H.paper.range, note: rangeNote(t) }}>
                         <RangeBar t={t} />
                       </Tooltip>
                     </td>

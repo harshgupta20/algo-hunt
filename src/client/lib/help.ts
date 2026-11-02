@@ -16,6 +16,11 @@ export const HELP = {
       title: 'Equity — stock strategies',
       body: 'Strategies for NSE cash stocks, separate from F&O: a dedicated builder (with your trader’s templates), backtests over years with your money (pyramiding, charges, CAGR, drawdown vs NIFTY 50), a screener for today’s signals, and watchlists.',
     },
+    options: {
+      title: 'Options — expired contracts',
+      body: 'Backtest your V2 strategies on option and futures contracts as they were listed, expired ones included (from Upstox): at every candle the expiry of that day and the strike nearest the index are re-picked, each contract with its own lot size.',
+      note: 'Needs an Upstox login (Upstox Plus). NSE and BSE products, about six months back.',
+    },
     market: {
       title: 'Market — eagle view',
       body: 'The whole Indian market on one page: indices, breadth, sectors, a map of every Nifty 500 stock, movers, F&O positioning, FII / DII money, the world, news and the results calendar.',

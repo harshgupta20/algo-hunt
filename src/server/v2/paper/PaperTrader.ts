@@ -4,24 +4,36 @@
  * until edited) with the connection's own values on top.
  *
  *   open   an alert of a strategy whose paper plan is on → the rule of the group that fired (leg + side)
- *          → as many lots as the cash per trade covers at the market price (+ slippage), at least one
- *   exit   stop-loss / target (on every price the caller sees), the other group firing, the intraday
- *          square-off time, or the contract's expiry; charges are deducted when it closes
+ *          → futures / options: the plan's lots per trade; stocks: as many shares as the ₹ per trade covers
+ *          at the market price (+ slippage), at least one
+ *   exit   stop-loss / trailing stop / target (on every price the caller sees), the group's stop / target
+ *          condition (at each close of its timeframe, on Kite's candles — exitConditions.ts), the other group
+ *          firing, the intraday square-off time, or the contract's expiry; charges are deducted when it closes
  *
  * One open position per connection and strike shift. Both the live worker (every tick) and the backup
  * scanner (once a minute, while the worker is off) drive exits; closing is conditional on the trade
  * still being open, so the two can never close a trade twice.
  */
-import type { LegId, Market, PaperExitReason, PaperPlan, PaperRule, PaperSide, PaperTrade, ProductKind, StrategyDefinition, UnitEvaluation, V2Connection, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
-import { defaultPaperPlan, effectivePlan, marketOfExchange, paperGroups, resolveRules } from '@/shared/v2';
+import type { LegId, Market, PaperConditions, PaperExitReason, PaperPlan, PaperRule, PaperSide, PaperTrade, ProductKind, StrategyDefinition, UnitEvaluation, V2Connection, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
+import { defaultPaperPlan, effectivePlan, hasCondition, marketOfExchange, paperGroups, resolveRules, stopNow, trailLevel } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
+import type { V2DataProvider } from '../data/DataProvider';
 import type { V2Store } from '../persistence/V2Store';
 import { moneyPerUnit, roundTripCharges } from './charges';
+import { ConditionWatch } from './exitConditions';
 
 const MINUTE = 60_000;
 /** A square-off / expiry close uses the live price until this long after the deadline, then the last known price. */
 const LATE_EXIT_MS = 5 * MINUTE;
+
+/** An open trade's latest price (and best price so far, when it improved). */
+export interface PaperMark {
+  id: string;
+  lastPrice: number;
+  at: string;
+  peakPrice?: number;
+}
 
 /** Latest prices for contracts (token → price); contracts without a price are left out. */
 export type PriceSource = (instruments: V2Instrument[]) => Promise<Map<number, number>>;
@@ -30,6 +42,8 @@ export interface PaperDeps {
   store: V2Store;
   now: () => number;
   prices: PriceSource;
+  /** Kite's candles for trades' stop / target conditions (absent = conditions aren't checked). */
+  provider?: V2DataProvider;
 }
 
 export interface PaperAlert {
@@ -49,6 +63,7 @@ const toTick = (n: number, tick: number, dir: 'near' | 'up' | 'down' = 'near') =
   const q = n / t;
   return round2((dir === 'up' ? Math.ceil(q - 1e-9) : dir === 'down' ? Math.floor(q + 1e-9) : Math.round(q)) * t);
 };
+export { stopNow, trailLevel };
 export const rupees = (n: number) => `₹${round2(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const signed = (n: number) => `${n >= 0 ? '+' : '−'}${rupees(Math.abs(n))}`;
 const hhmm = (s: string) => {
@@ -71,12 +86,19 @@ export function exitDeadline(t: PaperTrade, cal: MarketCalendar): { at: number; 
   return null;
 }
 
-/** Stop-loss or target reached at this price (the stop wins when both are). */
-export function paperHit(t: PaperTrade, price: number): 'STOP' | 'TARGET' | null {
+/** Stop-loss, trailing stop or target reached at this price (a stop wins when both are). */
+export function paperHit(t: PaperTrade, price: number): 'STOP' | 'TRAIL' | 'TARGET' | null {
   const buy = t.side === 'BUY';
-  if (t.stopPrice !== null && (buy ? price <= t.stopPrice : price >= t.stopPrice)) return 'STOP';
+  const stop = stopNow(t);
+  if (stop && (buy ? price <= stop.price : price >= stop.price)) return stop.reason;
   if (t.targetPrice !== null && (buy ? price >= t.targetPrice : price <= t.targetPrice)) return 'TARGET';
   return null;
+}
+
+/** The trade's new best price after seeing `price` (undefined when it isn't better). */
+export function newPeak(t: Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice'>, price: number): number | undefined {
+  const peak = t.peakPrice ?? t.entryPrice;
+  return (t.side === 'BUY' ? price > peak : price < peak) ? price : undefined;
 }
 
 /** Exit fill, P&L and charges if the trade closed at `price` now. */
@@ -102,15 +124,28 @@ const describe = (t: Pick<PaperTrade, 'side' | 'lots' | 'quantity' | 'lotSize' |
 const REASON_TEXT: Record<PaperExitReason, string> = {
   TARGET: 'target hit',
   STOP: 'stop-loss hit',
+  TRAIL: 'trailing stop hit',
+  STOP_RULE: 'stop-loss condition',
+  TARGET_RULE: 'target condition',
   SQUARE_OFF: 'square-off',
   OPPOSITE: 'the other group fired',
   EXPIRY: 'expiry',
   MANUAL: 'closed by hand',
   END: 'end of the backtest',
-  EXIT_RULE: 'exit rule',
 };
 
-/** A new open trade for `ref` (the market price): whole lots for the cash per trade (≥ 1), slippage, target / stop. */
+/** The stop / target conditions a rule's trades carry (with the unit's contracts to check them on), or undefined. */
+export function tradeConditions(rule: PaperRule, d: Pick<StrategyDefinition, 'legs'>, unit: V2Unit): PaperConditions | undefined {
+  const stop = hasCondition(rule.stopWhen) ? rule.stopWhen : undefined;
+  const target = hasCondition(rule.targetWhen) ? rule.targetWhen : undefined;
+  if (!stop && !target) return undefined;
+  return { ...(stop ? { stopWhen: stop } : {}), ...(target ? { targetWhen: target } : {}), legDefs: d.legs, legs: unit.legs };
+}
+
+/**
+ * A new open trade for `ref` (the market price): futures / options the plan's lots per trade, stocks whole shares for
+ * the ₹ per trade (≥ 1); slippage, target / stop, trailing stop from the fill.
+ */
 export function buildTrade(x: {
   plan: PaperPlan;
   instrument: V2Instrument;
@@ -121,6 +156,7 @@ export function buildTrade(x: {
   ids: Pick<PaperTrade, 'strategyId' | 'connectionId' | 'productId' | 'slot' | 'unitKey' | 'alertId'>;
   group: { id: string; label: string } | null;
   leg: LegId;
+  conditions?: PaperConditions;
 }): Omit<PaperTrade, 'id'> {
   const { plan, instrument: inst, side, ref } = x;
   const slip = plan.slippagePct / 100;
@@ -128,7 +164,9 @@ export function buildTrade(x: {
   const lotSize = Math.max(1, inst.lotSize || 1);
   const money = moneyPerUnit(inst, x.productKind, side, entryPrice);
   const perLot = money.perUnit * lotSize;
-  const lots = Math.max(1, Math.floor(plan.cashPerTrade / perLot));
+  // Futures / options trade in lots; a stock (Spot leg) gets the shares its ₹ per trade covers.
+  const stock = inst.kind === 'SPOT';
+  const lots = stock ? Math.max(1, Math.floor(plan.cashPerTrade / perLot)) : Math.max(1, Math.floor(plan.lotsPerTrade));
   const pct = (n: number | null, up: boolean) => (n === null ? null : toTick(entryPrice * (1 + (up ? n : -n) / 100), inst.tickSize));
   const at = new Date(x.at).toISOString();
   return {
@@ -144,15 +182,18 @@ export function buildTrade(x: {
     cashPerTrade: plan.cashPerTrade,
     capitalUsed: round2(perLot * lots),
     marginEstimated: money.estimated,
-    overBudget: perLot > plan.cashPerTrade,
+    overBudget: stock && perLot > plan.cashPerTrade,
     entryAt: at,
     entryRef: ref,
     entryPrice,
     targetPrice: pct(plan.targetPct, side === 'BUY'),
     stopPrice: pct(plan.stopPct, side !== 'BUY'),
+    peakPrice: entryPrice,
+    ...(x.conditions ? { conditions: x.conditions } : {}),
     terms: {
       targetPct: plan.targetPct,
       stopPct: plan.stopPct,
+      trailPct: plan.trailPct,
       squareOff: plan.squareOff,
       squareOffNse: plan.squareOffNse,
       squareOffMcx: plan.squareOffMcx,
@@ -185,7 +226,11 @@ function firedGroup(s: V2Strategy, e: UnitEvaluation): { id: string; label: stri
 }
 
 export class PaperTrader {
-  constructor(private readonly deps: PaperDeps) {}
+  private readonly conditions: ConditionWatch | null;
+
+  constructor(private readonly deps: PaperDeps) {
+    this.conditions = deps.provider ? new ConditionWatch(deps.provider) : null;
+  }
 
   /**
    * An alert went out: close the other group's open trade (if the plan says so) and open this group's.
@@ -250,6 +295,7 @@ export class PaperTrader {
       ids: { strategyId: a.strategy.id, connectionId: a.connection.id, productId: a.product.id, slot, unitKey: a.unit.key, alertId: a.alertId },
       group: fired,
       leg: rule.leg,
+      conditions: tradeConditions(rule, a.strategy.definition, a.unit),
     });
     const trade = await store.paper.insertTrade(draft);
     if (!trade) {
@@ -257,8 +303,15 @@ export class PaperTrader {
       return lines.join('\n');
     }
     const perLot = trade.capitalUsed / trade.lots;
-    const exits = [trade.targetPrice !== null ? `target ${rupees(trade.targetPrice)}` : null, trade.stopPrice !== null ? `stop ${rupees(trade.stopPrice)}` : null].filter(Boolean);
-    const budget = trade.overBudget ? ` · 1 lot needs ${rupees(perLot)}${trade.marginEstimated ? ' margin (est.)' : ''}, over the ${rupees(plan.cashPerTrade)} per trade` : '';
+    const trail = trailLevel(trade);
+    const exits = [
+      trade.targetPrice !== null ? `target ${rupees(trade.targetPrice)}` : null,
+      trade.stopPrice !== null ? `stop ${rupees(trade.stopPrice)}` : null,
+      trail !== null ? `trailing ${trade.terms.trailPct}% (${rupees(trail)} now)` : null,
+      trade.conditions?.stopWhen ? 'stop condition' : null,
+      trade.conditions?.targetWhen ? 'target condition' : null,
+    ].filter(Boolean);
+    const budget = trade.overBudget ? ` · 1 share costs ${rupees(perLot)}, over the ${rupees(plan.cashPerTrade)} per trade` : '';
     lines.push(`📄 Paper: ${describe(trade)} @ ${rupees(trade.entryPrice)}${exits.length ? ` · ${exits.join(' · ')}` : ''}${budget}`);
     return lines.join('\n');
   }
@@ -279,8 +332,9 @@ export class PaperTrader {
   }
 
   /**
-   * Check every open trade: square-off / expiry deadlines, then stop-loss / target at the latest price,
-   * and record that price. Prices are asked only for contracts whose market is open.
+   * Check every open trade: square-off / expiry deadlines, then stop-loss / trailing stop / target at the latest
+   * price (recording it, and the best price so far), then stop / target conditions on candles that closed since the
+   * last look. Prices are asked only for contracts whose market is open.
    */
   async monitor(cals: Record<Market, MarketCalendar>): Promise<{ open: PaperTrade[]; closed: PaperTrade[]; requested: boolean }> {
     const { store } = this.deps;
@@ -290,13 +344,14 @@ export class PaperTrader {
     const cal = (t: PaperTrade) => cals[marketOfExchange(t.instrument.exchange)];
     const live = [...new Map(trades.filter((t) => cal(t).isMarketOpen(now, 5)).map((t) => [t.instrument.token, t.instrument])).values()];
     const prices = live.length ? await this.deps.prices(live) : new Map<number, number>();
-    const open: PaperTrade[] = [];
+    let open: PaperTrade[] = [];
     const closed: PaperTrade[] = [];
-    const marks: Array<{ id: string; lastPrice: number; at: string }> = [];
+    const marks: PaperMark[] = [];
     for (const t of trades) {
       const px = prices.get(t.instrument.token);
       const due = exitDeadline(t, cal(t));
       let exit: Promise<PaperTrade | null> | null = null;
+      let next = t;
       if (due && now >= due.at) {
         // On time: the live price. Late (worker/scanner was off): the last price seen, at the deadline.
         const onTime = px !== undefined && now <= due.at + LATE_EXIT_MS;
@@ -304,14 +359,30 @@ export class PaperTrader {
       } else if (px !== undefined) {
         const hit = paperHit(t, px);
         if (hit) exit = this.close(t, px, hit);
-        else marks.push({ id: t.id, lastPrice: px, at: new Date(now).toISOString() });
+        else {
+          const peak = newPeak(t, px);
+          const at = new Date(now).toISOString();
+          marks.push({ id: t.id, lastPrice: px, at, ...(peak !== undefined ? { peakPrice: peak } : {}) });
+          next = { ...t, lastPrice: px, lastPriceAt: at, ...(peak !== undefined ? { peakPrice: peak } : {}) };
+        }
       }
       if (exit) {
         const done = await exit;
         if (done) closed.push(done); // null: closed elsewhere meanwhile
-      } else open.push(px !== undefined ? { ...t, lastPrice: px, lastPriceAt: new Date(now).toISOString() } : t);
+      } else open.push(next);
     }
     await store.paper.updateMarks(marks);
+    if (this.conditions) {
+      const fired = await this.conditions.check(open, cals, now);
+      for (const f of fired) {
+        const t = open.find((x) => x.id === f.id)!;
+        const px = prices.get(t.instrument.token) ?? (await this.deps.prices([t.instrument]).catch(() => new Map<number, number>())).get(t.instrument.token) ?? t.lastPrice ?? t.entryRef;
+        const done = await this.close(t, px, f.reason);
+        if (done) closed.push(done);
+      }
+      const gone = new Set(fired.map((f) => f.id));
+      open = open.filter((t) => !gone.has(t.id));
+    }
     return { open, closed, requested: live.length > 0 };
   }
 }

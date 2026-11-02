@@ -9,7 +9,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { BacktestRequest, OptionsSourceStatus, PaperPlan, PaperTrade, StrategyDefinition, V2Instrument, V2Strategy } from '../../src/shared/v2';
-import { defaultPaperPlan } from '../../src/shared/v2';
+import { backtestRequestSchema, defaultPaperPlan } from '../../src/shared/v2';
 import { calendars } from '../../src/server/v2/calendar/MarketCalendar';
 import { ProductService } from '../../src/server/v2/data/ProductService';
 import { aggregate } from '../../src/server/v2/engine/candles';
@@ -81,7 +81,7 @@ async function setup(nowIso: { date: string; time: string }, history: FixtureHis
   await svc.syncProducts();
   const s: V2Strategy = await svc.createStrategy(S);
   const run = (req: Partial<BacktestRequest>, def: V2Strategy = s) =>
-    runOptionsBacktest({ store, history, now: () => clock.now }, def, { strategyId: def.id, products: [P], from: D1, to: D3, plan: plan(), capital: 500_000, ...req });
+    runOptionsBacktest({ store, history, now: () => clock.now }, def, { strategyId: def.id, products: [P], from: D1, to: D3, plan: plan(), ...req });
   return { clock, store, kite, kSpot, svc, s, run, connection, logouts };
 }
 
@@ -115,7 +115,6 @@ describe('options backtest', () => {
       expect(t).toMatchObject({ entryAt: new Date(ist(date, '10:15')).toISOString(), entryPrice: 100, targetPrice: 110, stopPrice: 95, exitReason: 'TARGET', exitPrice: 110, exitAt: new Date(ist(date, '10:35')).toISOString(), quantity: qty, lots: 1, grossPnl: 10 * qty, netPnl: 10 * qty, charges: 0 });
     }
     expect(r.summary.overall).toMatchObject({ trades: 3, wins: 3, netPnl: 750 + 750 + 650 });
-    expect(r).toMatchObject({ finalCapital: 502_150, returnOnCapitalPct: 0.43 });
     expect(r.products[0]!.contracts).toContain('A · SPOT: NIFTY');
     // Every contract a candle read: also the mornings' ATM (E1 25,000 on 13 Oct, E2 25,000 on 14 Oct, before 10:00).
     expect(r.products[0]!.contracts.find((c) => c.startsWith('B ·'))).toMatch(/^B · CE ATM: 4 contracts over 2 expiries \(NIFTY 25000 CE 2026-10-13 … NIFTY 25050 CE 2026-10-20\)$/);
@@ -127,13 +126,44 @@ describe('options backtest', () => {
     const kCall = kite.instruments.find((i) => i.kind === 'CE' && i.expiry === E1 && i.strike === 25_000)!;
     kite.set(kSpot, '15m', aggregate(spotDay(D1, 24_990, 25_015), '15m', calendars([]).NSE));
     kite.set(kCall, '1m', risingAfterEntry(D1));
-    for (const p of [plan(), plan({ charges: true, slippagePct: 0.5 }), plan({ targetPct: null, stopPct: null }), plan({ targetPct: null, stopPct: null, squareOff: false })]) {
-      const req: BacktestRequest = { strategyId: s.id, products: [P], from: D1, to: D1, plan: p, capital: 500_000 };
+    const sizes: PaperPlan[] = [
+      plan(),
+      plan({ charges: true, slippagePct: 0.5 }),
+      plan({ targetPct: null, stopPct: null }),
+      plan({ targetPct: null, stopPct: null, squareOff: false }),
+      plan({ charges: true, lotsPerTrade: 4 }),
+      plan({ targetPct: null, trailPct: 3 }),
+    ];
+    for (const p of sizes) {
+      const req: BacktestRequest = { strategyId: s.id, products: [P], from: D1, to: D1, plan: p };
       const [k, u] = await Promise.all([svc.backtest(req), run(req)]);
       expect(k.trades).toHaveLength(1);
       expect(u.trades.map(money)).toEqual(k.trades.map(money));
-      expect({ final: u.finalCapital, ret: u.returnOnCapitalPct, low: u.lowestCapital, overall: u.summary.overall }).toEqual({ final: k.finalCapital, ret: k.returnOnCapitalPct, low: k.lowestCapital, overall: k.summary.overall });
+      expect(u.summary.overall).toEqual(k.summary.overall);
     }
+  });
+
+  it('sizes every trade in the plan’s lots, at its own contract’s lot size — no account limit', async () => {
+    const { run } = await setup({ date: '2026-10-16', time: '09:00' }, history);
+    const r = await run({ plan: plan({ lotsPerTrade: 3, cashPerTrade: 100 }) });
+    const trades = [...r.trades].sort((a, b) => a.entryAt.localeCompare(b.entryAt));
+    // 3 lots: 225 of each E1 call (lot 75), 195 of the E2 call (lot 65); entry 100, target 110.
+    expect(trades.map((t) => [t.lots, t.lotSize, t.quantity, t.capitalUsed, t.grossPnl, t.overBudget])).toEqual([
+      [3, 75, 225, 22_500, 2_250, false],
+      [3, 75, 225, 22_500, 2_250, false],
+      [3, 65, 195, 19_500, 1_950, false],
+    ]);
+    expect(r.notes).toContain('Futures and options: 3 lots per trade, at each contract’s own lot size.');
+    expect(r.skipped).toEqual([]);
+    // The default plan: 1 lot.
+    expect((await run({})).trades.every((t) => t.lots === 1)).toBe(true);
+    // Whole lots only, 1–1,000; a plan saved before lots existed gets 1.
+    const base = { strategyId: 'x', products: [P], from: D1, to: D3, plan: plan() };
+    expect(backtestRequestSchema.safeParse({ ...base, plan: plan({ lotsPerTrade: 2 }) }).success).toBe(true);
+    for (const bad of [0, 1.5, -1, 1_001]) expect(backtestRequestSchema.safeParse({ ...base, plan: plan({ lotsPerTrade: bad }) }).success).toBe(false);
+    const { lotsPerTrade: _l, ...old } = plan();
+    const parsed = backtestRequestSchema.safeParse({ ...base, plan: old });
+    expect(parsed.success && parsed.data.plan.lotsPerTrade).toBe(1);
   });
 
   it('charges come from the contract (NFO option rates) and slippage moves both fills', async () => {
@@ -180,18 +210,27 @@ describe('options backtest', () => {
     expect(s.id).not.toBe(gt.id);
   });
 
-  it('exit rules read the legs the trade was opened with, not the ATM of later candles', async () => {
+  it('stop / target conditions read the legs the trade was opened with, not the ATM of later candles', async () => {
     // The spot climbs after entry (ATM moves to 25,100); the held 25,000 call falls below 99 at 11:00, the 25,100 call doesn't.
     const after = (t: string) => (t < '10:00' ? 24_990 : t < '10:14' ? 24_995 : t < '10:30' ? 25_015 : 25_110);
     history = new FixtureHistory(uSpot, contracts, { lastDay: '2026-10-15' }).add(uSpot, dayMinutes(D1, after));
     history.add(call(E1, 25_000), dayMinutes(D1, (t) => (t < '11:00' ? 100 : 98))).add(call(E1, 25_100), flat(D1, 100));
     const { run } = await setup({ date: '2026-10-16', time: '09:00' }, history);
-    const exits = [{ group: null, when: cond(field(legSeries('B')), 'LT', num(99)) }];
-    const r = await run({ from: D1, to: D1, plan: plan({ targetPct: null, stopPct: null }), exits });
+    const rules = [{ group: null, leg: 'B' as const, side: 'BUY' as const, stopWhen: cond(field(legSeries('B')), 'LT', num(99)) }];
+    const r = await run({ from: D1, to: D1, plan: plan({ targetPct: null, stopPct: null, rules }) });
     expect(r.trades).toHaveLength(1);
-    expect(r.trades[0]).toMatchObject({ exitReason: 'EXIT_RULE', exitAt: new Date(ist(D1, '11:15')).toISOString(), exitPrice: 98 });
+    expect(r.trades[0]).toMatchObject({ exitReason: 'STOP_RULE', exitAt: new Date(ist(D1, '11:15')).toISOString(), exitPrice: 98 });
     expect(r.trades[0]!.instrument.strike).toBe(25_000);
-    expect(r.notes.some((n) => /^Exit rule: .*on the legs the trade was opened with/.test(n))).toBe(true);
+    expect(r.notes.some((n) => /^Stop-loss condition: .*on the legs the trade was opened with/.test(n))).toBe(true);
+  });
+
+  it('watch window: an alert candle outside it opens nothing', async () => {
+    const { run } = await setup({ date: '2026-10-16', time: '09:00' }, history);
+    // The alerts are on the 10:00–10:15 candles: a window from 10:15 misses them all.
+    const r = await run({ plan: plan({ watch: true, watchNseFrom: '10:15', watchNseTo: '15:00' }) });
+    expect(r.products[0]).toMatchObject({ alerts: 0, trades: 0 });
+    expect(r.notes).toContain('Watched only 10:15–15:00: trigger candles outside it sent no alert and opened no trade.');
+    expect((await run({ plan: plan({ watch: true, watchNseFrom: '09:15', watchNseTo: '10:15' }) })).products[0]).toMatchObject({ alerts: 3 });
   });
 
   it('never tests days whose expiry schedule isn’t fully known (before the first known expiry, or a hole in the list)', async () => {
@@ -217,7 +256,7 @@ describe('options backtest', () => {
   it('runs as a job through the service; refuses MCX, a missing setup and a missing login', async () => {
     const { svc, s, connection, logouts, store, kite, clock } = await setup({ date: '2026-10-16', time: '09:00' }, history);
     expect(await svc.optionsStatus()).toMatchObject({ source: 'UPSTOX', configured: true, connected: true, userName: 'Trader' });
-    const req: BacktestRequest = { strategyId: s.id, products: [P], from: D1, to: D3, plan: plan(), capital: 500_000 };
+    const req: BacktestRequest = { strategyId: s.id, products: [P], from: D1, to: D3, plan: plan() };
     const job = await svc.startOptionsBacktest(req);
     for (let i = 0; i < 100 && svc.optionsBacktestJob(job.id).status === 'RUNNING'; i++) await new Promise((r) => setTimeout(r, 5));
     const done = svc.optionsBacktestJob(job.id);
@@ -247,6 +286,6 @@ describe('options backtest', () => {
     const svc = new V2Service({ store, provider: kite, products: new ProductService(store, kite), clock: () => clock.now, options: { history, status: async () => ({ source: 'UPSTOX' as const, configured: true, connected: true }), logout: async () => undefined } });
     await svc.syncProducts();
     const s = await svc.createStrategy(S);
-    await expect(svc.startOptionsBacktest({ strategyId: s.id, products: ['MCX:GOLD'], from: D1, to: D3, plan: plan(), capital: null })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/no expired MCX contracts — remove GOLD/) });
+    await expect(svc.startOptionsBacktest({ strategyId: s.id, products: ['MCX:GOLD'], from: D1, to: D3, plan: plan() })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/no expired MCX contracts — remove GOLD/) });
   });
 });

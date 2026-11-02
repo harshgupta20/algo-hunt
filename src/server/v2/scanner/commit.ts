@@ -1,12 +1,12 @@
 /**
  * The last step of evaluating a unit, shared by the cron scanner and the live
  * worker so both decide alerts identically:
- *   previous result (stored, or re-evaluated) → alert policy → signal (deduped by
- *   identity) → alert → paper trade (optional) → delivery. The caller persists the
- *   returned unit state.
+ *   previous result (stored, or re-evaluated) → watch window → alert policy → signal
+ *   (deduped by identity) → alert → paper trade (optional) → delivery. The caller
+ *   persists the returned unit state.
  */
 import type { ScanError, TriState, UnitEvaluation, UnitState, V2Connection, V2Product, V2Settings, V2Strategy, V2Unit } from '@/shared/v2';
-import { alertSide } from '@/shared/v2';
+import { alertSide, defaultPaperPlan, effectivePlan, inWatchWindow, watchWindow } from '@/shared/v2';
 import { decide, signalIdentity } from '../alerts/alertPolicy';
 import { deliver, formatAlert, type ChannelFactory, type Message } from '../alerts/notifications';
 import { evaluateUnit, type UnitEvalInput } from '../engine/evaluator';
@@ -70,6 +70,23 @@ function withLine(m: Message, line: string | null): Message {
   return { ...m, text: `${m.text}\n\n${line}`, html: `${m.html}<p>${escapeHtml(line).replace(/\n/g, '<br/>')}</p>` };
 }
 
+/**
+ * Whether the connection's plan (its strategy's, with its own values on top) watches this trigger candle. Read only
+ * when the result is TRUE (nothing can fire otherwise); a plan that can't be read watches everything.
+ */
+export async function watchedCandle(store: V2Store, t: UnitTarget, result: TriState): Promise<boolean> {
+  if (result !== 'TRUE') return true;
+  try {
+    const [saved, override] = await Promise.all([store.paper.getPlan(t.strategy.id), store.paper.getOverride(t.connection.id)]);
+    const w = watchWindow(effectivePlan(saved ?? defaultPaperPlan(t.strategy.definition), override), t.product.market);
+    const d = t.strategy.definition;
+    const live = d.evaluation.mode === 'LIVE_CANDLE';
+    return inWatchWindow(w, d.evaluation.triggerTimeframe, live ? t.clock.at : t.clock.triggerOpenMs, t.clock.at);
+  } catch {
+    return true;
+  }
+}
+
 /** Decide, record and deliver one unit's evaluation. Returns the unit's next state (not yet persisted). */
 export async function commitUnit(
   deps: CommitDeps,
@@ -86,7 +103,8 @@ export async function commitUnit(
   const d = s.definition;
   const now = deps.now();
   const policy = c.config.alert;
-  const decision = decide({ policy, state, result: evaluation.result, prevResult, triggerCandle: evaluation.triggerCandle, at: t.clock.at, now, enabledAt: c.enabledAt, mode: d.evaluation.mode });
+  const watched = await watchedCandle(store, t, evaluation.result);
+  const decision = decide({ policy, state, result: evaluation.result, prevResult, triggerCandle: evaluation.triggerCandle, at: t.clock.at, now, enabledAt: c.enabledAt, mode: d.evaluation.mode, watched });
 
   if (decision.outcome) {
     const identity = signalIdentity({
