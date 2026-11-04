@@ -38,7 +38,8 @@ import {
   normalizePlan,
   olderThan,
   parseCursor,
-  planConditions,
+  trailingIssue,
+  trailingRules,
   resolveRules,
   incompatibility,
   strategySummary,
@@ -543,11 +544,12 @@ export class V2Service {
     return s;
   }
 
-  /** A plan's watch window, and its trailing rules with the same checks as the strategy's own conditions. */
+  /** A plan's watch window and Trailing SL, and its trailing rules with the same checks as the strategy's own conditions. */
   private checkPlan(s: V2Strategy, plan: PaperPlan): void {
-    const window = watchWindowIssue(normalizePlan(plan));
-    if (window) throw new V2ServiceError(400, window);
-    for (const x of planConditions(resolveRules(s.definition, normalizePlan(plan).rules))) {
+    const p = { ...normalizePlan(plan), rules: resolveRules(s.definition, normalizePlan(plan).rules) };
+    const issue = watchWindowIssue(p) ?? trailingIssue(p);
+    if (issue) throw new V2ServiceError(400, issue);
+    for (const x of trailingRules(p)) {
       const issue = validateStrategy({ ...s.definition, expression: x.when }).find((i) => i.severity === 'error');
       if (issue) throw new V2ServiceError(400, `Trailing rules: ${issue.message}`);
     }
@@ -745,7 +747,8 @@ export class V2Service {
       const c = await this.getConnection(connectionId);
       const clean = Object.fromEntries(Object.entries(override).filter(([, v]) => v !== undefined)) as PaperOverride;
       const s = await this.getStrategy(c.strategyId);
-      const issue = watchWindowIssue(effectivePlan((await this.deps.store.paper.getPlan(s.id)) ?? defaultPaperPlan(s.definition), clean));
+      const eff = effectivePlan((await this.deps.store.paper.getPlan(s.id)) ?? defaultPaperPlan(s.definition), clean);
+      const issue = watchWindowIssue(eff) ?? trailingIssue({ ...eff, rules: resolveRules(s.definition, eff.rules) });
       if (issue) throw new V2ServiceError(400, issue);
       return { override: await this.deps.store.paper.saveOverride(connectionId, clean) };
     });

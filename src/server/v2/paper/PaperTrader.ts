@@ -152,7 +152,7 @@ export function tradeConditions(rule: PaperRule, d: Pick<StrategyDefinition, 'le
 
 /**
  * A new open trade for `ref` (the market price): futures / options the plan's lots per trade, stocks whole shares for
- * the ₹ per trade (≥ 1); slippage, target / stop, trailing stop from the fill (or from the target).
+ * the ₹ per trade (≥ 1); slippage, target / stop; with Trailing SL the trailing rules (they start at the target).
  */
 export function buildTrade(x: {
   plan: PaperPlan;
@@ -177,6 +177,8 @@ export function buildTrade(x: {
   const lots = stock ? Math.max(1, Math.floor(plan.cashPerTrade / perLot)) : Math.max(1, Math.floor(plan.lotsPerTrade));
   const pct = (n: number | null, up: boolean) => (n === null ? null : toTick(entryPrice * (1 + (up ? n : -n) / 100), inst.tickSize));
   const at = new Date(x.at).toISOString();
+  // Trailing SL off: no trailing rules on the trade (they stay in the plan).
+  const trails = plan.trailing ?? false;
   return {
     ...x.ids,
     group: x.group?.id ?? null,
@@ -197,11 +199,10 @@ export function buildTrade(x: {
     targetPrice: pct(plan.targetPct, side === 'BUY'),
     stopPrice: pct(plan.stopPct, side !== 'BUY'),
     peakPrice: entryPrice,
-    ...(x.conditions ? { conditions: x.conditions } : {}),
+    ...(x.conditions && trails ? { conditions: x.conditions } : {}),
     terms: {
       targetPct: plan.targetPct,
       stopPct: plan.stopPct,
-      trailPct: plan.trailPct,
       squareOff: plan.squareOff,
       squareOffNse: plan.squareOffNse,
       squareOffMcx: plan.squareOffMcx,
@@ -311,12 +312,11 @@ export class PaperTrader {
       return lines.join('\n');
     }
     const perLot = trade.capitalUsed / trade.lots;
-    const trail = trailLevel(trade);
-    const trails = [trade.terms.trailPct != null ? `trailing ${trade.terms.trailPct}%${trail !== null ? ` (${rupees(trail)} now)` : ''}` : null, trade.conditions?.stopWhen ? 'trailing rules' : null].filter(Boolean).join(' + ');
+    const trails = !!trade.conditions?.stopWhen;
     const exits = [
-      trade.targetPrice !== null ? (trails ? `target ${rupees(trade.targetPrice)} starts ${trails}` : `target ${rupees(trade.targetPrice)}`) : null,
+      trade.targetPrice !== null ? `target ${rupees(trade.targetPrice)}${trails ? ' starts trailing rules' : ''}` : null,
       trade.stopPrice !== null ? `stop ${rupees(trade.stopPrice)}` : null,
-      trade.targetPrice === null && trails ? trails : null,
+      trade.targetPrice === null && trails ? 'trailing rules' : null,
     ].filter(Boolean);
     const budget = trade.overBudget ? ` · 1 share costs ${rupees(perLot)}, over the ${rupees(plan.cashPerTrade)} per trade` : '';
     lines.push(`📄 Paper: ${describe(trade)} @ ${rupees(trade.entryPrice)}${exits.length ? ` · ${exits.join(' · ')}` : ''}${budget}`);

@@ -132,7 +132,7 @@ describe('options backtest', () => {
       plan({ targetPct: null, stopPct: null }),
       plan({ targetPct: null, stopPct: null, squareOff: false }),
       plan({ charges: true, lotsPerTrade: 4 }),
-      plan({ targetPct: null, trailPct: 3 }),
+      plan({ trailing: true, rules: [{ group: null, leg: 'B', side: 'BUY', stopWhen: cond(field(legSeries('B')), 'LT', num(1)) }] }),
     ];
     for (const p of sizes) {
       const req: BacktestRequest = { strategyId: s.id, products: [P], from: D1, to: D1, plan: p };
@@ -211,13 +211,14 @@ describe('options backtest', () => {
   });
 
   it('trailing rules read the legs the trade was opened with, not the ATM of later candles', async () => {
-    // The spot climbs after entry (ATM moves to 25,100); the held 25,000 call falls below 99 at 11:00, the 25,100 call doesn't.
+    // The spot climbs after entry (ATM moves to 25,100); the held 25,000 call reaches its target (101) at 10:30 —
+    // trailing starts — and falls below 99 at 11:00; the 25,100 call doesn't.
     const after = (t: string) => (t < '10:00' ? 24_990 : t < '10:14' ? 24_995 : t < '10:30' ? 25_015 : 25_110);
     history = new FixtureHistory(uSpot, contracts, { lastDay: '2026-10-15' }).add(uSpot, dayMinutes(D1, after));
-    history.add(call(E1, 25_000), dayMinutes(D1, (t) => (t < '11:00' ? 100 : 98))).add(call(E1, 25_100), flat(D1, 100));
+    history.add(call(E1, 25_000), dayMinutes(D1, (t) => (t < '10:30' ? 100 : t < '11:00' ? 102 : 98))).add(call(E1, 25_100), flat(D1, 100));
     const { run } = await setup({ date: '2026-10-16', time: '09:00' }, history);
     const rules = [{ group: null, leg: 'B' as const, side: 'BUY' as const, stopWhen: cond(field(legSeries('B')), 'LT', num(99)) }];
-    const r = await run({ from: D1, to: D1, plan: plan({ targetPct: null, stopPct: null, rules }) });
+    const r = await run({ from: D1, to: D1, plan: plan({ trailing: true, targetPct: 1, stopPct: null, rules }) });
     expect(r.trades).toHaveLength(1);
     expect(r.trades[0]).toMatchObject({ exitReason: 'STOP_RULE', exitAt: new Date(ist(D1, '11:15')).toISOString(), exitPrice: 98 });
     expect(r.trades[0]!.instrument.strike).toBe(25_000);

@@ -7,7 +7,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ExprNode, PaperPlan, PaperTrade, StrategyDefinition, UnitEvaluation, V2Connection, V2Product, V2Strategy, V2Unit } from '../../src/shared/v2';
-import { PAPER_DEFAULTS, defaultPaperPlan, normalizePaperSummary, paperPlanSchema, resolveRules, stopNow } from '../../src/shared/v2';
+import { PAPER_DEFAULTS, defaultPaperPlan, normalizePaperSummary, normalizePlan, paperPlanSchema, resolveRules, stopNow } from '../../src/shared/v2';
 import { calendars } from '../../src/server/v2/calendar/MarketCalendar';
 import { ProductService } from '../../src/server/v2/data/ProductService';
 import { roundTripCharges } from '../../src/server/v2/paper/charges';
@@ -102,11 +102,13 @@ describe('paper trading — end to end through the scanner', () => {
 
   it('a connection can use its own values over the strategy’s — or switch paper trading off', async () => {
     const { c } = await connect();
-    await env.svc.saveConnectionPaper(c.id, { lotsPerTrade: 2, stopPct: null, trailPct: 15 });
+    await env.svc.saveConnectionPaper(c.id, { lotsPerTrade: 2, stopPct: null });
     await env.svc.scan();
-    expect(env.store.data.paperTrades[0]).toMatchObject({ lots: 2, quantity: 150, stopPrice: null, targetPrice: 120.6, terms: expect.objectContaining({ trailPct: 15 }) });
+    expect(env.store.data.paperTrades[0]).toMatchObject({ lots: 2, quantity: 150, stopPrice: null, targetPrice: 120.6 });
     const sum = await env.svc.paperSummary();
-    expect(sum.connections[0]!.paper).toEqual({ enabled: true, lotsPerTrade: 2, cashPerTrade: 10_000, targetPct: 20, stopPct: null, trailPct: 15, squareOff: true, custom: true });
+    expect(sum.connections[0]!.paper).toEqual({ enabled: true, lotsPerTrade: 2, cashPerTrade: 10_000, targetPct: 20, stopPct: null, trailing: false, squareOff: true, custom: true });
+    // Trailing SL on needs a trailing rule — this strategy has none.
+    await expect(env.svc.saveConnectionPaper(c.id, { trailing: true })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/trailing rule/) });
 
     // Back to the strategy's values.
     expect(await env.svc.saveConnectionPaper(c.id, {})).toEqual({ override: null });
@@ -289,7 +291,8 @@ describe('paper trader', () => {
     // The call's 15-minute closes: 100 … then 94 on the 11:00–11:15 candle — not published yet.
     provider.set(ceI, '15m', candlesAt(times.slice(0, -1), times.slice(0, -1).map(() => 100)));
     const stopWhen = cond(field(legSeries('B')), 'LT', num(95));
-    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), targetPct: null, stopPct: null, rules: [{ group: bull.id, leg: 'B', side: 'BUY', stopWhen }, { group: bear.id, leg: 'C', side: 'BUY' }] });
+    // A plan without a target (saved before one was required) trails from the entry.
+    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), trailing: true, targetPct: null, stopPct: null, rules: [{ group: bull.id, leg: 'B', side: 'BUY', stopWhen }, { group: bear.id, leg: 'C', side: 'BUY' }] });
     expect(await env.alert('bull')).toMatch(/· trailing rules/);
     const [opened] = env.store.data.paperTrades;
     expect(opened!.conditions).toMatchObject({ stopWhen, legs: { B: ceI } });
@@ -309,47 +312,27 @@ describe('paper trader', () => {
     expect(closed[0]!.exitPrice).toBe(93); // 93.5 − 0.5 % slippage, ticked down
   });
 
-  it('trailing stop: the best price moves it (only in the trade’s favour); the fixed stop counts while it is tighter', async () => {
+  it('Trailing SL: the target doesn’t close the trade; past it the stop-loss no longer applies', async () => {
     const env = trader();
-    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), targetPct: null, stopPct: 10, trailPct: 5 });
-    // Entry 100.5 × 0.95 = 95.475 → 95.45 (the half tick rounds down in floating point, as fixed stops do).
-    expect(await env.alert('bull')).toMatch(/stop ₹90\.45 · trailing 5% \(₹95\.45 now\)/);
-    const at = (price: number) => env.prices.set(ceI.token, price);
-    at(120);
-    expect((await env.t.monitor(cals)).closed).toEqual([]);
-    expect(env.store.data.paperTrades[0]).toMatchObject({ peakPrice: 120 });
-    at(115); // a lower price doesn't move it back
-    expect((await env.t.monitor(cals)).closed).toEqual([]);
-    expect(env.store.data.paperTrades[0]).toMatchObject({ peakPrice: 120 });
-    at(113.9); // 120 × 0.95 = 114
-    const { closed } = await env.t.monitor(cals);
-    expect(closed[0]).toMatchObject({ exitReason: 'TRAIL' });
-    expect(paperHit({ ...closed[0]!, status: 'OPEN', peakPrice: 100.5, terms: { ...closed[0]!.terms, trailPct: 20 } }, 90)).toBe('STOP'); // trail 80.4 is looser than the fixed 90.45
-  });
-
-  it('target + trailing stop: the target starts the trail instead of closing; before it only the stop-loss counts', async () => {
-    const env = trader();
-    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), targetPct: 10, stopPct: 10, trailPct: 5 });
-    // Entry 100.5: target 110.55, stop-loss 90.45; no trailing stop until the target.
-    expect(await env.alert('bull')).toMatch(/target ₹110\.55 starts trailing 5% · stop ₹90\.45/);
+    const stopWhen = cond(field(legSeries('B')), 'LT', num(1));
+    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), trailing: true, targetPct: 10, stopPct: 10, rules: [{ group: bull.id, leg: 'B', side: 'BUY', stopWhen }, { group: bear.id, leg: 'C', side: 'BUY' }] });
+    // Entry 100.5: target 110.55, stop-loss 90.45.
+    expect(await env.alert('bull')).toMatch(/target ₹110\.55 starts trailing rules · stop ₹90\.45/);
     const at = (price: number) => env.prices.set(ceI.token, price);
     const trade = () => env.store.data.paperTrades[0]!;
     at(105);
     expect((await env.t.monitor(cals)).closed).toEqual([]);
-    at(99); // 5 % from the best (105) would be 99.75 — not on before the target
-    expect((await env.t.monitor(cals)).closed).toEqual([]);
-    expect(trade().trailingAt).toBeUndefined();
-    at(112); // past the target: not closed — trailing starts (stop 112 × 0.95 = 106.4)
+    expect(paperHit(trade(), 90)).toBe('STOP'); // before the target the stop-loss counts
+    at(112); // past the target: not closed — the trailing rules take over
     expect((await env.t.monitor(cals)).closed).toEqual([]);
     expect(trade()).toMatchObject({ status: 'OPEN', peakPrice: 112, trailingAt: new Date(env.clock.now).toISOString() });
-    expect(stopNow(trade())).toEqual({ price: 106.4, reason: 'TRAIL' });
-    at(106.5);
+    expect(stopNow(trade())).toBeNull();
+    at(85); // below the old stop-loss: still open — it no longer applies
     expect((await env.t.monitor(cals)).closed).toEqual([]);
-    at(106.3);
-    const { closed } = await env.t.monitor(cals);
-    expect(closed[0]).toMatchObject({ exitReason: 'TRAIL' });
-    // Without trailing the target closes the trade, as before.
-    expect(paperHit({ ...closed[0]!, status: 'OPEN', terms: { ...closed[0]!.terms, trailPct: null } }, 111)).toBe('TARGET');
+    expect(trade().status).toBe('OPEN');
+    // Trailing SL off: the target closes the trade, as a normal trade.
+    const { conditions: _c, ...plain } = trade();
+    expect(paperHit({ ...plain, peakPrice: 100.5, trailingAt: undefined }, 111)).toBe('TARGET');
   });
 
   it('trailing rules with a target: not before the price reaches it, then on the candles closing after it', async () => {
@@ -357,7 +340,7 @@ describe('paper trader', () => {
     const times = timesEndingAt(ist(D, '11:15'), 15, 40, NSE_SESSION);
     const env = trader(ist(D, '11:00'), provider);
     const stopWhen = cond(field(legSeries('B')), 'LT', num(95));
-    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), targetPct: 10, stopPct: null, rules: [{ group: bull.id, leg: 'B', side: 'BUY', stopWhen }, { group: bear.id, leg: 'C', side: 'BUY' }] });
+    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), trailing: true, targetPct: 10, stopPct: null, rules: [{ group: bull.id, leg: 'B', side: 'BUY', stopWhen }, { group: bear.id, leg: 'C', side: 'BUY' }] });
     expect(await env.alert('bull')).toMatch(/target ₹110\.55 starts trailing rules/);
     // The call's 15-minute candles close at 94 from 11:00 on: the rule is true, but the target isn't reached yet.
     provider.set(ceI, '15m', candlesAt(times, times.map((t) => (t >= ist(D, '11:00') ? 94 : 100))));
@@ -503,5 +486,22 @@ describe('paper results and plan', () => {
     expect(paperPlanSchema.safeParse({ ...plan, squareOffNse: '3:20pm' }).success).toBe(false);
     expect(paperPlanSchema.safeParse({ ...plan, cashPerTrade: 50 }).success).toBe(false);
     expect(PAPER_DEFAULTS.cashPerTrade).toBe(10_000);
+    // Trailing SL: off by default; on needs a target and a trailing % or rule.
+    expect(plan.trailing).toBe(false);
+    const withRule = { ...plan, trailing: true, rules: plan.rules.map((r) => ({ ...r, stopWhen: cond(field(legSeries('B')), 'LT', num(95)) })) };
+    expect(paperPlanSchema.safeParse(withRule).success).toBe(true);
+    expect(paperPlanSchema.safeParse({ ...withRule, targetPct: null }).success).toBe(false);
+    expect(paperPlanSchema.safeParse({ ...plan, trailing: true }).success).toBe(false); // no trailing rule
+  });
+
+  it('plans saved before the Trailing SL switch: trailing rules switch it on; the removed trailing % is dropped', () => {
+    const { trailing: _t, ...old } = defaultPaperPlan(grouped, true);
+    const withPct = normalizePlan({ ...old, trailPct: 10 } as unknown as PaperPlan);
+    expect(withPct.trailing).toBe(false);
+    expect('trailPct' in withPct).toBe(false);
+    expect(normalizePlan({ ...old, rules: [{ group: bull.id, leg: 'B', side: 'BUY', stopWhen: cond(field(legSeries('B')), 'LT', num(95)) }] } as PaperPlan).trailing).toBe(true);
+    expect(normalizePlan(old as PaperPlan).trailing).toBe(false);
+    // An explicit switch wins: off keeps the rules in the plan but trades without them.
+    expect(normalizePlan({ ...old, trailing: false, rules: [{ group: bull.id, leg: 'B', side: 'BUY', stopWhen: cond(field(legSeries('B')), 'LT', num(95)) }] }).trailing).toBe(false);
   });
 });

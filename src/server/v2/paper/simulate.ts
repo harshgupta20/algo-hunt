@@ -9,14 +9,13 @@
  *             stop; a gap past the stop fills at the minute's open; the trailing stop follows the best price of
  *             the minutes before), a trailing rule coming true (at that candle's close), the other group firing,
  *             the day's square-off, expiry, or the end of the test (still open → the last price)
- *   trailing  with a target and trailing (a trailing stop % or trailing rules) the minute that reaches the target
- *             starts trailing instead of closing the trade (from the next minute; rules from the candles closing
- *             after it); without a target trailing runs from the entry
+ *   trailing  Trailing SL on: the minute that reaches the target starts the trailing rules (from the candles
+ *             closing after it) instead of closing the trade; from there the stop-loss and target no longer apply
  *   path      each closed trade carries its price path (story.ts) — what its story shows
  *   one open position per product (a backtest tests one strike position)
  */
 import type { BacktestSkip, PaperExitReason, PaperPlan, PaperTrade, StrategyDefinition, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
-import { atTarget, conditionKey, nodeText, paperGroups, planConditions, planSizing, tradePath, trailing, trailsPastTarget, watchWindow } from '@/shared/v2';
+import { atTarget, conditionKey, nodeText, paperGroups, planSizing, tradePath, trailing, trailingRules, trailsPastTarget, watchWindow } from '@/shared/v2';
 import { exitDefinition } from '../engine/series';
 import { istDate } from '../../utils/marketTime';
 import type { MarketCalendar } from '../calendar/MarketCalendar';
@@ -90,15 +89,12 @@ export function planNotes(d: StrategyDefinition, plan: PaperPlan, opts: { condit
     'Each alert is entered at its trigger candle’s close (± slippage) and exited on the traded contract’s 1-minute candles; if a stop and the target fall in the same minute the stop counts.',
     ...(sizing.lots ? [`Futures and options: ${plan.lotsPerTrade} lot${plan.lotsPerTrade === 1 ? '' : 's'} per trade, at each contract’s own lot size.`] : []),
     ...(sizing.cash ? [`Stocks: as many shares as ₹${plan.cashPerTrade.toLocaleString('en-IN')} buys at the entry (at least one).`] : []),
-    ...(plan.targetPct !== null && (plan.trailPct !== null || planConditions(plan.rules).length)
-      ? ['Trades that trail don’t close at the target: reaching it starts the trailing stop / trailing rules, and the fixed stop-loss stays only as a floor.']
+    ...(plan.trailing
+      ? ['Trailing SL on: trades don’t close at the target — reaching it starts the trailing rules, and from there the stop-loss and target no longer apply.']
       : []),
-    ...(plan.trailPct !== null
-      ? [`Trailing stop-loss ${plan.trailPct}% from the best price since entry${plan.targetPct !== null ? ', from the target on' : ''}, moved after each 1-minute candle (never against the trade).`]
-      : []),
-    ...planConditions(plan.rules).map((x) => {
+    ...trailingRules(plan).map((x) => {
       const group = groups.find((g) => g.id === x.group)?.label;
-      return `Trailing rules${group ? ` (${group})` : ''}: ${nodeText(x.when, d.legs)} — checked ${plan.targetPct !== null ? 'from the target on, ' : ''}at each ${exitDefinition(d, x.when).evaluation.triggerTimeframe} candle close${opts.conditionLegs}; the trade exits at that close.`;
+      return `Trailing rules${group ? ` (${group})` : ''}: ${nodeText(x.when, d.legs)} — checked from the target on, at each ${exitDefinition(d, x.when).evaluation.triggerTimeframe} candle close${opts.conditionLegs}; the trade exits at that close.`;
     }),
   ];
 }

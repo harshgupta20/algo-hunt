@@ -388,45 +388,22 @@ describe('live worker end to end', () => {
     expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'CLOSED', exitReason: 'STOP', exitPrice: 22_586.5 }); // 22,700 − 0.5 %
   });
 
-  it('a trailing stop moves up with the ticks, is saved by the next paper step, and closes the trade when the price comes back', async () => {
-    const e = await liveEnv({ close: 25_160, level: 25_150, paper: { targetPct: null, trailPct: 1 } });
-    expect(e.channels.sent[0]!.message.text).toMatch(/trailing 1% \(₹25,032\.95 now\)/); // 25,285.8 × 0.99
+  it('Trailing SL: a tick past the target doesn’t close the trade; after it the stop-loss no longer applies', async () => {
+    const stopWhen = cond(field(legSeries('A', '5m')), 'LT', num(1)); // a trailing rule that never comes true here
+    const e = await liveEnv({ close: 25_160, level: 25_150, paper: { trailing: true, targetPct: 1, rules: [{ group: null, leg: 'A', side: 'BUY', stopWhen }] } });
+    expect(e.channels.sent[0]!.message.text).toMatch(/target ₹25,538\.65 starts trailing rules/); // 25,285.8 × 1.01
     await e.step('09:21:00');
     const tick = (price: number) => {
       const tt = e.t() + 500;
       e.worker.events.ticks([{ token: nFut.token, price, volume: 900, tradeTime: tt, exchangeTime: tt, dayOpen: 25_100, index: false }], tt + 100);
     };
-    tick(26_000); // best price → stop 25,740
+    tick(25_600); // past the target: not closed — the trailing rules take over
     await e.worker.idle();
-    expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'OPEN' });
-    await e.step('09:21:15'); // the paper step saves the best price
-    expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'OPEN', peakPrice: 26_000 });
-    tick(25_800); // above the trailing stop: still open
-    await e.worker.idle();
-    expect(e.store.data.paperTrades[0]!.status).toBe('OPEN');
-    tick(25_700); // through 25,740 → closed (market order, − 0.5 % slippage)
-    await e.worker.idle();
-    expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'CLOSED', exitReason: 'TRAIL', exitPrice: 25_571.5 });
-  });
-
-  it('with a target the ticks start the trailing stop there instead of closing the trade', async () => {
-    const e = await liveEnv({ close: 25_160, level: 25_150, paper: { targetPct: 1, trailPct: 1 } });
-    expect(e.channels.sent[0]!.message.text).toMatch(/target ₹25,538\.65 starts trailing 1%/); // 25,285.8 × 1.01
-    await e.step('09:21:00');
-    const tick = (price: number) => {
-      const tt = e.t() + 500;
-      e.worker.events.ticks([{ token: nFut.token, price, volume: 900, tradeTime: tt, exchangeTime: tt, dayOpen: 25_100, index: false }], tt + 100);
-    };
-    tick(25_600); // past the target: not closed — trailing starts (stop 25,344)
-    await e.worker.idle();
-    await e.step('09:21:15');
+    await e.step('09:21:15'); // the paper step saves the best price and when trailing started
     expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'OPEN', peakPrice: 25_600, trailingAt: expect.any(String) });
-    tick(25_400);
+    tick(22_700); // below the 10 % stop-loss (22,757.2): it no longer applies
     await e.worker.idle();
     expect(e.store.data.paperTrades[0]!.status).toBe('OPEN');
-    tick(25_300); // through 25,344 → closed by the trailing stop
-    await e.worker.idle();
-    expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'CLOSED', exitReason: 'TRAIL' });
   });
 
   it('the cron scanner steps aside while the worker streams, and warns once if it dies', async () => {

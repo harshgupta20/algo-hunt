@@ -129,18 +129,20 @@ added later — plans and trades are JSONB, so new fields need no migration). Bo
 - **Entry:** market price (live worker: streamed last price; scanner: Kite LTP; fallback: the leg's close on the
   trigger candle) ± slippage, rounded against the trader to the tick; futures / options `lotsPerTrade` lots, stocks
   (Spot legs) whole shares for `cashPerTrade` (≥ 1); money counted as premium (bought options, stocks) or estimated
-  margin (futures, sold options). The trade snapshots its terms (incl. `trailPct`) and, when its group has trailing
-  rules, `conditions` = the tree + the strategy's legs + the unit's contracts.
-- **Exits:** stop-loss / trailing stop / target on every tick (live worker) or once a minute on LTP (scanner, only
-  while the worker isn't covering). The trailing stop = `trailPct` from `peakPrice` (best price since entry),
-  the tighter of it and the fixed stop wins (`stopNow`, shared with the client); the worker keeps tick peaks in
+  margin (futures, sold options). The trade snapshots its terms and, when its group has trailing rules (Trailing SL
+  on), `conditions` = the tree + the strategy's legs + the unit's contracts.
+- **Exits:** stop-loss / target on every tick (live worker) or once a minute on LTP (scanner, only while the worker
+  isn't covering); the best price since entry (`peakPrice`) is tracked the same way — the worker keeps tick peaks in
   memory and saves them with `updateMarks` at the next paper step (every 10 s); the paper book keeps them on disk.
-  **Target → trailing** (`trailsPastTarget` / `trailing` in `shared/v2/paper.ts`): a trade with a target and trailing
-  (a `trailPct` or trailing rules) isn't closed at the target — the trailing stop and the rules are off until the
-  best price reaches it (derived from `peakPrice`), then on; `markChanges` records `trailingAt` (saved with the marks
-  like `peakPrice`) so the rules only look at candles closing after it. Without a target trailing runs from entry;
-  without trailing the target closes the trade. Target conditions were removed (2026-11-04; `normalizePlan` drops
-  them from older plans). Trailing rules (`paper/exitConditions.ts`, from `monitor`): at every close of their
+  **Trailing SL** (`plan.trailing`; `trailsPastTarget` / `trailing` / `stopNow` in `shared/v2/paper.ts`): off →
+  `buildTrade` gives the trade no `conditions`, so the stop-loss and target close it. On (validated by
+  `trailingIssue`: a target and at least one trailing rule) → the trade isn't closed at the target; the rules are off
+  until the best price reaches it (derived from `peakPrice`), then on, and the stop-loss no longer applies (`stopNow`
+  returns none). `markChanges` records `trailingAt` (saved with the marks like `peakPrice`) so the rules only look at
+  candles closing after it. The trailing stop % (`terms.trailPct`) was removed from plans on 2026-11-04 (the user:
+  the trailing logic is the rules); trades opened with one still trail by it (`trailLevel`; without a target from
+  entry, the tighter stop counting). `normalizePlan` infers the switch for plans saved before it (trailing rules →
+  on), drops `trailPct` and the removed target conditions. Trailing rules (`paper/exitConditions.ts`, from `monitor`): at every close of their
   smallest timeframe after trailing started, on Kite's candles (`CandleService`), waiting with `pendingReason` until
   the candle is published; TRUE → closed at the market price as `STOP_RULE`. Square-off on the
   entry day or expiry close; charges from `paper/charges.ts`. Closing is conditional on `status = 'OPEN'`, so two

@@ -252,7 +252,7 @@ function timeline(t: PaperTrade, story: Story | null): Item[] {
       at: from,
       icon: <Target className={ICON} />,
       title: `Reached the target ${inr(t.targetPrice)} — trailing started`,
-      detail: 'The trade kept running; from here the trailing stop / trailing rules close it.',
+      detail: `The trade kept running: from here the ${t.terms.trailPct != null ? `${t.terms.trailPct}% trailing stop${t.conditions?.stopWhen ? ' and the trailing rules' : ''}` : 'trailing rules'} close it — the stop-loss and target no longer apply.`,
       tone: 'text-warn',
     });
   for (const m of story?.moves ?? []) {
@@ -266,7 +266,7 @@ function timeline(t: PaperTrade, story: Story | null): Item[] {
         : m.to.reason === 'TRAIL' && m.from?.reason === 'TRAIL'
           ? `Trailing stop raised to ${inr(m.to.price)}`
           : `Stop now ${inr(m.to.price)}`,
-      detail: `Best price ${inr(m.best)}${takeover && m.from ? ` — tighter than the stop-loss ${inr(m.from.price)}` : m.from ? ` (was ${inr(m.from.price)})` : ''}`,
+      detail: `Best price ${inr(m.best)}${takeover && m.from ? ` — replaces the stop-loss ${inr(m.from.price)}` : m.from ? ` (was ${inr(m.from.price)})` : ''}`,
     });
   }
   if (t.exitAt && t.exitPrice !== null)

@@ -10,7 +10,7 @@
  * (optionsBacktest.ts) replays expired contracts from Upstox instead.
  */
 import type { BacktestJob, BacktestProduct, BacktestRequest, BacktestResult, CompareProductResult, StrategyDefinition, V2Instrument, V2Strategy } from '@/shared/v2';
-import { normalizePlan, planConditions, resolveRules } from '@/shared/v2';
+import { normalizePlan, resolveRules, trailingRules } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { calendars, dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
 import { CandleCache, type CandleStats } from '../data/CandleCache';
@@ -50,7 +50,7 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
   const cals = calendars(await deps.store.calendar.list());
   const products = new Map((await deps.store.products.list({ ids })).map((p) => [p.id, p]));
   const plan = { ...normalizePlan(req.plan), enabled: true, rules: resolveRules(d, req.plan.rules) };
-  const exitRules = planConditions(plan.rules).map((x) => ({ key: x.key, when: x.when }));
+  const exitRules = trailingRules(plan).map((x) => ({ key: x.key, when: x.when }));
   const end = Math.min(now, dateStartMs(addDays(req.to, 1)));
   const calOf = (productId: string): MarketCalendar => cals[products.get(productId)?.market ?? 'NSE'];
   const symbolOf = (productId: string) => products.get(productId)?.symbol ?? productId.split(':')[1] ?? productId;

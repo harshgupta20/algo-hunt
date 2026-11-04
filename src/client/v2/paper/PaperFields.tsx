@@ -11,7 +11,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { RotateCcw, Save, X } from 'lucide-react';
 import clsx from 'clsx';
 import type { PaperOverride, PaperOverrideKey, PaperPlan } from '@/shared/v2';
-import { PAPER_DEFAULTS, diffOverride, effectivePlan, planConditions, watchWindowIssue } from '@/shared/v2';
+import { PAPER_DEFAULTS, diffOverride, effectivePlan, trailingIssue, watchWindowIssue } from '@/shared/v2';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { InlineSpinner } from '../../components/loaders';
 import { v2Api } from '../api';
@@ -39,14 +39,11 @@ function Field({ label, help, own, onReset, children }: { label: string; help: T
   );
 }
 
-/** The trailing stop's % when it's ticked on. */
-const TRAIL_DEFAULT = 10;
-
-/** A % with an on/off tick (off = none). */
-function PctField({ label, value, fallback, max, onChange }: { label: string; value: number | null; fallback: number; max: number; onChange: (v: number | null) => void }) {
+/** A % with an on/off tick (off = none); `required` = it can't be ticked off. */
+function PctField({ label, value, fallback, max, required, onChange }: { label: string; value: number | null; fallback: number; max: number; required?: boolean; onChange: (v: number | null) => void }) {
   return (
     <>
-      <input type="checkbox" aria-label={`${label} on`} className="accent-[rgb(var(--accent))]" checked={value !== null} onChange={(e) => onChange(e.target.checked ? fallback : null)} />
+      <input type="checkbox" aria-label={`${label} on`} className="accent-[rgb(var(--accent))] disabled:opacity-40" checked={value !== null} disabled={required && value !== null} onChange={(e) => onChange(e.target.checked ? fallback : null)} />
       <NumberInput label={label} min={0.1} max={max} step={1} disabled={value === null} className="input py-1 text-xs w-20 tabular-nums disabled:opacity-40" value={value} placeholder="none" onChange={onChange} />
       <span className="text-xs text-slate-400">%</span>
     </>
@@ -77,6 +74,9 @@ export function PaperTermsFields({
   const own = (...keys: PaperOverrideKey[]) => !!base && keys.some((k) => value[k] !== base[k]);
   const reset = (...keys: PaperOverrideKey[]) => base && set(Object.fromEntries(keys.map((k) => [k, base[k]])) as Partial<PaperPlan>);
   const windowIssue = watchWindowIssue(nseOnly ? { ...value, watchMcxFrom: '00:00', watchMcxTo: '23:59' } : value);
+  const trailIssue = trailingIssue(value);
+  // Switching Trailing SL on fills in a target to start at.
+  const setTrailing = (trailing: boolean) => set({ trailing, ...(trailing && value.targetPct === null ? { targetPct: PAPER_DEFAULTS.targetPct } : {}) });
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-end gap-2">
@@ -93,22 +93,24 @@ export function PaperTermsFields({
           </Field>
         )}
         <Field label="Target" help={H.paper.target} own={own('targetPct')} onReset={() => reset('targetPct')}>
-          <PctField label="Target %" value={value.targetPct} fallback={PAPER_DEFAULTS.targetPct} max={1000} onChange={(targetPct) => set({ targetPct })} />
+          <PctField label="Target %" value={value.targetPct} fallback={PAPER_DEFAULTS.targetPct} max={1000} required={value.trailing} onChange={(targetPct) => set({ targetPct })} />
         </Field>
         <Field label="Stop-loss" help={H.paper.stop} own={own('stopPct')} onReset={() => reset('stopPct')}>
           <PctField label="Stop-loss %" value={value.stopPct} fallback={PAPER_DEFAULTS.stopPct} max={100} onChange={(stopPct) => set({ stopPct })} />
         </Field>
-        <Field label="Trailing stop" help={H.paper.trail} own={own('trailPct')} onReset={() => reset('trailPct')}>
-          <PctField label="Trailing stop %" value={value.trailPct} fallback={TRAIL_DEFAULT} max={100} onChange={(trailPct) => set({ trailPct })} />
+        <Field label="Trailing SL" help={H.paper.trailing} own={own('trailing')} onReset={() => reset('trailing')}>
+          <Toggle checked={value.trailing} onChange={setTrailing} label="Trail from the target" help={H.paper.trailing} />
         </Field>
       </div>
-      {value.targetPct !== null && (value.trailPct !== null || planConditions(value.rules).length > 0) && (
+      {value.trailing && value.targetPct !== null && (
         <Tooltip content={H.paper.trailsAtTarget}>
           <p tabIndex={0} className="w-fit text-[11px] text-slate-500 outline-none">
-            At the target (+{value.targetPct} %) the trade keeps running: trailing starts there{value.stopPct !== null ? ` — until then the −${value.stopPct} % stop-loss guards it` : ''}.
+            {value.stopPct !== null ? `The −${value.stopPct} % stop-loss guards the trade until the +${value.targetPct} % target. ` : `Until the +${value.targetPct} % target nothing but the other exits guards the trade. `}
+            There it keeps running: your trailing rules take over, and the stop-loss and target no longer apply.
           </p>
         </Tooltip>
       )}
+      {trailIssue && <p className="text-[11px] text-warn">{trailIssue}</p>}
       <div className="flex flex-wrap items-end gap-2">
         <Field label="Watch" help={H.paper.watch} own={own('watch')} onReset={() => reset('watch')}>
           <Toggle checked={value.watch} onChange={(watch) => set({ watch })} label="Only between set times" help={H.paper.watch} />
@@ -164,11 +166,11 @@ export function PaperTermsFields({
   );
 }
 
-/** "1 lot · +20/−10% · trail 10% from target" — a connection's paper settings in one line (size as its legs trade: lots and / or ₹). */
-export function paperBrief(p: Pick<PaperPlan, 'lotsPerTrade' | 'cashPerTrade' | 'targetPct' | 'stopPct' | 'trailPct'>, sizing = { lots: true, cash: false }): string {
+/** "1 lot · +20/−10% · trailing from target" — a connection's paper settings in one line (size as its legs trade: lots and / or ₹). */
+export function paperBrief(p: Pick<PaperPlan, 'lotsPerTrade' | 'cashPerTrade' | 'targetPct' | 'stopPct' | 'trailing'>, sizing = { lots: true, cash: false }): string {
   const size = [sizing.lots ? `${p.lotsPerTrade} lot${p.lotsPerTrade === 1 ? '' : 's'}` : null, sizing.cash ? inr(p.cashPerTrade, 0) : null].filter(Boolean).join(' / ');
   const exits = p.targetPct === null && p.stopPct === null ? '' : `${p.targetPct === null ? '—' : `+${p.targetPct}`}/${p.stopPct === null ? '—' : `−${p.stopPct}`}%`;
-  return [size, exits, p.trailPct !== null ? `trail ${p.trailPct}%${p.targetPct !== null ? ' from target' : ''}` : ''].filter(Boolean).join(' · ');
+  return [size, exits, p.trailing ? 'trailing from target' : ''].filter(Boolean).join(' · ');
 }
 
 /** A connection's paper settings chip: click to edit. */

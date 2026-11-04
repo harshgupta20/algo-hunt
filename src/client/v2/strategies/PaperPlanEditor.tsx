@@ -88,7 +88,7 @@ export function PaperPlanEditor({ def, plan, onChange }: { def: StrategyDefiniti
           <PaperTermsFields value={plan} onChange={(p) => onChange({ ...p, rules })} hasGroups={groups.length > 0} sizing={planSizing(def, rules)} />
 
           <PaperRulesEditor def={def} rules={rules} onChange={(r) => set({ rules: r })} />
-          <ConditionsEditor def={def} rules={rules} targetPct={plan.targetPct} onChange={(r) => set({ rules: r })} />
+          {plan.trailing && <ConditionsEditor def={def} rules={rules} targetPct={plan.targetPct} onChange={(r) => set({ rules: r })} />}
           <Tooltip content={H.paper.savedWith}>
             <p className="text-[11px] text-slate-500">Defaults for every connection of this strategy — a connection can change its own values in Connections or on the Paper tab. Saved with the strategy; open trades keep their settings.</p>
           </Tooltip>

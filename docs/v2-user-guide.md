@@ -109,8 +109,8 @@ strategy**.
    candle's close (± slippage), followed minute by minute on the contract's Kite 1-minute candles to the target,
    stop-loss or trailing stop (a stop and the target in the same minute → the stop counts; a gap through the stop
    fills at that minute's open; the trailing stop follows the best price of the minutes before), a trailing rule,
-   the other group, the 15:20 / 23:20 square-off, expiry, or the end of the test. With trailing, the target starts
-   it instead of closing the trade (section 5).
+   the other group, the 15:20 / 23:20 square-off, expiry, or the end of the test. With **Trailing SL** on, the
+   target starts trailing instead of closing the trade (section 5).
 4. Results: net P&L, **money needed** (the most in use at once) and the return on it, win rate, profit factor,
    drawdown, the P&L charts, **by product** (open a row for the contracts used and data notes), every trade (CSV) —
    click a trade for its **story** (section 5).
@@ -224,7 +224,7 @@ slippage on. Both backtests trade the same plan.
   exit signal only. Untick the box to stop paper trading the strategy. Changing only the paper settings doesn't
   create a new strategy version. (A backtest's **Save to strategy** saves here too.)
 - **For one connection:** click its **📄 chip** (Connections tab, or the ranking on the Paper tab) — e.g.
-  `📄 1 lot · +20/−10% · trail 10%`. Change lots (₹ for stocks), target, stop-loss, trailing stop, watch window,
+  `📄 1 lot · +20/−10% · trailing from target`. Change lots (₹ for stocks), target, stop-loss, Trailing SL, watch window,
   square-off, slippage or charges, or switch paper trading off for that connection only. Values that differ from the strategy's are highlighted **own** (click ↺ to go back);
   **Use strategy's settings** forgets them all. The chip is marked **OWN** when a connection has its own values.
 
@@ -235,38 +235,37 @@ slippage on. Both backtests trade the same plan.
   flagged **over budget** when one share costs more) — a ₹ amount keeps stocks of very different prices comparable.
   Money used: the premium / price for bought options and stocks, an estimated margin for futures and sold options
   (≈12 % of the contract value for indices, 20 % stocks, 10 % MCX).
-- **Target, stop-loss and trailing — how they work together:**
-  - **No trailing** (no trailing stop %, no trailing rules): the stop-loss and the target close the trade, whichever
-    comes first.
-  - **Trailing with a target:** the stop-loss guards the trade until the target. Reaching the target **doesn't close
-    it** — trailing starts there and the trade keeps running until the trailing stop or a trailing rule closes it. A
-    winner isn't capped at the target. From then on the stop-loss stays only as a floor (a stop never moves back).
-  - **Trailing without a target:** trailing runs from the entry.
-  - Example — buy at ₹100, stop-loss 10 %, target 20 %, trailing 10 %: until ₹120 only the ₹90 stop-loss counts; at
-    ₹120 trailing starts (stop ₹108); the price runs to ₹150 → stop ₹135; it falls → closed at ₹135.
-- **Trailing stop-loss** (optional): a stop that sits this % below the best price since entry (above the lowest,
-  for a sell) and only moves in your favour. The tighter of it and the fixed stop-loss counts. Live it moves on every
-  tick; backtests move it after each 1-minute candle.
-- **Trailing rules** (optional, per group): **Close the trade when…** — the strategy's condition builder (any leg,
-  timeframe, indicator; AND / OR). Quick buttons add the usual ones on the traded contract: price crosses **SMA**,
-  the **previous candle's low** broken, the **3-candle low** broken, **RSI turns** — mirrored for a sell. They start at
-  the target (at the entry without a target) and are checked at every close of the smallest timeframe used after
-  that, on Kite's candles (live: a few seconds after the close, once Kite publishes it); the trade closes at that
-  close (live: the price right after). Shown as *Trailing rule*. (Target conditions were removed on 4 Nov 2026 — the
-  target now starts trailing instead; plans that had them keep everything else.)
+- **Stop-loss, target and the Trailing SL switch:**
+  - **Trailing SL off** (the default): a normal trade — the stop-loss and the target close it, whichever comes first.
+  - **Trailing SL on:** the stop-loss guards the trade until the target. Reaching the target **doesn't close it** —
+    it is the trigger: from there the stop-loss and target no longer apply, and your **trailing rules** close the trade
+    (plus square-off, expiry and the other group). A winner isn't capped at the target. It needs a target (switching
+    it on fills one in) and at least one trailing rule — nothing else to fill in.
+  - Example — buy at ₹100, stop-loss 10 %, target 20 %, rule "close below the previous candle's low": until ₹120 only
+    the ₹90 stop-loss counts; from ₹120 the trade runs as long as each candle closes above the previous one's low.
+  - The rules are checked at candle closes, so after the target a sharp fall inside a candle is caught at that
+    candle's close.
+- **Trailing rules** (with Trailing SL, per group — shown only while it's on): **Close the trade when…** — the
+  strategy's condition builder (any leg, timeframe, indicator; AND / OR). Quick buttons add the usual ones on the
+  traded contract: price crosses **SMA**, the **previous candle's low** broken, the **3-candle low** broken, **RSI
+  turns** — mirrored for a sell. Checked from the target on, at every close of the smallest timeframe used, on Kite's
+  candles (live: a few seconds after the close, once Kite publishes it); the trade closes at that close (live: the
+  price right after). Shown as *Trailing rule*. Switching Trailing SL off keeps them in the plan, unused. (Target
+  conditions and the trailing stop % were removed on 4 Nov 2026; plans saved before the switch existed have it on
+  when they had trailing rules. Trades already opened with a trailing % keep trailing by it.)
 - **Watch window** (optional): **Only between set times** — e.g. 09:30 – 15:00 to skip the jumpy last half hour. A
   trigger candle has to lie inside (open at or after "from", closed by "until"): outside it **no alert is sent** and
   no trade opens — in paper trading, Compare and both backtests. Trades already open are still managed. Times for
   NSE / BSE and MCX; intraday timeframes only. Set it per strategy, per connection (📄 chip) or per backtest.
 - **One position per connection and strike position.** The same group firing again keeps it; the other group firing
   closes it (if "Exit when another group fires" is on) and opens its own.
-- **Closes** at the target (at the target price — only without trailing), the stop-loss or trailing stop (at the
-  price that crossed it, with slippage — if a stop and the target are reached at once the stop counts), a trailing
-  rule, the daily
+- **Closes** at the target (at the target price — only with Trailing SL off), the stop-loss (before the target) or
+  trailing stop (at the price that crossed it, with slippage — if a stop and the target are reached at once the stop
+  counts), a trailing rule, the daily
   square-off, or the contract's expiry (square-off off). No new
   trades after the square-off time or while the market is closed. An index Spot leg can't be traded.
 - The alert message gets a line such as `📄 Paper: BUY 1 lot (75) NIFTY…25000CE @ ₹100.50 · target ₹120.60 · stop ₹90.45`
-  (with trailing: `target ₹120.60 starts trailing 10%`).
+  (with Trailing SL: `target ₹120.60 starts trailing 10%`).
 - With the live worker running, targets, stop-losses and trailing stops are checked on every tick (trailing rules
   every 10 seconds, once a candle closes); without it, the per-minute scanner checks them once a minute.
 - **Saved on this computer, synced at the close.** Every paper trade is saved on your computer the moment it opens

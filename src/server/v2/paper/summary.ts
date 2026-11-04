@@ -174,7 +174,7 @@ export function paperSummary(x: SummaryInput): PaperSummary {
           cashPerTrade: eff.cashPerTrade,
           targetPct: eff.targetPct,
           stopPct: eff.stopPct,
-          trailPct: eff.trailPct,
+          trailing: eff.trailing,
           squareOff: eff.squareOff,
           custom: !!o && Object.keys(o).length > 0,
         },

@@ -9,7 +9,7 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import clsx from 'clsx';
 import type { PaperTrade } from '@/shared/v2';
-import { stopNow } from '@/shared/v2';
+import { stopNow, trailing, trailsPastTarget } from '@/shared/v2';
 import { compact, niceTicks } from './EquityChart';
 import { inr } from './money';
 
@@ -124,9 +124,11 @@ export function Sparkline({ points, width = 84, height = 26 }: { points: number[
   );
 }
 
-/** Where the last price sits between the stop it has now (fixed or trailing, left) and target (right); a tick marks the entry. */
+/** Where the last price sits between the stop it has now (left) and target (right); a tick marks the entry. Past the target (Trailing SL): the trailing stop. */
 export function RangeBar({ t }: { t: PaperTrade }) {
   const stop = stopNow(t);
+  // Past the target with Trailing SL: no target any more — the trailing stop (or the rules) is all that's left.
+  if (trailsPastTarget(t) && trailing(t)) return <span className="text-[10px] text-slate-400 tabular-nums">trailing · {stop ? `stop ${inr(stop.price)}` : 'by rules'}</span>;
   if (t.lastPrice === null || stop === null || t.targetPrice === null) return <span className="text-[10px] text-slate-500">no stop / target</span>;
   const buy = t.side === 'BUY';
   // Progress from the stop (0) to the target (1), whichever side the trade is on.

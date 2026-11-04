@@ -3,8 +3,9 @@
 /**
  * Trailing rules per trade rule (each group that trades, or the whole strategy): an AND / OR condition tree — the
  * strategy editor's — on any leg, e.g. "close crossed below SMA 20" or "close crossed below the previous candle's
- * low". They run from the target on (from the entry without a target), next to the trailing stop %. Part of the
- * plan, so paper trading and both backtests use them; used by the strategy editor (step 4) and the backtest pages.
+ * low". With Trailing SL on they run from the target on — they are the trailing SL. Part of the plan, so paper
+ * trading and both backtests use them; used by the strategy editor (step 4) and the backtest pages (shown while
+ * Trailing SL is on).
  */
 import { Plus, ShieldAlert, Trash2 } from 'lucide-react';
 import type { ExprNode, GroupNode, PaperRule, StrategyDefinition } from '@/shared/v2';
@@ -113,7 +114,7 @@ export function ConditionsEditor({ def, rules, targetPct, onChange }: { def: Str
         Trailing rules <InfoTip content={H.paper.conditions} />
       </p>
       <p className="mb-2 text-[11px] text-slate-500">
-        {targetPct === null ? 'From the entry (no target set) — next to the trailing stop %.' : `From the target (+${targetPct} %) on: reaching it starts trailing instead of closing the trade.`}
+        {targetPct === null ? 'Set a target — trailing starts there.' : `From the target (+${targetPct} %) on: the first rule that comes true at a candle close closes the trade. At least one is needed.`}
       </p>
       <div className="flex flex-col gap-3">
         {traded.map((r) => {

@@ -17,7 +17,7 @@
  * named in the notes. Candles: the history serves past days, so the test ends on the last complete day.
  */
 import type { BacktestProduct, BacktestRequest, BacktestResult, ConnectionConfig, LegId, SeriesSpec, StrategyDefinition, TriState, UnitState, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
-import { TIMEFRAME, inWatchWindow, legNameById, normalizePlan, planConditions, resolveRules, watchWindow } from '@/shared/v2';
+import { TIMEFRAME, inWatchWindow, legNameById, normalizePlan, resolveRules, trailingRules, watchWindow } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { decide, initialState } from '../alerts/alertPolicy';
 import { calendars, dateStartMs, lastCompleteDay, type MarketCalendar } from '../calendar/MarketCalendar';
@@ -157,7 +157,7 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
   const futures = d.legs.some((l) => l.kind === 'FUT');
   const config: Pick<ConnectionConfig, 'expiry' | 'strikeShifts'> = { expiry: req.expiry ?? { mode: 'CURRENT' }, strikeShifts: [req.strikeShift ?? 0] };
   const policy = { channels: { telegram: false, email: false }, trigger: req.trigger ?? 'ON_TRANSITION', cooldownMinutes: req.cooldownMinutes ?? null, oncePerCandle: true } as const;
-  const exitDefs = planConditions(plan.rules).map((x) => ({ key: x.key, def: exitDefinition(d, x.when) }));
+  const exitDefs = trailingRules(plan).map((x) => ({ key: x.key, def: exitDefinition(d, x.when) }));
   const series = seriesOf(d);
   const triggerNative = TIMEFRAME[tf].native;
   const lookbackFrom = (date: string, interval: NativeInterval) => addDays(date, -LOOKBACK_DAYS[interval]);

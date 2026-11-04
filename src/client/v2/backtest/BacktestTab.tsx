@@ -592,7 +592,7 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
                 <div className="flex flex-col gap-3">
                   <PaperTermsFields value={plan} onChange={setPlan} base={saved ?? undefined} hasGroups={paperGroups(def).length > 0} sizing={sizing} nseOnly={upstox} />
                   <PaperRulesEditor def={def} rules={rules} onChange={(r) => setPlan({ ...plan, rules: r })} />
-                  <ConditionsEditor def={def} rules={rules} targetPct={plan.targetPct} onChange={(r) => setPlan({ ...plan, rules: r })} />
+                  {plan.trailing && <ConditionsEditor def={def} rules={rules} targetPct={plan.targetPct} onChange={(r) => setPlan({ ...plan, rules: r })} />}
                   {savePlan.error && <p className="text-xs text-bear">{(savePlan.error as Error).message}</p>}
                 </div>
               </div>
