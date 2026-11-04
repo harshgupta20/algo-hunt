@@ -8,8 +8,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { CalendarEntry, PaperTrade, StrategyDefinition } from '../../src/shared/v2';
+import { stopNow } from '../../src/shared/v2';
 import { calendars } from '../../src/server/v2/calendar/MarketCalendar';
 import { lastPaperSyncPoint, nextPaperSyncPoint } from '../../src/server/v2/paper/paperSync';
+import { PaperTrader, paperHit } from '../../src/server/v2/paper/PaperTrader';
 import { RuntimeV2Store, createRuntimeState } from '../../src/server/v2/persistence/RuntimeV2Store';
 import type { V2Store } from '../../src/server/v2/persistence/V2Store';
 import { MemoryV2Store, cond, config, field, fut, ist, legSeries, num, strategy } from '../helpers/v2Fakes';
@@ -141,6 +143,38 @@ describe('paper trades between end-of-day syncs', () => {
     expect(await again.syncPaper()).toMatchObject({ saved: 1 });
     expect(inner.data.paperTrades.find((t) => t.id === m.id)).toMatchObject({ status: 'CLOSED', netPnl: 10 });
     expect(inner.data.paperTrades).toHaveLength(3);
+  });
+
+  it('a trade that is trailing stays trailing across a restart: the stop-loss stays void, the rules wait for candles after it began', async () => {
+    const { clock, open, rt, store, nifty, draft } = await setup();
+    clock.now = ist(D, '10:00');
+    const stopWhen = cond(field(legSeries('A')), 'LT', num(1));
+    const t = (await store.paper.insertTrade({
+      ...draft(nifty.id),
+      side: 'BUY',
+      targetPrice: 110,
+      stopPrice: 90,
+      peakPrice: 100,
+      quantity: 1,
+      conditions: { stopWhen, legDefs: DEF.legs, legs: {} },
+      terms: { squareOff: false, targetPct: 10, stopPct: 10, slippagePct: 0, charges: false, trailFromTarget: true },
+    } as unknown as Omit<PaperTrade, 'id'>))!;
+    // 10:20: the price reaches the target — trailing starts.
+    const trailingAt = new Date(ist(D, '10:20')).toISOString();
+    await store.paper.updateMarks([{ id: t.id, lastPrice: 111, at: trailingAt, peakPrice: 111, trailingAt }]);
+    // A later mark that also says "trailing started" (a stale copy) doesn't move it.
+    await store.paper.updateMarks([{ id: t.id, lastPrice: 111, at: trailingAt, trailingAt: new Date(ist(D, '10:25')).toISOString() }]);
+    rt.paperBook!.flush();
+    // The app restarts.
+    const again = open();
+    const after = (await again.paper.listOpen())[0]!;
+    expect(after).toMatchObject({ peakPrice: 111, trailingAt });
+    const prices = new Map([[after.instrument.token, 85]]);
+    const trader = new PaperTrader({ store: again, now: () => ist(D, '10:30'), prices: async () => prices });
+    expect(stopNow(after)).toBeNull();
+    expect(paperHit(after, 85)).toBeNull(); // below the old stop-loss (90): it no longer applies
+    expect((await trader.monitor(calendars([]))).closed).toEqual([]);
+    expect((await again.paper.listOpen())[0]).toMatchObject({ status: 'OPEN', lastPrice: 85, trailingAt });
   });
 
   it('closes a slot’s old trade before its new one opens, and leaves out trades of a connection deleted meanwhile', async () => {

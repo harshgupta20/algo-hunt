@@ -245,6 +245,9 @@ slippage on. Both backtests trade the same plan.
     the ₹90 stop-loss counts; from ₹120 the trade runs as long as each candle closes above the previous one's low.
   - The rules are checked at candle closes, so after the target a sharp fall inside a candle is caught at that
     candle's close.
+  - Per connection (📄 chip) Trailing SL can be switched on or off; the rules are the strategy's, so it can be
+    switched on only when the strategy has trailing rules. A connection without a target trades normally.
+  - Trades opened before 4 Nov keep the rules they were opened with.
 - **Trailing rules** (with Trailing SL, per group — shown only while it's on): **Close the trade when…** — the
   strategy's condition builder (any leg, timeframe, indicator; AND / OR). Quick buttons add the usual ones on the
   traded contract: price crosses **SMA**, the **previous candle's low** broken, the **3-candle low** broken, **RSI

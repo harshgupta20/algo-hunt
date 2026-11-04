@@ -46,6 +46,29 @@ describe('trade path', () => {
 });
 
 describe('trade story', () => {
+  it('best and worst match the exit: a target fill caps the best, a stop gap’s fill caps the worst', () => {
+    // Up a point a minute; the 10:10 minute's high (110.5) passes the 110 target — filled at 110.
+    const up = minutes('10:00', 11, (j) => [100 + j, 100.5 + j, 99.8 + j, 100.4 + j]);
+    const won = trade('BUY', { targetPct: 10, stopPct: 5 });
+    const target: PaperTrade = { ...won, status: 'CLOSED', peakPrice: 109.5, exitAt: new Date(ist(D, '10:11')).toISOString(), exitPrice: 110, exitReason: 'TARGET' };
+    expect(tradeStory(target, tradePath(up, ist(D, '10:00'), ist(D, '10:11'))!).best).toMatchObject({ price: 110, pnl: 750 });
+    // Down, then a minute that opens at 94 below the 95 stop (filled at 94) and trades to 93 after.
+    const down = [...minutes('10:00', 3, (j) => [100 - j, 100.2 - j, 99.5 - j, 99 - j]), ...minutes('10:03', 1, () => [94, 94.5, 93, 93.5])];
+    const stopped: PaperTrade = { ...won, status: 'CLOSED', peakPrice: 100.2, exitAt: new Date(ist(D, '10:04')).toISOString(), exitPrice: 94, exitReason: 'STOP' };
+    expect(tradeStory(stopped, tradePath(down, ist(D, '10:00'), ist(D, '10:04'))!).worst).toMatchObject({ price: 94, pnl: -450 });
+  });
+
+  it('an open trade’s trailing starts when the trade says so — not when a 1-minute high touched the target', () => {
+    // A 1-minute high reaches 110.5 (past the 110 target), but the trade never saw it (its best is 109): not trailing.
+    const ms = minutes('10:00', 12, (j) => [100 + j, 100.5 + j, 99.8 + j, 100.4 + j]);
+    const base = trade('BUY', { trailing: true, targetPct: 10, stopPct: 5 });
+    const t: PaperTrade = { ...base, terms: { ...base.terms, trailFromTarget: true }, conditions: { stopWhen: cond(field(legSeries('A')), 'LT', num(1)), legDefs: S.legs, legs: { A: nifty } }, peakPrice: 109 };
+    const story = tradeStory(t, tradePath(ms, ist(D, '10:00'), null)!);
+    expect(story.trailingFrom).toBeNull();
+    expect(story.bars.every((b) => b.stop?.reason === 'STOP' && b.stop.price === 95)).toBe(true);
+    expect(story.finalStop).toEqual({ price: 95, reason: 'STOP' });
+  });
+
   it('an older sell with a trailing %: the stop follows the lowest price down, the story says where it ended', () => {
     // Ten minutes down to a low of 89.9, then a minute up through the trail.
     const ms = [...minutes('10:00', 10, (j) => [100 - j, 100.1 - j, 98.9 - j, 99 - j]), ...minutes('10:10', 1, () => [90, 92, 89.95, 91.8])];
@@ -66,7 +89,8 @@ describe('trade story', () => {
   it('a buy with Trailing SL: the stop-loss until the target, none after it — the trailing rules close it', () => {
     const ms = minutes('10:00', 20, (j) => [100 + j, 101 + j, 99.5 + j, 100.8 + j]);
     const conditions = { stopWhen: cond(field(legSeries('A')), 'LT', num(1)), legDefs: S.legs, legs: { A: nifty } };
-    const open = { ...trade('BUY', { trailing: true, targetPct: 10, stopPct: 5 }), conditions };
+    const base = trade('BUY', { trailing: true, targetPct: 10, stopPct: 5 });
+    const open = { ...base, conditions, terms: { ...base.terms, trailFromTarget: true } };
     const story = tradeStory({ ...open, peakPrice: 119, trailingAt: new Date(ist(D, '10:09')).toISOString(), lastPrice: 118.8 }, tradePath(ms, ist(D, '10:00'), null)!);
     // The 10:09 minute's high (110) reaches the target 110: the stop-loss (95) until then, none from 10:10.
     expect(story.trailingFrom).toEqual({ at: ist(D, '10:09'), bar: 9 });

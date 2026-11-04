@@ -437,6 +437,10 @@ export const H = {
     storyGiven: { title: 'Given back', body: 'Profit at the best price minus the profit at the exit (before charges) — what the exit let go.' },
     storyStop: { title: 'The stop', body: 'The price stop when the trade closed (or now, while open): the stop-loss until the target. With Trailing SL there is none after the target — the trailing rules close it.' },
     storyBars: { title: 'Bar size', body: 'Minutes of trading in each bar of the chart — 1-minute candles merged so the whole trade fits. The trade itself was followed minute by minute (live: every price).' },
+    trailingNoRules: {
+      title: 'Trailing SL',
+      body: 'Trailing SL closes a trade by its trailing rules after the target — and this strategy has none yet. Add them in the strategy’s trade plan (Strategies → ✎ → 4 · Paper trading: switch Trailing SL on there to see them); then any connection can switch it on.',
+    },
     trailsAtTarget: { title: 'Trailing SL on', body: 'The stop-loss guards the trade until the target. At the target the trade isn’t closed: your trailing rules take over, and the stop-loss and target no longer apply.' },
     watch: {
       title: 'Watch window',

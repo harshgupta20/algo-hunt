@@ -90,10 +90,17 @@ export const PAPER_DEFAULTS = {
 } as const;
 
 /**
- * The exit settings a trade was opened with (later plan edits don't change open trades). `trailPct`: a trailing stop %
- * — only on trades opened while plans had one (2026-11-03 / 04); it still trails them.
+ * The exit settings a trade was opened with (later plan edits don't change open trades).
+ *   trailFromTarget  opened with Trailing SL on (since 2026-11-04): the target starts its trailing rules instead of
+ *                    closing it, and from there the stop-loss no longer applies
+ *   trailPct         a trailing stop % — only on trades opened while plans had one (2026-11-03 / 04)
+ * Trades without `trailFromTarget` keep the rules they were opened under: their trailing % and rules run from the
+ * entry (the tighter stop counting) and the target closes them.
  */
-export type PaperTerms = Pick<PaperPlan, 'targetPct' | 'stopPct' | 'squareOff' | 'squareOffNse' | 'squareOffMcx' | 'exitOnOpposite' | 'charges' | 'slippagePct'> & { trailPct?: number | null };
+export type PaperTerms = Pick<PaperPlan, 'targetPct' | 'stopPct' | 'squareOff' | 'squareOffNse' | 'squareOffMcx' | 'exitOnOpposite' | 'charges' | 'slippagePct'> & {
+  trailFromTarget?: boolean;
+  trailPct?: number | null;
+};
 
 /** Settings a connection can change from its strategy's plan (absent = the strategy's value; null target / stop = none). */
 export const PAPER_OVERRIDE_KEYS = [
@@ -123,8 +130,8 @@ export function normalizePlan(plan: PaperPlan): PaperPlan {
   const out = { ...PAPER_DEFAULTS, ...plan };
   // Target conditions were removed (2026-11-04): the target is where trailing starts instead.
   if (out.rules.some((r) => 'targetWhen' in r)) out.rules = out.rules.map(({ targetWhen: _t, ...r }: PaperRule & { targetWhen?: unknown }) => r);
-  // Before the Trailing SL switch (2026-11-04) trailing rules switched trailing on; the trailing % was removed.
-  if (!('trailing' in plan)) out.trailing = planConditions(out.rules).length > 0;
+  // Before the Trailing SL switch (2026-11-04) trailing rules switched trailing on (it needs a target now); the trailing % was removed.
+  if (!('trailing' in plan) || plan.trailing === undefined) out.trailing = planConditions(out.rules).length > 0 && out.targetPct !== null;
   if ('trailPct' in out) delete (out as { trailPct?: unknown }).trailPct;
   return out;
 }
@@ -400,11 +407,11 @@ const nearTick = (n: number, tick: number) => {
   return Math.round(Math.round(n / t) * t * 100) / 100;
 };
 
-type TrailFields = Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice' | 'targetPrice' | 'terms' | 'conditions'>;
+type TrailFields = Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice' | 'targetPrice' | 'terms'>;
 
-/** The trade trails past its target (opened with Trailing SL on: trailing rules — or an older trade's trailing % — and a target) — reaching the target starts trailing instead of closing it. */
-export function trailsPastTarget(t: Pick<PaperTrade, 'targetPrice' | 'terms' | 'conditions'>): boolean {
-  return t.targetPrice !== null && ((t.terms.trailPct ?? null) !== null || hasCondition(t.conditions?.stopWhen));
+/** The trade trails past its target (opened with Trailing SL on, with a target) — reaching the target starts its trailing rules instead of closing it. */
+export function trailsPastTarget(t: Pick<PaperTrade, 'targetPrice' | 'terms'>): boolean {
+  return t.targetPrice !== null && t.terms.trailFromTarget === true;
 }
 
 /** The price is at or past the trade's target. */
@@ -412,13 +419,13 @@ export function atTarget(t: Pick<PaperTrade, 'side' | 'targetPrice'>, price: num
   return t.targetPrice !== null && (t.side === 'BUY' ? price >= t.targetPrice : price <= t.targetPrice);
 }
 
-/** Trailing is on: no target to wait for, or the price reached it (the best price since entry is at or past it). */
+/** Trailing is on: a trade that trails past its target once the price reached it (the best price since entry is at or past it); older trades from the entry. */
 export function trailing(t: TrailFields): boolean {
-  return t.targetPrice === null || atTarget(t, t.peakPrice ?? t.entryPrice);
+  return !trailsPastTarget(t) || atTarget(t, t.peakPrice ?? t.entryPrice);
 }
 
 /** An older trade's trailing stop % level now (trades opened while plans had one) — null without one, or while the trade waits for its target. */
-export function trailLevel(t: Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice' | 'targetPrice' | 'terms' | 'conditions' | 'instrument'>): number | null {
+export function trailLevel(t: Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice' | 'targetPrice' | 'terms' | 'instrument'>): number | null {
   const pct = t.terms.trailPct ?? null;
   if (pct === null || !trailing(t)) return null;
   const peak = t.peakPrice ?? t.entryPrice;
@@ -428,9 +435,9 @@ export function trailLevel(t: Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPric
 /**
  * The stop a trade has now. Waiting for its target: the fixed stop-loss. Past the target (Trailing SL): none — the
  * stop-loss no longer applies and the trailing rules close it (an older trade's trailing % stop, when it has one).
- * Older trades without a target that trail by % from the entry: the tighter of the two (the fixed one on a tie).
+ * Older trades that trail by % from the entry: the tighter of the two (the fixed one on a tie).
  */
-export function stopNow(t: Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice' | 'targetPrice' | 'terms' | 'conditions' | 'instrument' | 'stopPrice'>): { price: number; reason: 'STOP' | 'TRAIL' } | null {
+export function stopNow(t: Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice' | 'targetPrice' | 'terms' | 'instrument' | 'stopPrice'>): { price: number; reason: 'STOP' | 'TRAIL' } | null {
   const trail = trailLevel(t);
   if (trailsPastTarget(t) && trailing(t)) return trail === null ? null : { price: trail, reason: 'TRAIL' };
   const fixed = t.stopPrice;
@@ -548,7 +555,8 @@ export const paperPlanSchema = z
       .max(8),
     targetPct: target,
     stopPct: stop,
-    trailing: z.boolean().default(D.trailing),
+    // Absent (an older client): `normalizePlan` infers it, as for a saved plan.
+    trailing: z.boolean().optional(),
     watch: z.boolean().default(D.watch),
     watchNseFrom: clock.default(D.watchNseFrom),
     watchNseTo: clock.default(D.watchNseTo),

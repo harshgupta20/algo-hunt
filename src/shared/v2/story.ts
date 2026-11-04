@@ -5,7 +5,7 @@
  * candles; a paper trade's path is read from Kite's 1-minute candles when its story is opened.
  */
 import type { PaperTrade } from './paper';
-import { atTarget, stopNow, trailsPastTarget } from './paper';
+import { stopNow, trailsPastTarget } from './paper';
 
 /** [open time (epoch s), open, high, low, close] */
 export type PathBar = [number, number, number, number, number];
@@ -128,37 +128,42 @@ export function tradeStory(t: PaperTrade, path: TradePath): TradeStory {
   const bars: StoryBar[] = [];
   const moves: StopMove[] = [];
   let peak = t.entryPrice;
-  let trailingFrom: TradeStory['trailingFrom'] = null;
   let best: TradeStory['best'] = null;
   let worst: TradeStory['worst'] = null;
+  // When trailing started is the trade's own record — a backup scan that never saw the price at the target didn't
+  // start it, however high a 1-minute candle went. It is in force from the bar after the one it started in.
+  const startMs = trails && t.trailingAt ? Date.parse(t.trailingAt) : null;
+  let startBar = -1;
+  if (startMs !== null) {
+    startBar = 0;
+    for (let i = 0; i < path.held; i++) if (path.bars[i]![0] * 1000 <= startMs) startBar = i;
+  }
+  const trailingFrom: TradeStory['trailingFrom'] = startMs === null ? null : { at: startMs, bar: startBar };
+  // A closed trade got no further than its own best (or its fill at the target); a stop's fill is the worst it took —
+  // what the exit minute did after the fill doesn't count.
+  const topCap = closed && t.peakPrice !== undefined ? (t.exitPrice !== null && better(t.exitPrice, t.peakPrice) ? t.exitPrice : t.peakPrice) : null;
+  const stopFill = closed && (t.exitReason === 'STOP' || t.exitReason === 'TRAIL') ? t.exitPrice : null;
+  const stopAt = (i: number) => {
+    if (i === path.held - 1 && closed) return finalStop; // the exit bar: the trade's own stop (its best price is exact to the minute)
+    if (!trails) return stopNow({ ...t, peakPrice: peak });
+    const on = i > startBar && startBar >= 0;
+    return stopNow({ ...t, peakPrice: on ? (better(peak, t.targetPrice!) ? peak : t.targetPrice!) : t.entryPrice });
+  };
   path.bars.forEach(([sec, open, high, low, close], i) => {
     const at = sec * 1000;
     const after = i >= path.held;
-    // The exit bar's stop is the trade's own (its best price is exact to the minute); the others follow the bars before.
-    const stop = after ? (bars.at(-1)?.stop ?? null) : i === path.held - 1 && closed ? finalStop : stopNow({ ...t, peakPrice: peak });
+    const stop = after ? (bars.at(-1)?.stop ?? null) : stopAt(i);
     const prev = bars.at(-1);
-    if (!after && prev && !sameStop(prev.stop, stop) && stop)
-      moves.push({
-        bar: i,
-        at,
-        best: i === path.held - 1 && closed ? (t.peakPrice ?? peak) : peak,
-        from: prev.stop,
-        to: stop,
-      });
+    if (!after && prev && !sameStop(prev.stop, stop) && stop) moves.push({ bar: i, at, best: i === path.held - 1 && closed ? (t.peakPrice ?? peak) : peak, from: prev.stop, to: stop });
     bars.push({ at, open, high, low, close, stop, after });
     if (after) return;
-    // A closed trade's best is its own (the exit minute's range came after the stop was hit — it doesn't count).
     const reach = buy ? high : low;
-    const top = closed && t.peakPrice !== undefined && better(reach, t.peakPrice) ? t.peakPrice : reach;
-    const bottom = buy ? low : high;
+    const top = topCap !== null && better(reach, topCap) ? topCap : reach;
+    const dip = buy ? low : high;
+    const bottom = stopFill !== null && i === path.held - 1 && better(stopFill, dip) ? stopFill : dip;
     if (!best || better(top, best.price)) best = { price: top, at, pnl: pnlAt(top) };
     if (!worst || better(worst.price, bottom)) worst = { price: bottom, at, pnl: pnlAt(bottom) };
     if (better(top, peak)) peak = top;
-    if (trails && !trailingFrom && atTarget(t, peak))
-      trailingFrom = {
-        at: t.trailingAt ? Date.parse(t.trailingAt) : at,
-        bar: i,
-      };
   });
   const tail = path.bars.slice(path.held);
   return {

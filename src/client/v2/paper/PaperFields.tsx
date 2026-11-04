@@ -11,7 +11,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { RotateCcw, Save, X } from 'lucide-react';
 import clsx from 'clsx';
 import type { PaperOverride, PaperOverrideKey, PaperPlan } from '@/shared/v2';
-import { PAPER_DEFAULTS, diffOverride, effectivePlan, trailingIssue, watchWindowIssue } from '@/shared/v2';
+import { PAPER_DEFAULTS, diffOverride, effectivePlan, planConditions, trailingIssue, watchWindowIssue } from '@/shared/v2';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { InlineSpinner } from '../../components/loaders';
 import { v2Api } from '../api';
@@ -62,6 +62,7 @@ export function PaperTermsFields({
   hasGroups,
   sizing = { lots: true, cash: true },
   nseOnly = false,
+  rulesInStrategy = false,
 }: {
   value: PaperPlan;
   onChange: (p: PaperPlan) => void;
@@ -69,12 +70,16 @@ export function PaperTermsFields({
   hasGroups: boolean;
   sizing?: { lots: boolean; cash: boolean };
   nseOnly?: boolean;
+  /** A connection's values: its trailing rules come from the strategy's trade plan (not editable here). */
+  rulesInStrategy?: boolean;
 }) {
   const set = (patch: Partial<PaperPlan>) => onChange({ ...value, ...patch });
   const own = (...keys: PaperOverrideKey[]) => !!base && keys.some((k) => value[k] !== base[k]);
   const reset = (...keys: PaperOverrideKey[]) => base && set(Object.fromEntries(keys.map((k) => [k, base[k]])) as Partial<PaperPlan>);
   const windowIssue = watchWindowIssue(nseOnly ? { ...value, watchMcxFrom: '00:00', watchMcxTo: '23:59' } : value);
-  const trailIssue = trailingIssue(value);
+  // A connection can switch Trailing SL on only when its strategy has trailing rules to trail by.
+  const noRules = rulesInStrategy && !planConditions(value.rules).length;
+  const trailIssue = noRules && value.trailing ? null : trailingIssue(value);
   // Switching Trailing SL on fills in a target to start at.
   const setTrailing = (trailing: boolean) => set({ trailing, ...(trailing && value.targetPct === null ? { targetPct: PAPER_DEFAULTS.targetPct } : {}) });
   return (
@@ -99,7 +104,7 @@ export function PaperTermsFields({
           <PctField label="Stop-loss %" value={value.stopPct} fallback={PAPER_DEFAULTS.stopPct} max={100} onChange={(stopPct) => set({ stopPct })} />
         </Field>
         <Field label="Trailing SL" help={H.paper.trailing} own={own('trailing')} onReset={() => reset('trailing')}>
-          <Toggle checked={value.trailing} onChange={setTrailing} label="Trail from the target" help={H.paper.trailing} />
+          <Toggle checked={value.trailing} onChange={setTrailing} label="Trail from the target" help={noRules ? H.paper.trailingNoRules : H.paper.trailing} disabled={noRules && !value.trailing} />
         </Field>
       </div>
       {value.trailing && value.targetPct !== null && (
@@ -111,6 +116,7 @@ export function PaperTermsFields({
         </Tooltip>
       )}
       {trailIssue && <p className="text-[11px] text-warn">{trailIssue}</p>}
+      {noRules && <p className="text-[11px] text-slate-500">{value.trailing ? 'Trailing SL needs trailing rules — this strategy has none: add them in its trade plan (Strategies → ✎ → 4 · Paper trading), or switch Trailing SL off here.' : 'Trailing SL: add trailing rules in the strategy’s trade plan first (Strategies → ✎ → 4 · Paper trading).'}</p>}
       <div className="flex flex-wrap items-end gap-2">
         <Field label="Watch" help={H.paper.watch} own={own('watch')} onReset={() => reset('watch')}>
           <Toggle checked={value.watch} onChange={(watch) => set({ watch })} label="Only between set times" help={H.paper.watch} />
@@ -230,7 +236,7 @@ export function PaperConnectionEditor({
         <Toggle checked={value.enabled} onChange={(enabled) => setValue({ ...value, enabled })} label="Paper trade this connection" help={H.paper.connectionOn} />
         <span className="text-[11px] text-slate-500">{count ? `${count} own value${count === 1 ? '' : 's'} — the rest follow the strategy` : 'Follows the strategy’s paper settings'}</span>
       </div>
-      {value.enabled && <PaperTermsFields value={value} onChange={setValue} base={strategyPlan} hasGroups={hasGroups} sizing={sizing} />}
+      {value.enabled && <PaperTermsFields value={value} onChange={setValue} base={strategyPlan} hasGroups={hasGroups} sizing={sizing} rulesInStrategy />}
       <p className="text-[11px] text-slate-500">
         Which leg each group trades (Buy / Sell) and its trailing rules are set per strategy (strategy editor, step 4). Changes apply to new trades; the watch window applies to this connection’s alerts too.
       </p>

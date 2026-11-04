@@ -177,8 +177,8 @@ export function buildTrade(x: {
   const lots = stock ? Math.max(1, Math.floor(plan.cashPerTrade / perLot)) : Math.max(1, Math.floor(plan.lotsPerTrade));
   const pct = (n: number | null, up: boolean) => (n === null ? null : toTick(entryPrice * (1 + (up ? n : -n) / 100), inst.tickSize));
   const at = new Date(x.at).toISOString();
-  // Trailing SL off: no trailing rules on the trade (they stay in the plan).
-  const trails = plan.trailing ?? false;
+  // Trailing SL needs a target to start at and this group's trailing rules; otherwise a normal trade (the rules stay in the plan).
+  const trails = !!plan.trailing && plan.targetPct !== null && !!x.conditions;
   return {
     ...x.ids,
     group: x.group?.id ?? null,
@@ -209,6 +209,7 @@ export function buildTrade(x: {
       exitOnOpposite: plan.exitOnOpposite,
       charges: plan.charges,
       slippagePct: plan.slippagePct,
+      ...(trails ? { trailFromTarget: true } : {}),
     },
     status: 'OPEN',
     lastPrice: ref,

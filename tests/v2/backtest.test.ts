@@ -101,6 +101,41 @@ describe('backtest', () => {
     expect((await run({ trailing: false })).trades[0]).toMatchObject({ exitReason: 'TARGET', exitAt: new Date(ist(D, '10:25')).toISOString() });
   });
 
+  it('Trailing SL: before the target the stop-loss still closes the trade', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(20, 25_120, -10)); // falling: the 0.5 % stop-loss (24,994.4) is crossed in the 10:12 minute
+    const never = cond(field(legSeries('A')), 'LT', num(20_000));
+    const [t] = (await svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: withConditions({ stopWhen: never }) })).trades;
+    expect(t).toMatchObject({ exitReason: 'STOP', exitPrice: 24_994.4, exitAt: new Date(ist(D, '10:13')).toISOString() });
+    expect(t!.trailingAt).toBeUndefined();
+  });
+
+  it('Trailing SL: a stop-loss and the target in the same minute — the stop counts, trailing never starts', async () => {
+    const m = risingMinutes(5);
+    m[1] = { ...m[1]!, high: 25_500, low: 24_900 }; // through the stop-loss (24,994.4) and the target (25,371.2) in one minute
+    provider.set(niftyFut, '1m', m);
+    const never = cond(field(legSeries('A')), 'LT', num(20_000));
+    const [t] = (await svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: withConditions({ stopWhen: never }) })).trades;
+    expect(t).toMatchObject({ exitReason: 'STOP', exitAt: new Date(ist(D, '10:02')).toISOString() });
+    expect(t!.trailingAt).toBeUndefined();
+  });
+
+  it('Trailing SL on a sell: the target below the entry starts the rules; the trade closes on the rule after it', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(60, 25_120, -10)); // falling: the sell's 1 % target (24,868.8) is reached in the 10:24 minute
+    const above = cond(field(legSeries('A')), 'GT', num(25_122)); // 15-minute closes: first above at the 10:45 close
+    const sell = plan({ trailing: true, rules: [{ group: null, leg: 'A', side: 'SELL', stopWhen: above }] });
+    const [t] = (await svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: sell })).trades;
+    expect(t).toMatchObject({ side: 'SELL', targetPrice: 24_868.8, stopPrice: 25_245.6, trailingAt: new Date(ist(D, '10:24')).toISOString() });
+    expect(t).toMatchObject({ exitReason: 'STOP_RULE', exitAt: new Date(ist(D, '10:45')).toISOString(), exitPrice: 24_670, grossPnl: (25_120 - 24_670) * 75 });
+    expect(tradeStory(t!, t!.path!).best).toMatchObject({ price: 24_668 }); // the lowest low while held (10:44)
+  });
+
+  it('Trailing SL held overnight (no square-off): with no rule coming true it runs to the end of the test', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    const never = cond(field(legSeries('A')), 'LT', num(20_000));
+    const [t] = (await svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: withConditions({ stopWhen: never }, { squareOff: false }) })).trades;
+    expect(t).toMatchObject({ exitReason: 'END', exitPrice: 25_520, trailingAt: new Date(ist(D, '10:24')).toISOString() });
+  });
+
   it('Trailing SL needs a target to start at and a trailing rule to trail by', async () => {
     provider.set(niftyFut, '1m', risingMinutes(10));
     const rule = cond(field(legSeries('A')), 'LT', num(20_000));
@@ -226,6 +261,8 @@ describe('backtest', () => {
     const bad = withConditions({ stopWhen: cond(field(legSeries('D')), 'GT', num(1)) });
     await expect(svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: bad })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^Trailing rules: /) });
     await expect(svc.savePaperPlan(strategyId, bad)).rejects.toMatchObject({ status: 400 });
+    // Also while Trailing SL is off — the rules are kept, and a connection could switch it on.
+    await expect(svc.savePaperPlan(strategyId, { ...bad, trailing: false })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^Trailing rules: /) });
   });
 
   it('N-candle low / high: the previous N candles, not the current one', () => {

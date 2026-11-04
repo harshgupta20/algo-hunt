@@ -924,7 +924,7 @@ export class RuntimeV2Store implements V2Store {
       for (const m of marks) {
         const t = open.get(m.id);
         if (!t) continue;
-        open.set(m.id, { ...t, lastPrice: m.lastPrice, lastPriceAt: m.at, ...(m.peakPrice !== undefined ? { peakPrice: m.peakPrice } : {}), ...(m.trailingAt ? { trailingAt: m.trailingAt } : {}) });
+        open.set(m.id, { ...t, lastPrice: m.lastPrice, lastPriceAt: m.at, ...(m.peakPrice !== undefined ? { peakPrice: m.peakPrice } : {}), ...(m.trailingAt && !t.trailingAt ? { trailingAt: m.trailingAt } : {}) });
         this.book.mark(m.id, m.lastPrice, m.at, m.peakPrice, m.trailingAt);
       }
     },

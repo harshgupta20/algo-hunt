@@ -35,7 +35,7 @@ import { buildSeries } from '../engine/candles';
 import { evaluateUnit, type SeriesLookup, type SeriesResult, type UnitEvalInput } from '../engine/evaluator';
 import { seriesKey, seriesOf } from '../engine/series';
 import type { V2Store } from '../persistence/V2Store';
-import { PaperTrader, markChanges, paperHit, type PaperMark } from '../paper/PaperTrader';
+import { PaperTrader, markChanges, newPeak, paperHit, type PaperMark } from '../paper/PaperTrader';
 import { commitUnit, previousResult, type Clock, type CommitDeps, type CommitStats, type UnitTarget } from '../scanner/commit';
 import { clockFor } from '../scanner/V2Scanner';
 import { resolveUnits } from '../universe/resolve';
@@ -721,7 +721,8 @@ export class LiveWorker {
       }
       const { open, closed } = await this.paper.monitor(this.ctx!.cals);
       const next = new Map<number, PaperTrade[]>();
-      for (const t of open) next.set(t.instrument.token, [...(next.get(t.instrument.token) ?? []), t]);
+      // Ticks that came in while the trades were read aren't saved yet: keep what they saw.
+      for (const t of open.map((x) => this.withTicks(x))) next.set(t.instrument.token, [...(next.get(t.instrument.token) ?? []), t]);
       const streamed = new Set(this.candles.tokens());
       this.paperOpen = next;
       if ([...next.keys()].some((t) => !streamed.has(t))) this.planAt = -Infinity;
@@ -729,6 +730,15 @@ export class LiveWorker {
     } catch (err) {
       this.error(`Checking paper trades failed: ${msg(err)}`);
     }
+  }
+
+  /** A trade with what its ticks saw since the last save — a better best price, an earlier start of trailing — so a stale copy never moves them back. */
+  private withTicks(t: PaperTrade): PaperTrade {
+    const m = this.paperPeaks.get(t.id);
+    if (!m) return t;
+    const peak = m.peakPrice === undefined ? undefined : newPeak(t, m.peakPrice);
+    const since = m.trailingAt && (!t.trailingAt || m.trailingAt < t.trailingAt) ? m.trailingAt : undefined;
+    return peak === undefined && since === undefined ? t : { ...t, ...(peak !== undefined ? { peakPrice: peak } : {}), ...(since ? { trailingAt: since } : {}) };
   }
 
   /** Stop-loss / trailing stop / target on each tick of a contract with an open paper trade; new best prices move the trailing stop, the target starts it. */
@@ -743,7 +753,7 @@ export class LiveWorker {
           const at = new Date(this.now()).toISOString();
           const changes = markChanges(trade, tick.price, at);
           if (changes.peakPrice !== undefined || changes.trailingAt) {
-            const next = { ...trade, ...changes };
+            const next = this.withTicks({ ...trade, ...changes });
             list[i] = next;
             this.paperPeaks.set(trade.id, { id: trade.id, lastPrice: tick.price, at, ...(next.peakPrice !== undefined ? { peakPrice: next.peakPrice } : {}), ...(next.trailingAt ? { trailingAt: next.trailingAt } : {}) });
           }

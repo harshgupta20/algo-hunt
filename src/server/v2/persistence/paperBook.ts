@@ -72,7 +72,7 @@ export class PaperBook {
   mark(id: string, lastPrice: number, lastPriceAt: string, peakPrice?: number, trailingAt?: string): void {
     const was = this.marks.get(id);
     const peak = peakPrice ?? was?.peakPrice;
-    const since = trailingAt ?? was?.trailingAt;
+    const since = was?.trailingAt ?? trailingAt; // the first start of trailing is kept
     const m: Mark = { lastPrice, lastPriceAt, ...(peak !== undefined ? { peakPrice: peak } : {}), ...(since ? { trailingAt: since } : {}) };
     this.marks.set(id, m);
     const e = this.entries.get(id);

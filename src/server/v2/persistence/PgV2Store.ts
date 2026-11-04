@@ -739,7 +739,7 @@ export class PgV2Store implements V2Store {
       await this.pool.query(
         `UPDATE v2_paper_trades t SET trade = t.trade || jsonb_build_object('lastPrice', m.p, 'lastPriceAt', m.at)
            || CASE WHEN m.pk IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('peakPrice', m.pk) END
-           || CASE WHEN m.ta IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('trailingAt', m.ta) END
+           || CASE WHEN m.ta IS NULL OR t.trade ? 'trailingAt' THEN '{}'::jsonb ELSE jsonb_build_object('trailingAt', m.ta) END
          FROM (SELECT unnest($1::uuid[]) AS id, unnest($2::float8[]) AS p, unnest($3::text[]) AS at, unnest($4::float8[]) AS pk, unnest($5::text[]) AS ta) m
          WHERE t.id = m.id AND t.status = 'OPEN'`,
         [marks.map((m) => m.id), marks.map((m) => m.lastPrice), marks.map((m) => m.at), marks.map((m) => m.peakPrice ?? null), marks.map((m) => m.trailingAt ?? null)],
