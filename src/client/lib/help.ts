@@ -69,6 +69,53 @@ export const HELP = {
     play: { title: 'Play sound', body: 'Your browser blocked the sound because the page hasn’t been clicked yet — press to hear the alarm (sound works from now on).' },
   },
 
+  /** Column filters and sorting — the same in every table of the app. */
+  table: {
+    sort: {
+      title: 'Sort by this column',
+      body: 'First click: biggest / newest first (A → Z for words). Second click: the other way. Third click: back to the original order.',
+    },
+    filter: {
+      title: 'Filter this column',
+      body: 'Pick values, search text, a number range, dates, time of day or weekdays — the table updates as you choose. Filters on several columns combine.',
+      note: 'A highlighted funnel means this column is filtering the table.',
+    },
+    sortUp: { title: 'Sort ascending', body: 'Smallest, oldest or A first. Click again to stop sorting by it.' },
+    sortDown: { title: 'Sort descending', body: 'Biggest, newest or Z first. Click again to stop sorting by it.' },
+    contains: { title: 'Contains', body: 'Show only rows whose value contains this text (any case). It also narrows the value list below.' },
+    find: { title: 'Find a value', body: 'Narrow the list of values below. It doesn’t filter the table by itself — tick values for that.' },
+    values: {
+      title: 'Pick values',
+      body: 'Tick values to show only those rows — or hide them, with “Hide”. Nothing ticked = every value.',
+      note: 'The number is how many rows have that value with the other columns’ filters applied.',
+    },
+    showOnly: { title: 'Show only', body: 'Show only rows with a ticked value.' },
+    hide: { title: 'Hide', body: 'Hide rows with a ticked value; everything else stays.' },
+    pickAll: { title: 'Tick all listed', body: 'Tick every value in the list (the ones matching your search, if any).' },
+    pickNone: { title: 'Untick all', body: 'Untick every value — the column shows every value again.' },
+    op: { title: 'Comparison', body: 'How to compare: equal to, not equal to, more than, at least, less than, at most, or between two values (both included).' },
+    num: { title: 'Value', body: 'Type a number in the unit the column shows (₹, %, minutes …). Leave it empty for no limit.' },
+    above0: { title: 'Above 0', body: 'Only rows with a positive value — e.g. winning trades for a P&L column.' },
+    below0: { title: 'Below 0', body: 'Only rows with a negative value — e.g. losing trades for a P&L column.' },
+    from: { title: 'From day', body: 'First day to include (IST).' },
+    to: { title: 'To day', body: 'Last day to include (IST).' },
+    timeFrom: { title: 'From time', body: 'Earliest time of day to include (IST), on every day — e.g. 09:15 for the opening.' },
+    timeTo: { title: 'To time', body: 'Latest time of day to include (IST), on every day — e.g. 15:30 for the close.' },
+    weekday: { title: 'Weekday', body: 'Only these days of the week (IST) — e.g. expiry days. Nothing ticked = every day.' },
+    blanks: { title: 'Blank values', body: 'Rows with no value in this column (shown as —): keep them, hide them, or show only them.' },
+    clearColumn: { title: 'Clear this column', body: 'Remove this column’s filters (the sort stays).' },
+    done: { title: 'Done', body: 'Close this panel — the filter stays on. Esc or a click outside also closes it.' },
+    summary: { title: 'Column filters on', body: 'How many rows the column filters (funnels in the headers) leave. ✕ on a chip removes that filter.' },
+    chip: { title: 'Remove this filter', body: 'Take this column filter off.' },
+    clearAll: { title: 'Clear column filters', body: 'Remove every column filter of this table. The filter bar above it, if there is one, stays as it is.' },
+    partial: {
+      title: 'Only loaded rows are searched',
+      body: 'This list arrives a page at a time; the column filters search the rows loaded so far. Load more to search older ones.',
+      note: 'The filter bar above the list (period, strategy, product …) searches everything on the server.',
+    },
+    noMatch: { title: 'No rows match', body: 'Every row is hidden by the column filters. Clear them, or open a funnel to loosen one.' },
+  },
+
   settings: {
     connect: { title: 'Connect Kite', body: 'Log in to Zerodha Kite; you’re returned here automatically.' },
     reconnect: { title: 'Reconnect', body: 'Log in again to refresh the session (e.g. after switching Kite accounts).' },

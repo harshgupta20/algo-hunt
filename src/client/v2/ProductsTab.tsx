@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
-import type { ProductKind } from '@/shared/v2';
+import type { ProductKind, V2Product } from '@/shared/v2';
 import { PRODUCT_KIND_LABEL } from '@/shared/v2';
 import { Tooltip } from '../components/Tooltip';
+import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../components/table/ColumnFilters';
 import { Card, EmptyState } from '../components/ui';
 import { v2Api } from './api';
 import { ProductLegs, Segmented } from './components';
@@ -17,6 +18,36 @@ import { LoadMore, flatPages } from './LoadMore';
 /** Products per page (the next page loads as you scroll the table). */
 const PAGE = 100;
 
+const legsOf = (p: V2Product) => [...(p.hasSpot ? ['SPOT'] : []), ...(p.hasFutures ? ['FUT'] : []), ...(p.hasOptions ? ['CE', 'PE'] : [])];
+const LEG_TEXT: Record<string, string> = { SPOT: 'Spot / cash', FUT: 'Futures', CE: 'Calls (CE)', PE: 'Puts (PE)' };
+
+const COLUMNS: Column<V2Product>[] = [
+  {
+    key: 'product',
+    label: 'Product',
+    help: { title: 'Product', body: 'Symbol and name.' },
+    fields: [
+      { key: 'product', label: 'Symbol', type: 'text', value: (p) => p.symbol },
+      { key: 'name', label: 'Name', type: 'text', value: (p) => p.name },
+    ],
+  },
+  { key: 'type', label: 'Type', help: { title: 'Type', body: 'Index, stock or commodity.' }, type: 'enum', value: (p) => PRODUCT_KIND_LABEL[p.kind] },
+  { key: 'session', label: 'Session', help: { title: 'Session', body: 'NSE / BSE hours (09:15–15:30) or MCX hours (09:00–23:30).' }, type: 'enum', value: (p) => (p.market === 'MCX' ? 'MCX' : 'NSE') },
+  { key: 'legs', label: 'Legs', help: H.products.legs, type: 'enum', noSort: true, value: legsOf, display: (v) => LEG_TEXT[v] ?? v, order: ['SPOT', 'FUT', 'CE', 'PE'] },
+  { key: 'futures', label: 'Futures', help: { title: 'Futures expiries', body: 'Listed futures expiries (the next three are shown) — filter: has a future expiring in these days.' }, type: 'date', value: (p) => p.futureExpiries },
+  {
+    key: 'options',
+    label: 'Option expiries',
+    help: { title: 'Option expiries', body: 'Listed option expiries — filter: has an expiry in these days, or by how many there are.' },
+    fields: [
+      { key: 'options', label: 'Expiry', type: 'date', value: (p) => p.optionExpiries },
+      { key: 'optionCount', label: 'How many expiries', type: 'number', value: (p) => p.optionExpiries.length },
+    ],
+  },
+  { key: 'strikeStep', label: 'Strike gap', align: 'right', help: { title: 'Strike gap', body: 'Distance between neighbouring option strikes.' }, type: 'number', value: (p) => p.strikeStep },
+  { key: 'lot', label: 'Lot', align: 'right', help: { title: 'Lot size', body: 'Units per lot of its futures / options.' }, type: 'number', value: (p) => p.lotSize },
+];
+
 export function ProductsTab() {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
@@ -27,7 +58,8 @@ export function ProductsTab() {
     initialPageParam: 0,
     getNextPageParam: (page, pages) => (page.length < PAGE ? undefined : pages.length * PAGE),
   });
-  const rows = flatPages(list.data?.pages);
+  const rows = useMemo(() => flatPages(list.data?.pages), [list.data]);
+  const t = useTable(rows, COLUMNS, { partial: !!list.hasNextPage });
   const counts = useQuery({ queryKey: ['v2-products', 'counts', search], queryFn: () => v2Api.productCounts({ search: search || undefined }) });
   const c = counts.data;
   const n = (v: number | undefined) => (v === undefined ? '' : ` (${v.toLocaleString('en-IN')})`);
@@ -91,22 +123,20 @@ export function ProductsTab() {
         {list.isLoading ? (
           <SkeletonRows rows={8} />
         ) : rows.length ? (
+          <>
+          <FilterSummary table={t} noun="products" />
           <div className="overflow-x-auto max-h-[36rem]">
             <table className="w-full text-xs">
-              <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500 bg-ink-850 sticky top-0">
+              <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500 bg-ink-850 sticky top-0 z-[1]">
                 <tr>
-                  <th className="px-4 py-2">Product</th>
-                  <th className="px-4 py-2">Type</th>
-                  <th className="px-4 py-2">Session</th>
-                  <th className="px-4 py-2">Legs</th>
-                  <th className="px-4 py-2">Futures</th>
-                  <th className="px-4 py-2">Option expiries</th>
-                  <th className="px-4 py-2 text-right">Strike gap</th>
-                  <th className="px-4 py-2 text-right">Lot</th>
+                  {COLUMNS.map((c) => (
+                    <ColumnHead key={c.key} table={t} k={c.key} className="px-4 py-2" />
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-700/40">
-                {rows.map((p) => (
+                <NoMatchRow table={t} colSpan={8} />
+                {t.rows.map((p) => (
                   <tr key={p.id}>
                     <td className="px-4 py-1.5">
                       <div className="font-medium text-slate-200">{p.symbol}</div>
@@ -128,8 +158,9 @@ export function ProductsTab() {
                 ))}
               </tbody>
             </table>
-            <LoadMore hasMore={!!list.hasNextPage} loading={list.isFetchingNextPage} onMore={() => void list.fetchNextPage()} shown={rows.length} noun="products" />
+            <LoadMore hasMore={!!list.hasNextPage} loading={list.isFetchingNextPage} onMore={() => void list.fetchNextPage()} shown={rows.length} noun="products" auto={!t.active} />
           </div>
+          </>
         ) : (
           <EmptyState title="No products" hint="Connect Kite (Settings → Broker Connection) and press “Sync from Kite”." />
         )}

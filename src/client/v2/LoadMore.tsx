@@ -9,7 +9,11 @@ import { Tooltip, type TooltipContent } from '../components/Tooltip';
 import { InlineSpinner } from '../components/loaders';
 import { H } from './help';
 
-export function LoadMore({ hasMore, loading, onMore, shown, noun, help }: { hasMore: boolean; loading: boolean; onMore: () => void; shown: number; noun: string; help?: TooltipContent }) {
+/**
+ * `auto={false}`: only the button loads more — used while column filters are on, so a filter that hides most rows
+ * doesn't pull page after page from the server by itself.
+ */
+export function LoadMore({ hasMore, loading, onMore, shown, noun, help, auto = true }: { hasMore: boolean; loading: boolean; onMore: () => void; shown: number; noun: string; help?: TooltipContent; auto?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const more = useRef(onMore);
   more.current = onMore;
@@ -17,11 +21,11 @@ export function LoadMore({ hasMore, loading, onMore, shown, noun, help }: { hasM
   busy.current = loading;
   useEffect(() => {
     const el = ref.current;
-    if (!hasMore || !el || typeof IntersectionObserver === 'undefined') return;
+    if (!auto || !hasMore || !el || typeof IntersectionObserver === 'undefined') return;
     const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && !busy.current && more.current(), { rootMargin: '300px' });
     io.observe(el);
     return () => io.disconnect();
-  }, [hasMore, shown]);
+  }, [auto, hasMore, shown]);
 
   if (!hasMore) {
     if (shown < 20) return null;

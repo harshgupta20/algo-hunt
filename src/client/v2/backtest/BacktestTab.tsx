@@ -31,7 +31,8 @@ import { ConditionsEditor } from '../paper/ConditionsEditor';
 import { Sparkline } from '../paper/charts';
 import { inr, pct, pnlClass, signedInr } from '../paper/money';
 import { PaperTermsFields } from '../paper/PaperFields';
-import { ByHour, HowClosed, Panel, PnlPanel, StatCells, Th, TradeTable, download, pf, td, th, toCsv } from '../paper/PaperTab';
+import { ByHour, HowClosed, Panel, PnlPanel, StatCells, StatHeads, Th, TradeTable, download, pf, statColumns, td, th, toCsv } from '../paper/PaperTab';
+import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../../components/table/ColumnFilters';
 import { LoadMore } from '../LoadMore';
 
 /** Quick periods (days back from today). */
@@ -138,15 +139,45 @@ function ResultNotice({ r }: { r: BacktestResult }) {
   );
 }
 
+type ProductRow = BacktestResult['products'][number];
+type SkipRow = BacktestResult['skipped'][number];
+
+const PRODUCT_COLUMNS: Column<ProductRow>[] = [
+  {
+    key: 'product',
+    label: 'Product',
+    help: { title: 'Product', body: 'Open a row for the contracts it used and its data notes.' },
+    fields: [
+      { key: 'product', label: 'Product', type: 'enum', value: (p) => p.symbol },
+      { key: 'name', label: 'Name', type: 'text', value: (p) => p.name },
+      { key: 'contracts', label: 'Contracts used', type: 'text', noSort: true, value: (p) => p.contracts },
+      { key: 'data', label: 'Data', type: 'enum', noSort: true, value: (p) => (p.errors.length ? 'Data problems' : 'Complete') },
+    ],
+  },
+  { key: 'alerts', label: 'Alerts', help: H.backtest.alerts, type: 'number', value: (p) => p.alerts },
+  { key: 'skipped', label: 'Skipped', help: H.backtest.skipped, type: 'number', value: (p) => p.skipped },
+  ...statColumns<ProductRow>((p) => p.stats),
+];
+
 function Results({ r, names: known }: { r: BacktestResult; names: Map<string, string> }) {
   const names = useMemo(() => new Map([...known, [r.strategyId, r.strategyName]]), [known, r.strategyId, r.strategyName]);
   const [openRow, setOpenRow] = useState<string | null>(null);
-  const [rows, setRows] = useState(50);
   const [skippedRows, setSkippedRows] = useState(50);
   const [showSkipped, setShowSkipped] = useState(false);
   const o = r.summary.overall;
   const tone = (n: number | null | undefined) => (n === null || n === undefined || Math.abs(n) < 0.005 ? undefined : n > 0 ? 'bull' : 'bear');
-  const symbol = (id: string) => r.products.find((p) => p.productId === id)?.symbol ?? id.split(':')[1] ?? id;
+  const products = useTable(r.products, PRODUCT_COLUMNS);
+  const symbols = useMemo(() => new Map(r.products.map((p) => [p.productId, p.symbol])), [r.products]);
+  const symbol = (id: string) => symbols.get(id) ?? id.split(':')[1] ?? id;
+  const skipColumns = useMemo<Column<SkipRow>[]>(() => {
+    const symbol = (id: string) => symbols.get(id) ?? id.split(':')[1] ?? id;
+    return [
+      { key: 'at', label: 'Alert at', help: { title: 'Alert at', body: 'When the strategy fired (IST).' }, type: 'datetime', value: (s) => s.at },
+      { key: 'product', label: 'Product', help: { title: 'Product', body: 'The product the alert fired on.' }, type: 'enum', value: (s) => symbol(s.productId) },
+      { key: 'reason', label: 'Why not traded', help: H.backtest.skippedList, type: 'text', value: (s) => s.reason },
+    ];
+  }, [symbols]);
+  const skipped = useTable(r.skipped, skipColumns);
 
   return (
     <div className="flex flex-col gap-4">
@@ -192,26 +223,22 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
       </div>
 
       <Panel title="By product" help={H.backtest.byProduct} flush>
+        <FilterSummary table={products} noun="products" />
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="bg-ink-850 text-left text-[10px] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className={clsx(th, 'w-8')}>#</th>
-                <th className={th}>Product</th>
+                <ColumnHead table={products} k="product" className={th} />
                 <Th help={H.paper.trend}>Trend</Th>
-                <Th help={H.backtest.alerts}>Alerts</Th>
-                <Th help={H.backtest.skipped}>Skipped</Th>
-                <Th help={H.paper.trades}>Trades</Th>
-                <Th help={H.paper.winRate}>Won</Th>
-                <Th help={H.paper.pf}>Profit f.</Th>
-                <Th help={H.paper.expectancy}>Avg / trade</Th>
-                <Th help={H.paper.net}>Net P&L</Th>
-                <Th help={H.paper.ret}>Return</Th>
-                <Th help={H.paper.drawdown}>Drawdown</Th>
+                <ColumnHead table={products} k="alerts" className={th} />
+                <ColumnHead table={products} k="skipped" className={th} />
+                <StatHeads table={products} />
               </tr>
             </thead>
             <tbody className="divide-y divide-ink-700/50">
-              {r.products.map((p, i) => {
+              <NoMatchRow table={products} colSpan={12} />
+              {products.rows.map((p, i) => {
                 const isOpen = openRow === p.productId;
                 return (
                   <Fragment key={p.productId}>
@@ -265,12 +292,7 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
 
       <Panel title="Trades" help={H.backtest.trades} flush>
         {r.trades.length ? (
-          <TradeTable
-            trades={r.trades.slice(0, rows)}
-            names={names}
-            opened
-            footer={<LoadMore hasMore={r.trades.length > rows} loading={false} onMore={() => setRows((n) => n + 50)} shown={Math.min(rows, r.trades.length)} noun="trades" help={H.paper.more} />}
-          />
+          <TradeTable trades={r.trades} names={names} opened pageSize={50} />
         ) : (
           <EmptyState title="No trades" hint="No alert in this period became a trade — see the alerts not traded below." />
         )}
@@ -291,16 +313,29 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
         >
           {showSkipped && (
             <>
-              <ul className="divide-y divide-ink-700/50 text-xs">
-                {r.skipped.slice(0, skippedRows).map((s, i) => (
-                  <li key={`${s.at}-${i}`} className="flex flex-wrap gap-3 px-4 py-2">
-                    <span className="w-28 text-slate-400">{istStampIso(s.at)}</span>
-                    <span className="w-24 font-medium text-slate-200">{symbol(s.productId)}</span>
-                    <span className="text-slate-300">{s.reason}</span>
-                  </li>
-                ))}
-              </ul>
-              <LoadMore hasMore={r.skipped.length > skippedRows} loading={false} onMore={() => setSkippedRows((n) => n + 50)} shown={Math.min(skippedRows, r.skipped.length)} noun="alerts" />
+              <FilterSummary table={skipped} noun="alerts" />
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-ink-850 text-left text-[10px] uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <ColumnHead table={skipped} k="at" className={th} />
+                      <ColumnHead table={skipped} k="product" className={th} />
+                      <ColumnHead table={skipped} k="reason" className={th} />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-ink-700/50">
+                    <NoMatchRow table={skipped} colSpan={3} />
+                    {skipped.rows.slice(0, skippedRows).map((s, i) => (
+                      <tr key={`${s.at}-${s.productId}-${i}`}>
+                        <td className={clsx(td, 'text-slate-400')}>{istStampIso(s.at)}</td>
+                        <td className={clsx(td, 'font-medium text-slate-200')}>{symbol(s.productId)}</td>
+                        <td className={clsx(td, 'whitespace-normal text-slate-300')}>{s.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <LoadMore hasMore={skipped.rows.length > skippedRows} loading={false} onMore={() => setSkippedRows((n) => n + 50)} shown={Math.min(skippedRows, skipped.rows.length)} noun="alerts" />
             </>
           )}
         </Panel>
@@ -650,7 +685,7 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
         </div>
       </Section>
 
-      {result && <Results r={result} names={names} />}
+      {result && <Results key={j!.id} r={result} names={names} />}
     </div>
   );
 }

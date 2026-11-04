@@ -8,6 +8,7 @@ import { ScanSearch } from 'lucide-react';
 import type { EqScreenJob, EqScreenRow, EqStrategyDefinition } from '@/shared/equity';
 import { EQ_TIMEFRAME } from '@/shared/equity';
 import { Tooltip } from '../../components/Tooltip';
+import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../../components/table/ColumnFilters';
 import { Badge, EmptyState, Section, Segmented } from '../../components/ui';
 import { Cell } from '../../components/form';
 import { InlineSpinner } from '../../components/loaders';
@@ -22,6 +23,41 @@ type Show = 'FRESH' | 'ENTRY' | 'ALL';
 let remembered: { strategy: string; source: StockSource; jobId: string | null; show: Show } | null = null;
 
 const td = 'px-2.5 py-2 whitespace-nowrap align-top';
+const th = 'px-2.5 py-2 font-medium';
+
+const COLUMNS: Column<EqScreenRow>[] = [
+  {
+    key: 'stock',
+    label: 'Stock',
+    help: { title: 'Stock', body: 'Symbol and name.' },
+    fields: [
+      { key: 'stock', label: 'Stock', type: 'enum', value: (r) => r.symbol },
+      { key: 'name', label: 'Name', type: 'text', value: (r) => r.name },
+    ],
+  },
+  { key: 'asOf', label: 'As of', help: E.screener.asOf, type: 'date', value: (r) => r.asOf },
+  { key: 'close', label: 'Close', align: 'right', help: { title: 'Close', body: 'Closing price at the last check.' }, type: 'number', unit: '₹', value: (r) => r.close },
+  { key: 'change', label: 'Change', align: 'right', help: E.screener.change, type: 'number', unit: '%', signed: true, value: (r) => r.changePct },
+  {
+    key: 'entry',
+    label: 'Entry',
+    help: E.screener.entry,
+    type: 'enum',
+    order: ['Fresh signal', 'True', 'No', 'Unknown', 'Data error'],
+    value: (r) => (r.error ? 'Data error' : r.fresh ? 'Fresh signal' : r.entry === true ? 'True' : r.entry === false ? 'No' : 'Unknown'),
+  },
+  { key: 'exit', label: 'Exit', help: E.screener.exit, type: 'enum', order: ['Exit true', 'No', 'Unknown'], value: (r) => (r.exit === true ? 'Exit true' : r.exit === false ? 'No' : 'Unknown') },
+  {
+    key: 'conditions',
+    label: 'Conditions',
+    help: E.screener.values,
+    fields: [
+      { key: 'met', label: 'Conditions met', type: 'enum', noSort: true, value: (r) => r.leaves.filter((l) => l.value === true).map((l) => l.text) },
+      { key: 'notMet', label: 'Conditions not met', type: 'enum', noSort: true, value: (r) => r.leaves.filter((l) => l.value === false).map((l) => l.text) },
+      { key: 'metCount', label: 'How many met', type: 'number', value: (r) => r.leaves.filter((l) => l.value === true).length },
+    ],
+  },
+];
 
 function Leaves({ row }: { row: EqScreenRow }) {
   return (
@@ -74,6 +110,7 @@ export function ScreenerTab({ initialStrategyId, draft }: { initialStrategyId?: 
   const cancel = useMutation({ mutationFn: () => eqApi.cancelScreen(jobId!), onSuccess: (c) => qc.setQueryData(['eq-screen-job', c.id], c) });
   const result = j?.status === 'DONE' ? j.result : undefined;
   const rows = useMemo(() => (result?.rows ?? []).filter((r) => show === 'ALL' || (show === 'FRESH' ? r.fresh : r.entry === true)), [result, show]);
+  const t = useTable(rows, COLUMNS);
   const counts = { fresh: result?.rows.filter((r) => r.fresh).length ?? 0, entry: result?.rows.filter((r) => r.entry === true).length ?? 0, all: result?.rows.length ?? 0 };
 
   return (
@@ -140,40 +177,18 @@ export function ScreenerTab({ initialStrategyId, draft }: { initialStrategyId?: 
           <p className="px-4 pb-2 text-[11px] text-slate-500">{result.notes.join(' ')}</p>
           {rows.length ? (
             <div className="overflow-x-auto">
+              <FilterSummary table={t} noun="stocks" />
               <table className="w-full text-xs">
                 <thead className="bg-ink-850 text-left text-[10px] uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th className="px-2.5 py-2 font-medium">Stock</th>
-                    <th className="px-2.5 py-2 font-medium">
-                      <Tooltip content={E.screener.asOf}>
-                        <span>As of</span>
-                      </Tooltip>
-                    </th>
-                    <th className="px-2.5 py-2 text-right font-medium">Close</th>
-                    <th className="px-2.5 py-2 text-right font-medium">
-                      <Tooltip content={E.screener.change}>
-                        <span>Change</span>
-                      </Tooltip>
-                    </th>
-                    <th className="px-2.5 py-2 font-medium">
-                      <Tooltip content={E.screener.entry}>
-                        <span>Entry</span>
-                      </Tooltip>
-                    </th>
-                    <th className="px-2.5 py-2 font-medium">
-                      <Tooltip content={E.screener.exit}>
-                        <span>Exit</span>
-                      </Tooltip>
-                    </th>
-                    <th className="px-2.5 py-2 font-medium">
-                      <Tooltip content={E.screener.values}>
-                        <span>Conditions</span>
-                      </Tooltip>
-                    </th>
+                    {COLUMNS.map((c) => (
+                      <ColumnHead key={c.key} table={t} k={c.key} className={th} />
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-ink-700/50">
-                  {rows.map((r) => (
+                  <NoMatchRow table={t} colSpan={7} />
+                  {t.rows.map((r) => (
                     <tr key={r.symbol} className="hover:bg-ink-800/40">
                       <td className={td}>
                         <div className="flex items-center gap-1.5">

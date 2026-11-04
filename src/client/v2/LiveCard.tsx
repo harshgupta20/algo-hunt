@@ -8,9 +8,10 @@ import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { Radio } from 'lucide-react';
-import type { LiveState } from '@/shared/v2';
+import type { LiveCandleStat, LiveState } from '@/shared/v2';
 import { TIMEFRAME } from '@/shared/v2';
 import { Tooltip } from '../components/Tooltip';
+import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../components/table/ColumnFilters';
 import { Badge } from '../components/ui';
 import { v2Api } from './api';
 import { Section } from './components';
@@ -42,10 +43,39 @@ function Stat({ label, value, hint, help }: { label: string; value: ReactNode; h
   );
 }
 
+const CANDLE_COLUMNS: Column<LiveCandleStat>[] = [
+  {
+    key: 'candle',
+    label: 'Candle',
+    help: H.live.candles,
+    fields: [
+      { key: 'candle', label: 'Candle', type: 'datetime', value: (c) => c.candle * 1000 },
+      { key: 'market', label: 'Market', type: 'enum', value: (c) => c.market },
+      { key: 'timeframe', label: 'Timeframe', type: 'enum', value: (c) => c.timeframe, display: (v) => TIMEFRAME[v as keyof typeof TIMEFRAME]?.label ?? v },
+    ],
+  },
+  { key: 'units', label: 'Units', align: 'right', help: { title: 'Units', body: 'Units decided at this candle close.' }, type: 'number', value: (c) => c.units },
+  { key: 'decided', label: 'Decided in', align: 'right', help: H.live.decided, type: 'number', unit: 's', value: (c) => c.evaluatedMs / 1000 },
+  {
+    key: 'checked',
+    label: 'Checked · corrected',
+    align: 'right',
+    help: H.live.today,
+    fields: [
+      { key: 'checked', label: 'Checked on Kite', type: 'number', value: (c) => c.checked },
+      { key: 'corrected', label: 'Corrected', type: 'number', value: (c) => c.corrected },
+      { key: 'unverified', label: 'Unverified', type: 'number', value: (c) => c.unverified },
+    ],
+  },
+  { key: 'confirmed', label: 'Kite check done', align: 'right', help: H.live.verified, type: 'number', unit: 's', value: (c) => (c.checked && c.confirmedMs !== undefined ? c.confirmedMs / 1000 : null) },
+  { key: 'alerts', label: 'Alerts', align: 'right', help: { title: 'Alerts', body: 'Alerts sent at this candle close.' }, type: 'number', value: (c) => c.alerts },
+];
+
 export function LiveCard() {
   const q = useQuery({ queryKey: ['v2-live'], queryFn: v2Api.live, refetchInterval: 20_000 });
   const info = q.data;
   const s = info?.status;
+  const candles = useTable(s?.lastCandles, CANDLE_COLUMNS);
   const online = info?.health.online ?? false;
   const badge = !s ? (
     <Badge>Not running</Badge>
@@ -102,35 +132,18 @@ export function LiveCard() {
           )}
           {s.lastCandles.length > 0 && (
             <div className="overflow-x-auto">
+              <FilterSummary table={candles} noun="candles" className="rounded-md border" />
               <table className="w-full text-xs">
                 <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th className="py-1 pr-3">
-                      <Tooltip content={H.live.candles}>
-                        <span>Candle</span>
-                      </Tooltip>
-                    </th>
-                    <th className="py-1 pr-3 text-right">Units</th>
-                    <th className="py-1 pr-3 text-right">
-                      <Tooltip content={H.live.decided}>
-                        <span>Decided in</span>
-                      </Tooltip>
-                    </th>
-                    <th className="py-1 pr-3 text-right">
-                      <Tooltip content={H.live.today}>
-                        <span>Checked · corrected</span>
-                      </Tooltip>
-                    </th>
-                    <th className="py-1 pr-3 text-right">
-                      <Tooltip content={H.live.verified}>
-                        <span>Kite check done</span>
-                      </Tooltip>
-                    </th>
-                    <th className="py-1 text-right">Alerts</th>
+                    {CANDLE_COLUMNS.map((c, i) => (
+                      <ColumnHead key={c.key} table={candles} k={c.key} className={i === CANDLE_COLUMNS.length - 1 ? 'py-1' : 'py-1 pr-3'} />
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-ink-700/40">
-                  {s.lastCandles.slice(0, 8).map((c) => (
+                  <NoMatchRow table={candles} colSpan={6} />
+                  {candles.rows.slice(0, 8).map((c) => (
                     <tr key={`${c.market}|${c.timeframe}|${c.candle}`}>
                       <td className="py-1 pr-3 text-slate-300">
                         {c.market} · {TIMEFRAME[c.timeframe].label} · {istStamp(c.candle)}

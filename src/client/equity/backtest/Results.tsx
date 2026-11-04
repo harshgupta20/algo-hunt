@@ -8,9 +8,10 @@
 import { Fragment, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { ChevronDown, ChevronRight, Download, Sparkles } from 'lucide-react';
-import type { EqBacktestResult, EqExitReason, EqTimeframe, EqTrade } from '@/shared/equity';
+import type { EqBacktestResult, EqExitReason, EqSkip, EqSymbolResult, EqTimeframe, EqTrade } from '@/shared/equity';
 import { EQ_TIMEFRAME } from '@/shared/equity';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
+import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column, type Table } from '../../components/table/ColumnFilters';
 import { Badge, EmptyState, StatCard } from '../../components/ui';
 import { ChartLink } from '../ChartLink';
 import { ai } from '../../ai/store';
@@ -45,15 +46,94 @@ function Panel({ title, help, aside, children, flush }: { title: string; help: T
   );
 }
 
-function Th({ help, children, right }: { help: TooltipContent; children: string; right?: boolean }) {
-  return (
-    <th className={clsx(th, right && 'text-right')}>
-      <Tooltip content={help}>
-        <span className="uppercase tracking-wide">{children}</span>
-      </Tooltip>
-    </th>
-  );
-}
+// ---- columns (sorting + filters) ----------------------------------------------------------------
+
+const REASON_ORDER = Object.keys(REASON);
+
+const TRADE_COLUMNS: Column<EqTrade>[] = [
+  {
+    key: 'stock',
+    label: 'Stock',
+    help: { title: 'Stock', body: 'Open the row for every order of the trade.' },
+    fields: [
+      { key: 'stock', label: 'Stock', type: 'enum', value: (t) => t.symbol },
+      { key: 'name', label: 'Name', type: 'text', value: (t) => t.name },
+    ],
+  },
+  { key: 'bought', label: 'Bought', help: { title: 'Bought', body: 'Date of the first buy.' }, type: 'date', value: (t) => t.entryDate },
+  { key: 'sold', label: 'Sold', help: { title: 'Sold', body: 'Date of the sale (or the last day for END).' }, type: 'date', value: (t) => t.exitDate },
+  { key: 'held', label: 'Held', help: E.backtest.holding, type: 'number', unit: 'days', value: (t) => t.holdingDays },
+  { key: 'adds', label: 'Adds', help: E.editor.pyramid, type: 'number', value: (t) => t.adds },
+  { key: 'shares', label: 'Shares', align: 'right', help: { title: 'Shares', body: 'Shares bought in total (first buy + adds).' }, type: 'number', value: (t) => t.quantity },
+  { key: 'avg', label: 'Avg', align: 'right', help: { title: 'Avg price', body: 'Average buy price of all lots.' }, type: 'number', unit: '₹', value: (t) => t.avgPrice },
+  { key: 'soldAt', label: 'Sold at', align: 'right', help: { title: 'Sold at', body: 'Sale price.' }, type: 'number', unit: '₹', value: (t) => t.exitPrice },
+  { key: 'why', label: 'Why', help: E.backtest.exitReason, type: 'enum', value: (t) => t.exitReason, display: (v) => REASON[v as EqExitReason]?.label ?? v, order: REASON_ORDER },
+  { key: 'invested', label: 'Invested', align: 'right', help: { title: 'Invested', body: 'Money put in by every buy.' }, type: 'number', unit: '₹', value: (t) => t.invested },
+  {
+    key: 'net',
+    label: 'Net P&L',
+    align: 'right',
+    help: { title: 'Net P&L', body: 'Sale value − money put in (− charges, when they’re counted).' },
+    fields: [
+      { key: 'net', label: 'Net P&L', type: 'number', unit: '₹', signed: true, value: (t) => t.netPnl },
+      { key: 'gross', label: 'Gross P&L', type: 'number', unit: '₹', signed: true, value: (t) => t.grossPnl },
+      { key: 'charges', label: 'Charges', type: 'number', unit: '₹', value: (t) => t.charges },
+    ],
+  },
+  { key: 'return', label: 'Return', align: 'right', help: { title: 'Return', body: 'Net P&L ÷ money put in.' }, type: 'number', unit: '%', signed: true, value: (t) => t.returnPct },
+];
+
+const STOCK_COLUMNS: Column<EqSymbolResult>[] = [
+  {
+    key: 'stock',
+    label: 'Stock',
+    help: { title: 'Stock', body: 'Open for data notes.' },
+    fields: [
+      { key: 'stock', label: 'Stock', type: 'enum', value: (p) => p.symbol },
+      { key: 'name', label: 'Name', type: 'text', value: (p) => p.name },
+      { key: 'data', label: 'Data', type: 'enum', value: (p) => (p.errors.length ? 'Problems' : p.notes.length ? 'Notes only' : 'Clean'), order: ['Problems', 'Notes only', 'Clean'] },
+    ],
+  },
+  { key: 'trades', label: 'Trades', align: 'right', help: E.backtest.trades, type: 'number', value: (p) => p.trades },
+  {
+    key: 'won',
+    label: 'Won',
+    align: 'right',
+    help: E.backtest.winRate,
+    fields: [
+      { key: 'won', label: 'Trades won', type: 'number', value: (p) => (p.trades ? p.wins : null) },
+      { key: 'winRate', label: 'Win rate', type: 'number', unit: '%', value: (p) => (p.trades ? (p.wins / p.trades) * 100 : null) },
+    ],
+  },
+  { key: 'net', label: 'Net P&L', align: 'right', help: { title: 'Net P&L', body: 'All trades in this stock.' }, type: 'number', unit: '₹', signed: true, value: (p) => (p.trades ? p.netPnl : null) },
+  { key: 'invested', label: 'Invested', align: 'right', help: { title: 'Invested', body: 'Money put in across its trades.' }, type: 'number', unit: '₹', value: (p) => (p.trades ? p.invested : null) },
+  {
+    key: 'bestWorst',
+    label: 'Best / worst',
+    align: 'right',
+    help: { title: 'Best / worst', body: 'Best and worst trade in this stock.' },
+    fields: [
+      { key: 'best', label: 'Best trade', type: 'number', unit: '₹', signed: true, value: (p) => (p.trades ? p.bestTrade : null) },
+      { key: 'worst', label: 'Worst trade', type: 'number', unit: '₹', signed: true, value: (p) => (p.trades ? p.worstTrade : null) },
+    ],
+  },
+];
+
+const SKIP_COLUMNS: Column<EqSkip>[] = [
+  { key: 'date', label: 'Date', help: { title: 'Date', body: 'The day the signal came.' }, type: 'date', value: (x) => x.date },
+  { key: 'stock', label: 'Stock', help: { title: 'Stock', body: 'The stock the signal was for.' }, type: 'enum', value: (x) => x.symbol },
+  { key: 'kind', label: 'Signal', help: { title: 'Signal', body: 'A first buy, or an add to an open trade (pyramiding).' }, type: 'enum', value: (x) => (x.kind === 'ENTRY' ? 'Buy' : 'Add') },
+  { key: 'reason', label: 'Why not taken', help: E.backtest.skipped, type: 'text', value: (x) => x.reason },
+];
+
+const headCls = clsx(th, 'uppercase tracking-wide');
+const Heads = <R,>({ table }: { table: Table<R> }) => (
+  <tr>
+    {table.columns.map((c) => (
+      <ColumnHead key={c.key} table={table} k={c.key} className={headCls} />
+    ))}
+  </tr>
+);
 
 function tradesCsv(r: EqBacktestResult) {
   downloadCsv(
@@ -141,9 +221,13 @@ export function Results({ r }: { r: EqBacktestResult }) {
   const [openStock, setOpenStock] = useState<string | null>(null);
   const [rows, setRows] = useState(50);
   const [stockRows, setStockRows] = useState(25);
+  const [skipRows, setSkipRows] = useState(300);
   const [showSkipped, setShowSkipped] = useState(false);
   const tone = (n: number | null) => (n === null || Math.abs(n) < 0.005 ? undefined : n > 0 ? 'bull' : 'bear');
   const traded = useMemo(() => r.perSymbol.filter((p) => p.trades > 0 || p.errors.length || p.notes.length), [r.perSymbol]);
+  const tradesT = useTable(r.trades, TRADE_COLUMNS);
+  const stocksT = useTable(traded, STOCK_COLUMNS);
+  const skipsT = useTable(r.skipped, SKIP_COLUMNS);
   const dataIssues = r.perSymbol.filter((p) => p.errors.length);
 
   return (
@@ -252,46 +336,23 @@ export function Results({ r }: { r: EqBacktestResult }) {
       <Panel title={`Trades (${r.trades.length.toLocaleString('en-IN')})`} help={E.backtest.tradeList} flush>
         {r.trades.length ? (
           <div className="overflow-x-auto">
+            <FilterSummary table={tradesT} noun="trades" />
             <table className="w-full text-xs">
               <thead className="bg-ink-850 text-[10px] text-slate-500">
-                <tr>
-                  <Th help={{ title: 'Stock', body: 'Open the row for every order of the trade.' }}>Stock</Th>
-                  <Th help={{ title: 'Bought', body: 'Date of the first buy.' }}>Bought</Th>
-                  <Th help={{ title: 'Sold', body: 'Date of the sale (or the last day for END).' }}>Sold</Th>
-                  <Th help={E.backtest.holding}>Held</Th>
-                  <Th help={E.editor.pyramid}>Adds</Th>
-                  <Th help={{ title: 'Shares', body: 'Shares bought in total (first buy + adds).' }} right>
-                    Shares
-                  </Th>
-                  <Th help={{ title: 'Avg price', body: 'Average buy price of all lots.' }} right>
-                    Avg
-                  </Th>
-                  <Th help={{ title: 'Sold at', body: 'Sale price.' }} right>
-                    Sold at
-                  </Th>
-                  <Th help={E.backtest.exitReason}>Why</Th>
-                  <Th help={{ title: 'Invested', body: 'Money put in by every buy.' }} right>
-                    Invested
-                  </Th>
-                  <Th help={{ title: 'Net P&L', body: 'Sale value − money put in (− charges, when they’re counted).' }} right>
-                    Net P&L
-                  </Th>
-                  <Th help={{ title: 'Return', body: 'Net P&L ÷ money put in.' }} right>
-                    Return
-                  </Th>
-                </tr>
+                <Heads table={tradesT} />
               </thead>
               <tbody className="divide-y divide-ink-700/50">
-                {r.trades.slice(0, rows).map((t) => (
+                <NoMatchRow table={tradesT} colSpan={12} />
+                {tradesT.rows.slice(0, rows).map((t) => (
                   <TradeRows key={t.id} t={t} tf={r.definition.timeframe} open={openTrade === t.id} onToggle={() => setOpenTrade(openTrade === t.id ? null : t.id)} />
                 ))}
               </tbody>
             </table>
-            {r.trades.length > rows && (
+            {tradesT.rows.length > rows && (
               <div className="p-3 text-center">
                 <Tooltip content={{ title: 'Show more', body: 'Show the next 100 trades.' }}>
                   <button type="button" className="btn-ghost py-1 text-xs" onClick={() => setRows((n) => n + 100)}>
-                    Show more ({(r.trades.length - rows).toLocaleString('en-IN')} left)
+                    Show more ({(tradesT.rows.length - rows).toLocaleString('en-IN')} left)
                   </button>
                 </Tooltip>
               </div>
@@ -304,29 +365,14 @@ export function Results({ r }: { r: EqBacktestResult }) {
 
       <Panel title="By stock" help={E.backtest.byStock} flush>
         <div className="overflow-x-auto">
+          <FilterSummary table={stocksT} noun="stocks" />
           <table className="w-full text-xs">
             <thead className="bg-ink-850 text-[10px] text-slate-500">
-              <tr>
-                <Th help={{ title: 'Stock', body: 'Open for data notes.' }}>Stock</Th>
-                <Th help={E.backtest.trades} right>
-                  Trades
-                </Th>
-                <Th help={E.backtest.winRate} right>
-                  Won
-                </Th>
-                <Th help={{ title: 'Net P&L', body: 'All trades in this stock.' }} right>
-                  Net P&L
-                </Th>
-                <Th help={{ title: 'Invested', body: 'Money put in across its trades.' }} right>
-                  Invested
-                </Th>
-                <Th help={{ title: 'Best / worst', body: 'Best and worst trade in this stock.' }} right>
-                  Best / worst
-                </Th>
-              </tr>
+              <Heads table={stocksT} />
             </thead>
             <tbody className="divide-y divide-ink-700/50">
-              {traded.slice(0, stockRows).map((p) => {
+              <NoMatchRow table={stocksT} colSpan={6} />
+              {stocksT.rows.slice(0, stockRows).map((p) => {
                 const isOpen = openStock === p.symbol;
                 return (
                   <Fragment key={p.symbol}>
@@ -378,11 +424,11 @@ export function Results({ r }: { r: EqBacktestResult }) {
               })}
             </tbody>
           </table>
-          {traded.length > stockRows && (
+          {stocksT.rows.length > stockRows && (
             <div className="p-3 text-center">
               <Tooltip content={{ title: 'Show more', body: 'Show the next 50 stocks.' }}>
                 <button type="button" className="btn-ghost py-1 text-xs" onClick={() => setStockRows((n) => n + 50)}>
-                  Show more ({traded.length - stockRows} left)
+                  Show more ({stocksT.rows.length - stockRows} left)
                 </button>
               </Tooltip>
             </div>
@@ -405,20 +451,41 @@ export function Results({ r }: { r: EqBacktestResult }) {
           }
         >
           {showSkipped && (
-            <ul className="divide-y divide-ink-700/50 text-xs">
-              {r.skipped.slice(0, 300).map((x, i) => (
-                <li key={`${x.symbol}-${x.date}-${i}`} className="flex flex-wrap gap-3 px-4 py-2">
-                  <span className="w-24 text-slate-400">{shortDate(x.date)}</span>
-                  <span className="flex w-28 items-center gap-1.5 font-medium text-slate-200">
-                    {x.symbol}
-                    <ChartLink symbol={x.symbol} tf={r.definition.timeframe} when={shortDate(x.date)} />
-                  </span>
-                  <Badge>{x.kind === 'ENTRY' ? 'Buy' : 'Add'}</Badge>
-                  <span className="text-slate-300">{x.reason}</span>
-                </li>
-              ))}
-              {r.skipped.length > 300 && <li className="px-4 py-2 text-slate-500">…and {r.skipped.length - 300} more</li>}
-            </ul>
+            <div className="overflow-x-auto">
+              <FilterSummary table={skipsT} noun="signals" />
+              <table className="w-full text-xs">
+                <thead className="bg-ink-850 text-[10px] text-slate-500">
+                  <Heads table={skipsT} />
+                </thead>
+                <tbody className="divide-y divide-ink-700/50">
+                  <NoMatchRow table={skipsT} colSpan={4} />
+                  {skipsT.rows.slice(0, skipRows).map((x, i) => (
+                    <tr key={`${x.symbol}-${x.date}-${i}`}>
+                      <td className={clsx(td, 'text-slate-400')}>{shortDate(x.date)}</td>
+                      <td className={td}>
+                        <span className="flex items-center gap-1.5 font-medium text-slate-200">
+                          {x.symbol}
+                          <ChartLink symbol={x.symbol} tf={r.definition.timeframe} when={shortDate(x.date)} />
+                        </span>
+                      </td>
+                      <td className={td}>
+                        <Badge>{x.kind === 'ENTRY' ? 'Buy' : 'Add'}</Badge>
+                      </td>
+                      <td className={clsx(td, 'whitespace-normal text-slate-300')}>{x.reason}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {skipsT.rows.length > skipRows && (
+                <div className="p-3 text-center">
+                  <Tooltip content={{ title: 'Show more', body: 'Show the next 300 signals.' }}>
+                    <button type="button" className="btn-ghost py-1 text-xs" onClick={() => setSkipRows((n) => n + 300)}>
+                      Show more ({(skipsT.rows.length - skipRows).toLocaleString('en-IN')} left)
+                    </button>
+                  </Tooltip>
+                </div>
+              )}
+            </div>
           )}
         </Panel>
       )}

@@ -1,19 +1,47 @@
 'use client';
 
 /** Money flow: FII / DII cash-market activity and the day's bulk & block deals. */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import type { Deal, Flow } from '@/shared/market/types';
 import { InfoTip, Tooltip } from '../components/Tooltip';
+import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../components/table/ColumnFilters';
 import { Section, Segmented } from '../components/ui';
 import { FlowColumns } from './charts';
 import { dirClass, fmtCrore, fmtInt, fmtPrice, fmtRupees, shortDay } from './format';
 import { M } from './help';
 import { Skeleton } from './parts';
 
+const DEAL_COLUMNS: Column<Deal>[] = [
+  { key: 'side', label: 'Side', help: { title: 'Side', body: 'Bought or sold.' }, type: 'enum', value: (d) => d.side, order: ['BUY', 'SELL'] },
+  {
+    key: 'stock',
+    label: 'Stock · client',
+    help: { title: 'Stock · client', body: 'The stock (click a row for its details) and who traded it.' },
+    fields: [
+      { key: 'stock', label: 'Stock', type: 'enum', value: (d) => d.symbol },
+      { key: 'client', label: 'Client', type: 'text', value: (d) => d.client },
+      { key: 'name', label: 'Company', type: 'text', value: (d) => d.name },
+    ],
+  },
+  {
+    key: 'value',
+    label: 'Value',
+    align: 'right',
+    help: { title: 'Value', body: 'Shares × price.' },
+    fields: [
+      { key: 'value', label: 'Value', type: 'number', unit: '₹', value: (d) => d.value },
+      { key: 'qty', label: 'Shares', type: 'number', value: (d) => d.qty },
+      { key: 'price', label: 'Price', type: 'number', unit: '₹', value: (d) => d.price },
+    ],
+  },
+  { key: 'kind', label: 'Type', align: 'right', help: M.deals, type: 'enum', value: (d) => d.kind, display: (v) => (v === 'block' ? 'Block' : v === 'bulk' ? 'Bulk' : v) },
+];
+
 export function FlowsPanel({ flows, deals, onPick }: { flows: { latest: Flow | null; history: Flow[] } | undefined; deals: Deal[] | undefined; onPick: (s: string) => void }) {
   const [kind, setKind] = useState<'all' | 'block' | 'bulk'>('all');
-  const list = (deals ?? []).filter((d) => kind === 'all' || d.kind === kind).slice(0, 40);
+  const list = useMemo(() => (deals ?? []).filter((d) => kind === 'all' || d.kind === kind), [deals, kind]);
+  const table = useTable(list, DEAL_COLUMNS);
   const latest = flows?.latest;
   const history = [...(flows?.history ?? [])].reverse();
   return (
@@ -69,9 +97,19 @@ export function FlowsPanel({ flows, deals, onPick }: { flows: { latest: Flow | n
           <p className="py-6 text-center text-xs text-slate-500">No deals reported today.</p>
         ) : (
           <div className="max-h-[300px] overflow-y-auto">
+            <FilterSummary table={table} noun="deals" className="rounded-md border" />
             <table className="w-full text-[11px]">
+              <thead className="sticky top-0 z-[1] bg-ink-900 text-[10px] uppercase tracking-wide text-slate-500">
+                <tr>
+                  <ColumnHead table={table} k="side" className="py-1 pr-2 text-left font-medium" />
+                  <ColumnHead table={table} k="stock" className="pr-2 text-left font-medium" />
+                  <ColumnHead table={table} k="value" className="font-medium" />
+                  <ColumnHead table={table} k="kind" className="pl-2 font-medium" />
+                </tr>
+              </thead>
               <tbody>
-                {list.map((d, i) => (
+                <NoMatchRow table={table} colSpan={4} />
+                {table.rows.map((d, i) => (
                   <tr key={`${d.symbol}-${d.client}-${i}`} className="cursor-pointer border-t border-ink-700/40 hover:bg-ink-800/60" onClick={() => onPick(d.symbol)}>
                     <td className="py-1.5 pr-2">
                       <span className={clsx('rounded px-1.5 py-0.5 text-[10px] font-semibold', d.side === 'BUY' ? 'bg-bull/15 text-bull' : 'bg-bear/15 text-bear')}>{d.side}</span>

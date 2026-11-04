@@ -1,16 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
-import type { LegDef, LegId, V2AlertItem, V2Unit } from '@/shared/v2';
-import { pageCursor } from '@/shared/v2';
+import type { LegDef, LegId, SignalOutcome, TriState, V2AlertItem, V2SignalItem, V2Unit } from '@/shared/v2';
+import { SIGNAL_OUTCOMES, TIMEFRAME, pageCursor } from '@/shared/v2';
+import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../components/table/ColumnFilters';
 import { Tooltip } from '../components/Tooltip';
 import { Badge, Card, EmptyState, IconButton, Tabs } from '../components/ui';
 import { v2Api } from './api';
 import { InstrumentChip, LegPrices, OutcomeBadge, SideBadge, SourceBadge, TraceView, TriBadge, UnitTag } from './components';
-import { candleRange, istStampIso } from './format';
+import { OUTCOME_LABEL, candleRange, istStampIso } from './format';
 import { H } from './help';
 import { InlineSpinner, SkeletonRows } from '../components/loaders';
 import { stopAlarm } from '../lib/notify';
@@ -88,6 +89,35 @@ export function AlertRow({ alert: a }: { alert: V2AlertItem }) {
 
 type View = 'active' | 'history' | 'signals';
 
+function signalColumns(names: Map<string, string>): Column<V2SignalItem>[] {
+  return [
+    { key: 'recorded', label: 'Recorded', help: { title: 'Recorded', body: 'When the signal was recorded (IST).' }, type: 'datetime', value: (s) => s.createdAt },
+    {
+      key: 'unit',
+      label: 'Product / unit',
+      help: { title: 'Product / unit', body: 'The product and the contracts (strike · expiry) the strategy was checked on.' },
+      fields: [
+        { key: 'product', label: 'Product', type: 'enum', value: (s) => symbolOf(s.evaluation.productId) },
+        { key: 'strategy', label: 'Strategy', type: 'enum', value: (s) => names.get(s.strategyId) ?? s.strategyId },
+        { key: 'strike', label: 'Strike', type: 'number', value: (s) => s.evaluation.unit.baseStrike },
+        { key: 'expiry', label: 'Expiry', type: 'date', value: (s) => s.evaluation.unit.expiry },
+      ],
+    },
+    {
+      key: 'candle',
+      label: 'Candle',
+      help: { title: 'Candle', body: 'The trigger candle that was evaluated (IST) and its timeframe.' },
+      fields: [
+        { key: 'candle', label: 'Candle', type: 'datetime', value: (s) => s.candleTime * 1000 },
+        { key: 'timeframe', label: 'Timeframe', type: 'enum', value: (s) => s.triggerTimeframe, display: (v) => TIMEFRAME[v as keyof typeof TIMEFRAME]?.label ?? v },
+      ],
+    },
+    { key: 'result', label: 'Result', help: { title: 'Result', body: 'Whether the strategy’s conditions were true on that candle.' }, type: 'enum', value: (s) => s.evaluation.result, display: (v) => H.tri[v as TriState]?.title ?? v, order: ['TRUE', 'FALSE', 'UNKNOWN'] },
+    { key: 'outcome', label: 'Outcome', help: H.alerts.outcome, type: 'enum', value: (s) => s.outcome, display: (v) => OUTCOME_LABEL[v as SignalOutcome] ?? v, order: SIGNAL_OUTCOMES },
+    { key: 'version', label: 'Version', help: { title: 'Strategy version', body: 'The strategy version that produced this signal.' }, type: 'number', value: (s) => s.version },
+  ];
+}
+
 /** Rows per page; the next page loads as you scroll. */
 const PAGE = 50;
 const nextCursor = (page: Array<{ id: string; createdAt: string }>) => (page.length < PAGE ? undefined : pageCursor(page[page.length - 1]!.createdAt, page[page.length - 1]!.id));
@@ -129,7 +159,10 @@ export function AlertsTab() {
     placeholderData: keepPreviousData,
   });
   const alertRows = flatPages(alerts.data?.pages);
-  const signalRows = flatPages(signals.data?.pages);
+  const signalRows = useMemo(() => flatPages(signals.data?.pages), [signals.data]);
+  const names = useMemo(() => new Map((strategies.data ?? []).map((s) => [s.id, s.name])), [strategies.data]);
+  const signalCols = useMemo(() => signalColumns(names), [names]);
+  const signalT = useTable(signalRows, signalCols, { partial: !!signals.hasNextPage });
   const list = view === 'signals' ? signals : alerts;
   const rows = view === 'signals' ? (signals.data ? signalRows : undefined) : alerts.data ? alertRows : undefined;
   const noun = view === 'signals' ? 'signal' : view === 'active' ? 'active alert' : 'alert';
@@ -137,7 +170,7 @@ export function AlertsTab() {
     ? `${rows.length.toLocaleString('en-IN')}${list.hasNextPage ? '+' : ''} ${noun}${rows.length === 1 && !list.hasNextPage ? '' : 's'}${activeCount(filters, view === 'signals' ? ['outcomes'] : ['sources', 'statuses']) ? ' match' : ''}`
     : undefined;
   const more = rows?.length ? (
-    <LoadMore hasMore={!!list.hasNextPage} loading={list.isFetchingNextPage} onMore={() => void list.fetchNextPage()} shown={rows.length} noun={`${noun}s`} />
+    <LoadMore hasMore={!!list.hasNextPage} loading={list.isFetchingNextPage} onMore={() => void list.fetchNextPage()} shown={rows.length} noun={`${noun}s`} auto={view !== 'signals' || !signalT.active} />
   ) : null;
 
   return (
@@ -188,20 +221,19 @@ export function AlertsTab() {
             <SkeletonRows rows={5} />
           ) : signalRows.length ? (
             <>
+              <FilterSummary table={signalT} noun="signals" />
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500 bg-ink-850">
                     <tr>
-                      <th className="px-4 py-2">Recorded</th>
-                      <th className="px-4 py-2">Product / unit</th>
-                      <th className="px-4 py-2">Candle</th>
-                      <th className="px-4 py-2">Result</th>
-                      <th className="px-4 py-2">Outcome</th>
-                      <th className="px-4 py-2">Version</th>
+                      {(['recorded', 'unit', 'candle', 'result', 'outcome', 'version'] as const).map((k) => (
+                        <ColumnHead key={k} table={signalT} k={k} className="px-4 py-2" />
+                      ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-ink-700/50">
-                    {signalRows.map((s) => (
+                    <NoMatchRow table={signalT} colSpan={6} />
+                    {signalT.rows.map((s) => (
                       <tr key={s.id} className={clsx(s.outcome !== 'ALERTED' && 'text-slate-400')}>
                         <td className="px-4 py-2 whitespace-nowrap">{istStampIso(s.createdAt)}</td>
                         <td className="px-4 py-2">

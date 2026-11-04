@@ -13,9 +13,10 @@ import { Fragment, useMemo, useState, type MouseEvent, type ReactNode } from 're
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, ChevronRight, CloudOff, CloudUpload, Download, HardDrive, Pencil, RefreshCw, Trash2, Wallet, X } from 'lucide-react';
 import clsx from 'clsx';
-import type { PaperBookStatus, PaperStats, PaperSummary, PaperTrade } from '@/shared/v2';
+import type { LegKind, PaperBookStatus, PaperExitReason, PaperStats, PaperSummary, PaperTrade } from '@/shared/v2';
 import { pageCursor, paperGroups, planSizing, resolveRules, stopNow, trailing, trailsPastTarget } from '@/shared/v2';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
+import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column, type Table } from '../../components/table/ColumnFilters';
 import { Badge, EmptyState, IconButton, StatCard } from '../../components/ui';
 import { InlineSpinner, SkeletonRows, SkeletonStatGrid } from '../../components/loaders';
 import { v2Api } from '../api';
@@ -51,6 +52,158 @@ function ago(iso: string | null): string {
 
 const qty = (t: PaperTrade) => (t.lotSize > 1 ? `${t.lots} × ${t.lotSize}` : `${t.quantity}`);
 export const pf = (s: PaperStats) => (typeof s.profitFactor === 'number' ? s.profitFactor.toFixed(2) : s.wins ? 'no losses' : '—');
+
+// ---- columns (sorting + filters) ----------------------------------------------------------------
+
+const heldMinutes = (t: PaperTrade) => Math.max(0, Math.round((Date.parse(t.exitAt ?? new Date().toISOString()) - Date.parse(t.entryAt)) / 60_000));
+const KIND_TEXT: Record<LegKind, string> = { FUT: 'Future', CE: 'Call (CE)', PE: 'Put (PE)', SPOT: 'Stock / spot' };
+const sideText = (v: string) => (v === 'BUY' ? 'Buy' : v === 'SELL' ? 'Sell' : v);
+const reasonText = (v: string) => H.paper.reasons[v as PaperExitReason]?.title ?? v;
+const flags = (t: PaperTrade) => [...(t.overBudget ? ['Over budget'] : []), ...(t.marginEstimated ? ['≈ margin'] : [])];
+
+/** The columns both trade tables share: product · group · strategy, the contract, side and size. */
+function tradeColumns(names: Map<string, string>): Column<PaperTrade>[] {
+  return [
+    { key: 'opened', label: 'Opened', help: { title: 'Opened', body: 'When the trade was entered (IST).' }, type: 'datetime', value: (t) => t.entryAt },
+    { key: 'closed', label: 'Closed', help: { title: 'Closed', body: 'When the trade was closed (IST).' }, type: 'datetime', value: (t) => t.exitAt },
+    {
+      key: 'product',
+      label: 'Product · strategy',
+      help: { title: 'Product · strategy', body: 'The product, the group that fired (e.g. Bullish) and the strategy — filter by any of them.' },
+      fields: [
+        { key: 'product', label: 'Product', type: 'enum', value: (t) => symbolOf(t.productId) },
+        { key: 'group', label: 'Group', type: 'enum', value: (t) => t.groupLabel },
+        { key: 'strategy', label: 'Strategy', type: 'enum', value: (t) => names.get(t.strategyId) ?? t.strategyId },
+      ],
+    },
+    {
+      key: 'contract',
+      label: 'Contract',
+      help: { title: 'Contract', body: 'The contract traded — filter by its symbol, type (future, call, put, stock), strike or expiry.' },
+      fields: [
+        { key: 'contract', label: 'Contract', type: 'text', value: (t) => t.instrument.symbol },
+        { key: 'kind', label: 'Type', type: 'enum', value: (t) => t.instrument.kind, display: (v) => KIND_TEXT[v as LegKind] ?? v, order: ['FUT', 'CE', 'PE', 'SPOT'] },
+        { key: 'strike', label: 'Strike', type: 'number', value: (t) => t.instrument.strike },
+        { key: 'expiry', label: 'Expiry', type: 'date', value: (t) => t.instrument.expiry },
+        { key: 'flags', label: 'Flags', type: 'enum', noSort: true, value: flags },
+      ],
+    },
+    { key: 'side', label: 'Side', help: { title: 'Side', body: 'Bought or sold (the strategy’s groups decide).' }, type: 'enum', value: (t) => t.side, display: sideText },
+    {
+      key: 'qty',
+      label: 'Qty',
+      help: { title: 'Quantity', body: 'Lots × lot size (or shares for stocks).' },
+      fields: [
+        { key: 'lots', label: 'Lots', type: 'number', value: (t) => t.lots },
+        { key: 'quantity', label: 'Quantity (units)', type: 'number', value: (t) => t.quantity },
+      ],
+    },
+  ];
+}
+
+/** Closed trades: the shared columns, then fills, why, held, charges, net P&L. */
+function closedColumns(names: Map<string, string>): Column<PaperTrade>[] {
+  return [
+    ...tradeColumns(names),
+    {
+      key: 'prices',
+      label: 'Entry → exit',
+      help: { title: 'Entry → exit', body: 'Fill prices, including slippage (a target fills at its own price).' },
+      fields: [
+        { key: 'entry', label: 'Entry price', type: 'number', unit: '₹', value: (t) => t.entryPrice },
+        { key: 'exit', label: 'Exit price', type: 'number', unit: '₹', value: (t) => t.exitPrice },
+      ],
+    },
+    {
+      key: 'why',
+      label: 'Why',
+      help: { title: 'Why it closed', body: 'Target, stop-loss, square-off, the other group firing, expiry, closed by hand or the end of a backtest — hover a badge for details.' },
+      type: 'enum',
+      value: (t) => t.exitReason,
+      display: reasonText,
+    },
+    { key: 'held', label: 'Held', help: { title: 'Held', body: 'Time from entry to exit.', note: 'Filter in minutes (60 = an hour, 1440 = a day).' }, type: 'number', unit: 'min', value: heldMinutes },
+    { key: 'charges', label: 'Charges', help: H.paper.charges, type: 'number', unit: '₹', value: (t) => t.charges ?? 0 },
+    {
+      key: 'net',
+      label: 'Net P&L',
+      help: H.paper.net,
+      fields: [
+        { key: 'net', label: 'Net P&L', type: 'number', unit: '₹', signed: true, value: (t) => t.netPnl ?? 0 },
+        { key: 'gross', label: 'Gross P&L', type: 'number', unit: '₹', signed: true, value: (t) => t.grossPnl },
+      ],
+    },
+  ];
+}
+
+/** Open positions: the shared columns, then entry → last, stop → target, open P&L. */
+function openColumns(names: Map<string, string>): Column<PaperTrade>[] {
+  return [
+    ...tradeColumns(names),
+    {
+      key: 'prices',
+      label: 'Entry → last',
+      help: { title: 'Entry → last', body: 'Fill price (with slippage) and the latest price seen.' },
+      fields: [
+        { key: 'entry', label: 'Entry price', type: 'number', unit: '₹', value: (t) => t.entryPrice },
+        { key: 'last', label: 'Last price', type: 'number', unit: '₹', value: (t) => t.lastPrice },
+        { key: 'lastAt', label: 'Last price at', type: 'datetime', value: (t) => t.lastPriceAt },
+      ],
+    },
+    {
+      key: 'range',
+      label: 'Stop → target',
+      help: H.paper.range,
+      fields: [
+        { key: 'stop', label: 'Stop now', type: 'number', unit: '₹', value: (t) => stopNow(t)?.price },
+        { key: 'stopKind', label: 'Stop type', type: 'enum', value: (t) => (stopNow(t)?.reason === 'TRAIL' ? 'Trailing' : stopNow(t) ? 'Fixed' : null) },
+        { key: 'target', label: 'Target', type: 'number', unit: '₹', value: (t) => t.targetPrice },
+      ],
+    },
+    { key: 'openPnl', label: 'Open P&L', help: H.paper.unrealized, type: 'number', unit: '₹', signed: true, value: (t) => t.openPnl },
+  ];
+}
+
+/** Trades · won · profit factor · avg · net · return · drawdown — the columns StatCells draws, for any row with stats. */
+export function statColumns<R>(stats: (r: R) => PaperStats): Column<R>[] {
+  return [
+    {
+      key: 'trades',
+      label: 'Trades',
+      help: H.paper.trades,
+      fields: [
+        { key: 'trades', label: 'Closed trades', type: 'number', value: (r) => stats(r).trades },
+        { key: 'open', label: 'Open trades', type: 'number', value: (r) => stats(r).open },
+        {
+          key: 'sample',
+          label: 'Sample size',
+          type: 'enum',
+          noSort: true,
+          order: ['No trades', `Few (under ${FEW_TRADES})`, `${FEW_TRADES} or more`],
+          value: (r) => (!stats(r).trades ? 'No trades' : stats(r).trades < FEW_TRADES ? `Few (under ${FEW_TRADES})` : `${FEW_TRADES} or more`),
+        },
+      ],
+    },
+    { key: 'winRate', label: 'Won', help: H.paper.winRate, type: 'number', unit: '%', value: (r) => stats(r).winRate },
+    // No losses = an infinite profit factor (sorts first, passes "≥ 1").
+    { key: 'pf', label: 'Profit f.', help: H.paper.pf, type: 'number', value: (r) => stats(r).profitFactor ?? (stats(r).wins ? Infinity : null) },
+    { key: 'avg', label: 'Avg / trade', help: H.paper.expectancy, type: 'number', unit: '₹', signed: true, value: (r) => stats(r).avgPnl },
+    { key: 'net', label: 'Net P&L', help: H.paper.net, type: 'number', unit: '₹', signed: true, value: (r) => (stats(r).trades ? stats(r).netPnl : null) },
+    { key: 'ret', label: 'Return', help: H.paper.ret, type: 'number', unit: '%', signed: true, value: (r) => stats(r).returnPct },
+    { key: 'dd', label: 'Drawdown', help: H.paper.drawdown, type: 'number', unit: '₹', value: (r) => (stats(r).trades ? stats(r).maxDrawdown : null) },
+  ];
+}
+
+/** The headers of StatCells. */
+export function StatHeads<R>({ table }: { table: Table<R> }) {
+  return (
+    <>
+      {['trades', 'winRate', 'pf', 'avg', 'net', 'ret', 'dd'].map((k) => (
+        <ColumnHead key={k} table={table} k={k} className={th} />
+      ))}
+    </>
+  );
+}
 
 /** A column header with its explanation (the tooltip sits inside the cell); sortable when `sort` is given. */
 export function Th({ help, children, sort }: { help: TooltipContent; children: string; sort?: { active: boolean; desc: boolean; onClick: () => void } }) {
@@ -276,28 +429,6 @@ export function PnlPanel({ sum }: { sum: PaperSummary }) {
 
 // ---- ranking ---------------------------------------------------------------------------------
 
-type SortKey = 'net' | 'trades' | 'winRate' | 'pf' | 'avg' | 'ret' | 'dd' | 'name';
-const sortValue = (s: PaperStats, k: SortKey): number | null =>
-  k === 'net'
-    ? s.trades
-      ? s.netPnl
-      : null
-    : k === 'trades'
-      ? s.trades
-      : k === 'winRate'
-        ? s.winRate
-        : k === 'pf'
-          ? (s.profitFactor ?? (s.wins ? Number.MAX_SAFE_INTEGER : null))
-          : k === 'avg'
-            ? s.avgPnl
-            : k === 'ret'
-              ? s.returnPct
-              : k === 'dd'
-                ? s.trades
-                  ? s.maxDrawdown
-                  : null
-                : null;
-
 function WinRate({ s }: { s: PaperStats }) {
   if (s.winRate === null) return <span className="text-slate-500">—</span>;
   return (
@@ -335,26 +466,61 @@ export function StatCells({ s }: { s: PaperStats }) {
   );
 }
 
+const RANK_SORT = { key: 'net', desc: true };
+
+type RankedConnection = PaperSummary['connections'][number];
+type RankedStrategy = PaperSummary['strategies'][number];
+
+const paperState = (p: { enabled: boolean; custom?: boolean }) => (!p.enabled ? 'Paper off' : p.custom ? 'On · own values' : 'On');
+
+const CONNECTION_COLUMNS: Column<RankedConnection>[] = [
+  {
+    key: 'name',
+    label: 'Product · strategy',
+    help: { title: 'Product · strategy', body: 'The connection: product and the strategy it runs.' },
+    fields: [
+      { key: 'name', label: 'Product', type: 'enum', value: (c) => c.symbol },
+      { key: 'strategy', label: 'Strategy', type: 'enum', value: (c) => c.strategyName },
+      { key: 'switched', label: 'Connection', type: 'enum', noSort: true, value: (c) => (c.switchedOn ? 'Switched on' : 'Switched off') },
+    ],
+  },
+  ...statColumns<RankedConnection>((c) => c.stats),
+  { key: 'paper', label: 'Paper settings', help: H.paper.chip, type: 'enum', value: (c) => paperState(c.paper), order: ['On', 'On · own values', 'Paper off'] },
+];
+
+const STRATEGY_COLUMNS: Column<RankedStrategy>[] = [
+  {
+    key: 'name',
+    label: 'Strategy',
+    help: { title: 'Strategy', body: 'All of the strategy’s connections together.' },
+    fields: [
+      { key: 'name', label: 'Strategy', type: 'enum', value: (s) => s.name },
+      { key: 'connections', label: 'Connections', type: 'number', value: (s) => s.connections },
+    ],
+  },
+  ...statColumns<RankedStrategy>((s) => s.stats),
+  { key: 'paper', label: 'Paper settings', help: H.paper.editPlan, type: 'enum', value: (s) => paperState(s), order: ['On', 'Paper off'] },
+];
+
 function Ranking({ sum, onEditStrategy, onReset, resetting }: { sum: PaperSummary; onEditStrategy: (id: string) => void; onReset: (id: string, name: string, n: number) => void; resetting: boolean }) {
   const [view, setView] = useState<'connections' | 'strategies'>('connections');
-  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'net', desc: true });
   const [editing, setEditing] = useState<string | null>(null);
   const settings = useQuery({ queryKey: ['v2-paper-settings'], queryFn: v2Api.paperSettings, staleTime: 30_000 });
   const strategies = useQuery({ queryKey: ['v2-strategies'], queryFn: v2Api.strategies });
-  const by = (k: SortKey) => ({ active: sort.key === k, desc: sort.desc, onClick: () => setSort((s) => ({ key: k, desc: s.key === k ? !s.desc : k !== 'name' })) });
-  const order = <T,>(rows: T[], stats: (r: T) => PaperStats, name: (r: T) => string) =>
-    [...rows].sort((a, b) => {
-      if (sort.key === 'name') return (sort.desc ? -1 : 1) * name(a).localeCompare(name(b));
-      const va = sortValue(stats(a), sort.key);
-      const vb = sortValue(stats(b), sort.key);
-      if (va === null && vb === null) return name(a).localeCompare(name(b));
-      if (va === null) return 1;
-      if (vb === null) return -1;
-      return sort.desc ? vb - va : va - vb;
-    });
-  const conns = order(sum.connections, (c) => c.stats, (c) => `${c.symbol} ${c.strategyName}`);
-  const strats = order(sum.strategies, (s) => s.stats, (s) => s.name);
+  const connT = useTable(sum.connections, CONNECTION_COLUMNS, { sort: RANK_SORT });
+  const stratT = useTable(sum.strategies, STRATEGY_COLUMNS, { sort: RANK_SORT });
+  const conns = connT.rows;
+  const strats = stratT.rows;
   const defs = new Map(strategies.data?.map((s) => [s.id, s.definition]));
+  const heads = <R,>(t: Table<R>) => (
+    <tr>
+      <th className={clsx(th, 'w-8')}>#</th>
+      <ColumnHead table={t} k="name" className={th} />
+      <Th help={H.paper.trend}>Trend</Th>
+      <StatHeads table={t} />
+      <ColumnHead table={t} k="paper" className={th} />
+    </tr>
+  );
 
   return (
     <Panel
@@ -373,39 +539,10 @@ function Ranking({ sum, onEditStrategy, onReset, resetting }: { sum: PaperSummar
         />
       }
     >
+      {view === 'connections' ? <FilterSummary table={connT} noun="connections" /> : <FilterSummary table={stratT} noun="strategies" />}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
-          <thead className="bg-ink-850 text-left text-[10px] uppercase tracking-wide text-slate-500">
-            <tr>
-              <th className={clsx(th, 'w-8')}>#</th>
-              <Th help={view === 'connections' ? { title: 'Product · strategy', body: 'The connection: product and the strategy it runs.' } : { title: 'Strategy', body: 'All of the strategy’s connections together.' }} sort={by('name')}>
-                {view === 'connections' ? 'Product · strategy' : 'Strategy'}
-              </Th>
-              <Th help={H.paper.trend}>Trend</Th>
-              <Th help={H.paper.trades} sort={by('trades')}>
-                Trades
-              </Th>
-              <Th help={H.paper.winRate} sort={by('winRate')}>
-                Won
-              </Th>
-              <Th help={H.paper.pf} sort={by('pf')}>
-                Profit f.
-              </Th>
-              <Th help={H.paper.expectancy} sort={by('avg')}>
-                Avg / trade
-              </Th>
-              <Th help={H.paper.net} sort={by('net')}>
-                Net P&L
-              </Th>
-              <Th help={H.paper.ret} sort={by('ret')}>
-                Return
-              </Th>
-              <Th help={H.paper.drawdown} sort={by('dd')}>
-                Drawdown
-              </Th>
-              <Th help={view === 'connections' ? H.paper.chip : H.paper.editPlan}>Paper settings</Th>
-            </tr>
-          </thead>
+          <thead className="bg-ink-850 text-left text-[10px] uppercase tracking-wide text-slate-500">{view === 'connections' ? heads(connT) : heads(stratT)}</thead>
           <tbody className="divide-y divide-ink-700/50">
             {view === 'connections' &&
               conns.map((c, i) => {
@@ -503,10 +640,11 @@ function Ranking({ sum, onEditStrategy, onReset, resetting }: { sum: PaperSummar
                   </tr>
                 );
               })}
+            {view === 'connections' ? <NoMatchRow table={connT} colSpan={11} /> : <NoMatchRow table={stratT} colSpan={11} />}
           </tbody>
         </table>
       </div>
-      {view === 'connections' && !conns.length && <EmptyState title="No switched-on connections" hint="Switch connections on in the Connections tab — each one paper trades its alerts automatically." />}
+      {view === 'connections' && !connT.total && <EmptyState title="No switched-on connections" hint="Switch connections on in the Connections tab — each one paper trades its alerts automatically." />}
     </Panel>
   );
 }
@@ -527,12 +665,35 @@ const onRow = (toggle: () => void) => (e: MouseEvent) => {
   if (!(e.target as HTMLElement).closest('a,button,input')) toggle();
 };
 
-/** Closed trades: when, product, contract, side, size, fills, why it closed, how long, charges, net P&L; a row opens its story. `footer`: the next page (LoadMore). */
-export function TradeTable({ trades, names, opened, footer }: { trades: PaperTrade[]; names: Map<string, string>; opened?: boolean; footer?: ReactNode }) {
+/**
+ * Closed trades: when, product, contract, side, size, fills, why it closed, how long, charges, net P&L; a row opens
+ * its story. Every column sorts and filters. Paging: `pageSize` shows the given trades a page at a time (all are
+ * here, so the filters search all of them); `more` loads the next page from the server (the filters search the
+ * pages loaded).
+ */
+export function TradeTable({
+  trades,
+  names,
+  opened,
+  pageSize,
+  more,
+}: {
+  trades: PaperTrade[];
+  names: Map<string, string>;
+  opened?: boolean;
+  pageSize?: number;
+  more?: { hasMore: boolean; loading: boolean; onMore: () => void };
+}) {
   const [story, setStory] = useState<string | null>(null);
+  const [limit, setLimit] = useState(pageSize ?? Infinity);
   const toggle = (id: string) => () => setStory((cur) => (cur === id ? null : id));
+  const columns = useMemo(() => closedColumns(names), [names]);
+  const table = useTable(trades, columns, { partial: !!more?.hasMore });
+  const rows = pageSize ? table.rows.slice(0, limit) : table.rows;
+  const head = (k: string) => <ColumnHead table={table} k={k} className={th} />;
   return (
     <>
+      <FilterSummary table={table} noun="trades" />
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="bg-ink-850 text-left text-[10px] uppercase tracking-wide text-slate-500">
@@ -540,21 +701,22 @@ export function TradeTable({ trades, names, opened, footer }: { trades: PaperTra
               <th className={clsx(th, 'w-6 pr-0')}>
                 <span className="sr-only">Story</span>
               </th>
-              {opened && <th className={th}>Opened</th>}
-              <th className={th}>Closed</th>
-              <th className={th}>Product · strategy</th>
-              <th className={th}>Contract</th>
-              <th className={th}>Side</th>
-              <Th help={{ title: 'Quantity', body: 'Lots × lot size (or shares for stocks).' }}>Qty</Th>
-              <Th help={{ title: 'Entry → exit', body: 'Fill prices, including slippage (a target fills at its own price).' }}>Entry → exit</Th>
-              <Th help={{ title: 'Why it closed', body: 'Target, stop-loss, square-off, the other group firing, expiry, closed by hand or the end of a backtest — hover a badge for details.' }}>Why</Th>
-              <Th help={{ title: 'Held', body: 'Time from entry to exit.' }}>Held</Th>
-              <Th help={H.paper.charges}>Charges</Th>
-              <Th help={H.paper.net}>Net P&L</Th>
+              {opened && head('opened')}
+              {head('closed')}
+              {head('product')}
+              {head('contract')}
+              {head('side')}
+              {head('qty')}
+              {head('prices')}
+              {head('why')}
+              {head('held')}
+              {head('charges')}
+              {head('net')}
             </tr>
           </thead>
           <tbody className="divide-y divide-ink-700/50">
-            {trades.map((t) => (
+            <NoMatchRow table={table} colSpan={opened ? 12 : 11} />
+            {rows.map((t) => (
               <Fragment key={t.id}>
                 <tr className={clsx('cursor-pointer hover:bg-ink-850/50', story === t.id && 'bg-ink-850/60')} onClick={onRow(toggle(t.id))}>
                   <td className={clsx(td, 'w-6 pr-0')}>
@@ -598,7 +760,11 @@ export function TradeTable({ trades, names, opened, footer }: { trades: PaperTra
           </tbody>
         </table>
       </div>
-      {footer}
+      {pageSize ? (
+        <LoadMore hasMore={table.rows.length > limit} loading={false} onMore={() => setLimit((n) => n + pageSize)} shown={Math.min(limit, table.rows.length)} noun="trades" help={H.paper.more} />
+      ) : (
+        more && <LoadMore hasMore={more.hasMore} loading={more.loading} onMore={more.onMore} shown={trades.length} noun="trades" help={H.paper.more} auto={!table.active} />
+      )}
     </>
   );
 }
@@ -665,7 +831,9 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
   const refresh = () => qc.invalidateQueries({ queryKey: ['v2-paper'] });
   const close = useMutation({ mutationFn: (id: string) => v2Api.closePaperTrade(id), onSettled: refresh });
   const reset = useMutation({ mutationFn: (id: string) => v2Api.resetPaper(id), onSettled: refresh });
-  const names = new Map((strategies.data ?? []).map((s) => [s.id, s.name]));
+  const names = useMemo(() => new Map((strategies.data ?? []).map((s) => [s.id, s.name])), [strategies.data]);
+  const openCols = useMemo(() => openColumns(names), [names]);
+  const openT = useTable(open.data, openCols);
   const sum = summary.data;
   const openPnl = (open.data ?? []).reduce((a, t) => a + (t.openPnl ?? 0), 0);
   const trades = useMemo(() => flatPages(log.data?.pages), [log.data]);
@@ -732,6 +900,8 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
         {open.isLoading ? (
           <SkeletonRows rows={3} dense />
         ) : open.data?.length ? (
+          <>
+          <FilterSummary table={openT} noun="open trades" />
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="bg-ink-850 text-left text-[10px] uppercase tracking-wide text-slate-500">
@@ -739,19 +909,15 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
                   <th className={clsx(th, 'w-6 pr-0')}>
                     <span className="sr-only">Story</span>
                   </th>
-                  <th className={th}>Opened</th>
-                  <th className={th}>Product · strategy</th>
-                  <th className={th}>Contract</th>
-                  <th className={th}>Side</th>
-                  <Th help={{ title: 'Quantity', body: 'Lots × lot size (or shares for stocks).' }}>Qty</Th>
-                  <Th help={{ title: 'Entry → last', body: 'Fill price (with slippage) and the latest price seen.' }}>Entry → last</Th>
-                  <Th help={H.paper.range}>Stop → target</Th>
-                  <Th help={H.paper.unrealized}>Open P&L</Th>
+                  {(['opened', 'product', 'contract', 'side', 'qty', 'prices', 'range', 'openPnl'] as const).map((k) => (
+                    <ColumnHead key={k} table={openT} k={k} className={th} />
+                  ))}
                   <th className={th} />
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-700/50">
-                {open.data.map((t) => (
+                <NoMatchRow table={openT} colSpan={10} />
+                {openT.rows.map((t) => (
                   <Fragment key={t.id}>
                     <tr className={clsx('cursor-pointer hover:bg-ink-850/50', openStory === t.id && 'bg-ink-850/60')} onClick={onRow(toggleOpen(t.id))}>
                       <td className={clsx(td, 'w-6 pr-0')}>
@@ -801,6 +967,7 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
               </tbody>
             </table>
           </div>
+          </>
         ) : (
           <EmptyState title="No open paper trades" hint="The next alert of a switched-on connection opens one." />
         )}
@@ -837,11 +1004,7 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
         {log.isLoading ? (
           <SkeletonRows rows={4} dense />
         ) : trades.length ? (
-          <TradeTable
-            trades={trades}
-            names={names}
-            footer={<LoadMore hasMore={!!log.hasNextPage} loading={log.isFetchingNextPage} onMore={() => void log.fetchNextPage()} shown={trades.length} noun="trades" help={H.paper.more} />}
-          />
+          <TradeTable trades={trades} names={names} more={{ hasMore: !!log.hasNextPage, loading: log.isFetchingNextPage, onMore: () => void log.fetchNextPage() }} />
         ) : (
           <EmptyState title={logView === 'all' ? 'No closed paper trades in this period' : logView === 'win' ? 'No winning trades in this period' : 'No losing trades in this period'} />
         )}

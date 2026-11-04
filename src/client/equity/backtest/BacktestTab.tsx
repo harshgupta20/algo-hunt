@@ -238,10 +238,10 @@ export function BacktestTab({ initialStrategyId, initialHistory, draft }: { init
           </div>
           {record.isLoading && <p className="text-xs text-slate-500">Opening the saved backtest…</p>}
           {record.error && <p className="text-xs text-bear">{(record.error as Error).message}</p>}
-          {record.data && (record.data.result ? <Results r={record.data.result} /> : <EmptyState title={E.history.notKept.title} hint={String(E.history.notKept.body)} />)}
+          {record.data && (record.data.result ? <Results key={viewing} r={record.data.result} /> : <EmptyState title={E.history.notKept.title} hint={String(E.history.notKept.body)} />)}
         </>
       ) : (
-        j?.status === 'DONE' && j.result && <Results r={j.result} />
+        j?.status === 'DONE' && j.result && <Results key={j.id} r={j.result} />
       )}
     </div>
   );

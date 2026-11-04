@@ -4,13 +4,14 @@
  * Compare: run one strategy over past candles on many products and rank them by
  * how often it would have alerted (alerts only — no trade scoring).
  */
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BarChart3, ChevronDown, ChevronRight, Link2 } from 'lucide-react';
 import clsx from 'clsx';
-import type { CompareResult, ConnectionConfig } from '@/shared/v2';
+import type { CompareProductResult, CompareResult, ConnectionConfig, V2Instrument } from '@/shared/v2';
 import { EXPIRY_MODES, legName } from '@/shared/v2';
-import { InfoTip, Tooltip } from '../../components/Tooltip';
+import { Tooltip } from '../../components/Tooltip';
+import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../../components/table/ColumnFilters';
 import { Card, EmptyState } from '../../components/ui';
 import { V2ApiError, v2Api } from '../api';
 import { Cell, InstrumentChip, LegBadge, LegPrices, Section, Segmented, TraceView, UnitTag } from '../components';
@@ -19,6 +20,69 @@ import { candleRange, daysAgo, istToday } from '../format';
 import { H } from '../help';
 import { ProductPicker } from '../ProductPicker';
 import { BrandLoader, InlineSpinner, SkeletonCards } from '../../components/loaders';
+
+const coverageOf = (p: CompareProductResult) => (p.candles ? Math.round((p.decided / p.candles) * 100) : 0);
+
+function compareColumns(connected: Record<string, string>): Column<CompareProductResult>[] {
+  return [
+    {
+      key: 'product',
+      label: 'Product',
+      help: { title: 'Product', body: 'Open a row with alerts to see each one and why it fired.' },
+      fields: [
+        { key: 'product', label: 'Product', type: 'enum', value: (p) => p.productId.split(':')[1] },
+        { key: 'name', label: 'Name', type: 'text', value: (p) => p.productName },
+      ],
+    },
+    {
+      key: 'alerts',
+      label: 'Alerts',
+      align: 'right',
+      help: H.compare.alerts,
+      fields: [
+        { key: 'alerts', label: 'Alerts', type: 'number', value: (p) => p.alerts.length },
+        { key: 'alertAt', label: 'Alert candles', type: 'datetime', noSort: true, value: (p) => p.alerts.map((a) => a.candleTime * 1000) },
+      ],
+    },
+    {
+      key: 'coverage',
+      label: 'Coverage',
+      align: 'right',
+      help: H.compare.coverage,
+      fields: [
+        { key: 'coverage', label: 'Coverage', type: 'number', unit: '%', value: coverageOf },
+        { key: 'decided', label: 'Candles decided', type: 'number', value: (p) => p.decided },
+        { key: 'candles', label: 'Candles', type: 'number', value: (p) => p.candles },
+      ],
+    },
+    {
+      key: 'contracts',
+      label: 'Contracts',
+      help: { title: 'Contracts', body: 'The unit (strike · expiry) and each leg’s contract it was checked on.' },
+      fields: [
+        { key: 'contract', label: 'Contract', type: 'text', noSort: true, value: (p) => Object.values(p.unit?.legs ?? {}).flatMap((i: V2Instrument | null | undefined) => (i ? [i.symbol] : [])) },
+        { key: 'strike', label: 'Strike', type: 'number', value: (p) => p.unit?.baseStrike },
+        { key: 'expiry', label: 'Expiry', type: 'date', value: (p) => p.unit?.expiry },
+      ],
+    },
+    {
+      key: 'notes',
+      label: 'Notes',
+      help: { title: 'Notes', body: 'Data problems (amber) and notes about the product’s candles.' },
+      fields: [
+        { key: 'notes', label: 'Notes', type: 'text', noSort: true, value: (p) => [...p.errors, ...p.notes] },
+        { key: 'data', label: 'Data', type: 'enum', value: (p) => (p.errors.length ? 'Problems' : p.notes.length ? 'Notes only' : 'Clean'), order: ['Problems', 'Notes only', 'Clean'] },
+      ],
+    },
+    {
+      key: 'connect',
+      label: 'Connection',
+      help: H.compare.connect,
+      type: 'enum',
+      value: (p) => (connected[p.productId] ? (connected[p.productId]!.startsWith('Connected') ? 'Connected now' : 'Connect failed') : p.unit ? 'Not connected' : 'Can’t connect (no contracts)'),
+    },
+  ];
+}
 
 export function CompareTab({ initialStrategyId }: { initialStrategyId?: string }) {
   const qc = useQueryClient();
@@ -36,6 +100,8 @@ export function CompareTab({ initialStrategyId }: { initialStrategyId?: string }
     if (initialStrategyId) setStrategyId(initialStrategyId);
   }, [initialStrategyId]);
   const strategy = strategies.data?.find((s) => s.id === strategyId);
+  const columns = useMemo(() => compareColumns(connected), [connected]);
+  const t = useTable(result?.products, columns);
   const hasOptions = strategy?.definition.legs.some((l) => l.kind === 'CE' || l.kind === 'PE');
 
   const run = useMutation({
@@ -133,31 +199,22 @@ export function CompareTab({ initialStrategyId }: { initialStrategyId?: string }
           <div className="px-4 py-3 border-b border-ink-700/60 text-xs text-slate-400">
             {result.from} → {result.to} · {result.requests} data request(s) · {result.notes.join(' ')}
           </div>
+          <FilterSummary table={t} noun="products" />
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500 bg-ink-850">
                 <tr>
                   <th className="px-3 py-2">#</th>
-                  <th className="px-3 py-2">Product</th>
-                  <th className="px-3 py-2 text-right">
-                    <span className="inline-flex items-center gap-1">
-                      Alerts <InfoTip content={H.compare.alerts} />
-                    </span>
-                  </th>
-                  <th className="px-3 py-2 text-right">
-                    <span className="inline-flex items-center gap-1">
-                      Coverage <InfoTip content={H.compare.coverage} />
-                    </span>
-                  </th>
-                  <th className="px-3 py-2">Contracts</th>
-                  <th className="px-3 py-2">Notes</th>
-                  <th className="px-3 py-2" />
+                  {(['product', 'alerts', 'coverage', 'contracts', 'notes', 'connect'] as const).map((k) => (
+                    <ColumnHead key={k} table={t} k={k} className="px-3 py-2" />
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-700/50">
-                {result.products.map((p, idx) => {
+                <NoMatchRow table={t} colSpan={7} />
+                {t.rows.map((p, idx) => {
                   const isOpen = open === p.productId;
-                  const coverage = p.candles ? Math.round((p.decided / p.candles) * 100) : 0;
+                  const coverage = coverageOf(p);
                   return (
                     <Fragment key={p.productId}>
                       <tr className={clsx(p.alerts.length && 'cursor-pointer hover:bg-ink-850/60')} onClick={() => p.alerts.length && setOpen(isOpen ? null : p.productId)}>

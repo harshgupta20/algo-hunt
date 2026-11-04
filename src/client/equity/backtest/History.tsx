@@ -11,7 +11,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Eye, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import type { EqBacktestRun } from '@/shared/equity';
 import { EQ_TIMEFRAME } from '@/shared/equity';
-import { Tooltip, type TooltipContent } from '../../components/Tooltip';
+import { Tooltip } from '../../components/Tooltip';
+import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../../components/table/ColumnFilters';
 import { Badge, EmptyState, IconButton, Section } from '../../components/ui';
 import { Cell } from '../../components/form';
 import { eqApi } from '../api';
@@ -28,14 +29,85 @@ const PAGE = 15;
 /** Runs of one strategy: by id when it's saved, by name for unsaved / deleted ones. */
 const groupOf = (r: EqBacktestRun) => (r.strategyId ? `id:${r.strategyId}` : `name:${r.strategyName}`);
 
-function Th({ help, children, right }: { help: TooltipContent; children: string; right?: boolean }) {
-  return (
-    <th className={clsx(th, right && 'text-right')}>
-      <Tooltip content={help}>
-        <span className="uppercase tracking-wide">{children}</span>
-      </Tooltip>
-    </th>
-  );
+const dayCount = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+
+function historyColumns(savedIds: Set<string> | null): Column<EqBacktestRun>[] {
+  const status = (r: EqBacktestRun) => (r.strategyVersion === null ? 'Unsaved' : r.strategyId !== null && (!savedIds || savedIds.has(r.strategyId)) ? 'Saved' : 'Deleted');
+  return [
+    {
+      key: 'ran',
+      label: 'Ran',
+      help: E.history.ranAt,
+      fields: [
+        { key: 'ran', label: 'Ran at', type: 'datetime', value: (r) => r.ranAt },
+        { key: 'took', label: 'Took', type: 'number', unit: 's', value: (r) => r.seconds },
+      ],
+    },
+    {
+      key: 'strategy',
+      label: 'Strategy',
+      help: E.history.strategy,
+      fields: [
+        { key: 'strategy', label: 'Strategy', type: 'enum', value: (r) => r.strategyName },
+        { key: 'version', label: 'Version', type: 'number', value: (r) => r.strategyVersion },
+        { key: 'timeframe', label: 'Timeframe', type: 'enum', value: (r) => EQ_TIMEFRAME[r.timeframe].label },
+        { key: 'status', label: 'Strategy is', type: 'enum', noSort: true, value: status, order: ['Saved', 'Unsaved', 'Deleted'] },
+      ],
+    },
+    {
+      key: 'stocks',
+      label: 'Stocks',
+      help: E.history.stocks,
+      fields: [
+        { key: 'stocks', label: 'Ran on', type: 'enum', value: (r) => r.stocksLabel },
+        { key: 'symbols', label: 'How many stocks', type: 'number', value: (r) => r.symbols },
+      ],
+    },
+    {
+      key: 'period',
+      label: 'Period',
+      help: E.history.period,
+      fields: [
+        { key: 'from', label: 'From', type: 'date', value: (r) => r.from },
+        { key: 'to', label: 'To', type: 'date', value: (r) => r.to },
+        { key: 'days', label: 'Length', type: 'number', unit: 'days', value: (r) => dayCount(r.from, r.to) },
+      ],
+    },
+    {
+      key: 'capital',
+      label: 'Capital',
+      align: 'right',
+      help: E.history.capital,
+      fields: [
+        { key: 'capital', label: 'Capital (blank = no limit)', type: 'number', unit: '₹', value: (r) => r.capital },
+        { key: 'maxPositions', label: 'Max positions', type: 'number', value: (r) => r.maxPositions },
+      ],
+    },
+    {
+      key: 'result',
+      label: 'Return',
+      align: 'right',
+      help: E.history.result,
+      fields: [
+        { key: 'result', label: 'Return', type: 'number', unit: '%', signed: true, value: (r) => r.returnPct },
+        { key: 'netPnl', label: 'Net P&L', type: 'number', unit: '₹', signed: true, value: (r) => r.netPnl },
+        { key: 'cagr', label: 'CAGR', type: 'number', unit: '%', signed: true, value: (r) => r.cagrPct },
+      ],
+    },
+    { key: 'dd', label: 'Max DD', align: 'right', help: E.history.drawdown, type: 'number', unit: '%', value: (r) => r.maxDrawdownPct },
+    {
+      key: 'trades',
+      label: 'Trades',
+      align: 'right',
+      help: E.history.trades,
+      fields: [
+        { key: 'trades', label: 'Trades', type: 'number', value: (r) => r.trades },
+        { key: 'winRate', label: 'Win rate', type: 'number', unit: '%', value: (r) => (r.trades ? r.winRate : null) },
+        { key: 'pf', label: 'Profit factor', type: 'number', value: (r) => r.profitFactor },
+      ],
+    },
+    { key: 'benchmark', label: 'NIFTY 50', align: 'right', help: E.history.benchmark, type: 'number', unit: '%', signed: true, value: (r) => r.benchmarkReturnPct },
+  ];
 }
 
 function Row({ r, active, savedStrategy, onOpen, onRunAgain, onRemoved }: { r: EqBacktestRun; active: boolean; savedStrategy: boolean; onOpen: () => void; onRunAgain: () => void; onRemoved: () => void }) {
@@ -137,7 +209,9 @@ export function History({ viewing, savedIds, onOpen, onRunAgain, onRemoved }: { 
     }
     return [...m].sort((a, b) => a[1].label.localeCompare(b[1].label));
   }, [runs]);
-  const list = group === 'all' ? runs : runs.filter((r) => groupOf(r) === group);
+  const list = useMemo(() => (group === 'all' ? runs : runs.filter((r) => groupOf(r) === group)), [runs, group]);
+  const columns = useMemo(() => historyColumns(savedIds), [savedIds]);
+  const t = useTable(list, columns);
 
   return (
     <Section
@@ -166,40 +240,26 @@ export function History({ viewing, savedIds, onOpen, onRunAgain, onRemoved }: { 
         <EmptyState title="No backtests yet" hint="Every backtest you run is kept here — when, which strategy, which stocks and how it did." />
       ) : (
         <div className="-mx-4 overflow-x-auto">
+          <FilterSummary table={t} noun="backtests" />
           <table className="w-full text-xs">
             <thead className="bg-ink-850 text-[10px] text-slate-500">
               <tr>
-                <Th help={E.history.ranAt}>Ran</Th>
-                <Th help={E.history.strategy}>Strategy</Th>
-                <Th help={E.history.stocks}>Stocks</Th>
-                <Th help={E.history.period}>Period</Th>
-                <Th help={E.history.capital} right>
-                  Capital
-                </Th>
-                <Th help={E.history.result} right>
-                  Return
-                </Th>
-                <Th help={E.history.drawdown} right>
-                  Max DD
-                </Th>
-                <Th help={E.history.trades} right>
-                  Trades
-                </Th>
-                <Th help={E.history.benchmark} right>
-                  NIFTY 50
-                </Th>
+                {columns.map((c) => (
+                  <ColumnHead key={c.key} table={t} k={c.key} className={clsx(th, 'uppercase tracking-wide')} />
+                ))}
                 <th className={th} />
               </tr>
             </thead>
             <tbody className="divide-y divide-ink-700/50">
-              {list.slice(0, shown).map((r) => (
+              <NoMatchRow table={t} colSpan={10} />
+              {t.rows.slice(0, shown).map((r) => (
                 <Row key={r.id} r={r} active={r.id === viewing} savedStrategy={r.strategyId !== null && (!savedIds || savedIds.has(r.strategyId))} onOpen={() => onOpen(r)} onRunAgain={() => onRunAgain(r)} onRemoved={() => onRemoved(r)} />
               ))}
             </tbody>
           </table>
-          {list.length > shown && (
+          {t.rows.length > shown && (
             <button type="button" className="btn-ghost mx-4 mt-2 py-1 text-xs" onClick={() => setShown((n) => n + PAGE * 2)}>
-              Show more ({(list.length - shown).toLocaleString('en-IN')} older)
+              Show more ({(t.rows.length - shown).toLocaleString('en-IN')} {t.sort ? 'more' : 'older'})
             </button>
           )}
         </div>

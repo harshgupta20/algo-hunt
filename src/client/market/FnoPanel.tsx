@@ -5,6 +5,7 @@ import { useMemo, type ReactNode } from 'react';
 import clsx from 'clsx';
 import type { FuturesBasis, MoversData, OiBuildup, OiMove, OptionSnapshot, OptionsData, Participant, ParticipantDay } from '@/shared/market/types';
 import { InfoTip, Tooltip, type TooltipContent } from '../components/Tooltip';
+import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../components/table/ColumnFilters';
 import { Section } from '../components/ui';
 import { OiButterfly } from './charts';
 import { dirClass, fmtCompact, fmtPct, fmtPrice, fmtSigned, shortDay } from './format';
@@ -167,6 +168,61 @@ function Buildup({ oi, onPick }: { oi: OiMove[] | undefined; onPick: (s: string)
 
 const WHO: Participant[] = ['FII', 'DII', 'Pro', 'Client'];
 
+interface WhoRow {
+  who: Participant;
+  longPct: number;
+  fut: number;
+  calls: number;
+  puts: number;
+}
+
+const WHO_COLUMNS: Column<WhoRow>[] = [
+  { key: 'who', label: 'Who', help: M.participants, type: 'enum', value: (r) => r.who, order: WHO },
+  { key: 'longPct', label: 'Fut long %', align: 'right', help: { title: 'Futures long %', body: 'Index-futures longs ÷ (longs + shorts).' }, type: 'number', unit: '%', value: (r) => r.longPct },
+  { key: 'fut', label: 'Fut net', align: 'right', help: { title: 'Futures net', body: 'Index-futures longs − shorts (contracts).' }, type: 'number', signed: true, value: (r) => r.fut },
+  { key: 'calls', label: 'Calls net', align: 'right', help: { title: 'Calls net', body: 'Index calls bought − sold (contracts).' }, type: 'number', signed: true, value: (r) => r.calls },
+  { key: 'puts', label: 'Puts net', align: 'right', help: { title: 'Puts net', body: 'Index puts bought − sold (contracts).' }, type: 'number', signed: true, value: (r) => r.puts },
+];
+
+/** Who holds index F&O on one day — FII, DII, Pro, Client. */
+function WhoTable({ day }: { day: ParticipantDay }) {
+  const rows = useMemo(
+    () =>
+      WHO.map((w): WhoRow => {
+        const r = day.rows[w];
+        return { who: w, longPct: (r.futIdxLong / (r.futIdxLong + r.futIdxShort || 1)) * 100, fut: r.futIdxLong - r.futIdxShort, calls: r.callLong - r.callShort, puts: r.putLong - r.putShort };
+      }),
+    [day],
+  );
+  const table = useTable(rows, WHO_COLUMNS);
+  return (
+    <>
+      <FilterSummary table={table} noun="participants" className="rounded-md border" />
+      <table className="w-full text-[11px] tabular-nums">
+        <thead className="text-[10px] uppercase tracking-wide text-slate-500">
+          <tr>
+            {WHO_COLUMNS.map((c) => (
+              <ColumnHead key={c.key} table={table} k={c.key} className={c.align === 'right' ? 'text-right font-medium' : 'text-left font-medium'} />
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <NoMatchRow table={table} colSpan={5} />
+          {table.rows.map((r) => (
+            <tr key={r.who} className="border-t border-ink-700/40">
+              <td className="py-1 font-medium text-slate-300">{r.who}</td>
+              <td className="text-right text-fg">{r.longPct.toFixed(0)}%</td>
+              <td className={clsx('text-right', dirClass(r.fut))}>{fmtCompact(r.fut)}</td>
+              <td className={clsx('text-right', dirClass(r.calls))}>{fmtCompact(r.calls)}</td>
+              <td className={clsx('text-right', dirClass(r.puts))}>{fmtCompact(r.puts)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
 function Participants({ days }: { days: ParticipantDay[] | undefined }) {
   if (!days) return <Skeleton className="h-40" />;
   if (!days.length) return <p className="text-xs text-slate-500">NSE’s participant data isn’t available right now.</p>;
@@ -180,35 +236,7 @@ function Participants({ days }: { days: ParticipantDay[] | undefined }) {
       <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-300">
         Who holds index F&O <span className="font-normal text-slate-500">· {shortDay(today!.date)}</span> <InfoTip content={M.participants} />
       </div>
-      <table className="w-full text-[11px] tabular-nums">
-        <thead className="text-[10px] uppercase tracking-wide text-slate-500">
-          <tr>
-            <th className="text-left font-medium" />
-            <th className="text-right font-medium">Fut long %</th>
-            <th className="text-right font-medium">Fut net</th>
-            <th className="text-right font-medium">Calls net</th>
-            <th className="text-right font-medium">Puts net</th>
-          </tr>
-        </thead>
-        <tbody>
-          {WHO.map((w) => {
-            const r = today!.rows[w];
-            const longPct = (r.futIdxLong / (r.futIdxLong + r.futIdxShort || 1)) * 100;
-            const fut = r.futIdxLong - r.futIdxShort;
-            const calls = r.callLong - r.callShort;
-            const puts = r.putLong - r.putShort;
-            return (
-              <tr key={w} className="border-t border-ink-700/40">
-                <td className="py-1 font-medium text-slate-300">{w}</td>
-                <td className="text-right text-fg">{longPct.toFixed(0)}%</td>
-                <td className={clsx('text-right', dirClass(fut))}>{fmtCompact(fut)}</td>
-                <td className={clsx('text-right', dirClass(calls))}>{fmtCompact(calls)}</td>
-                <td className={clsx('text-right', dirClass(puts))}>{fmtCompact(puts)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <WhoTable day={today!} />
       <div className="mt-3">
         <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">FII long % in index futures</div>
         <div className="flex items-end gap-2">

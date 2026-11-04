@@ -8,9 +8,10 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Link2, Pencil, PlayCircle, Plus, Power, PowerOff, RefreshCw, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
-import type { ConnectionConfig, PaperOverride, PaperPlan, StrategyDefinition, V2Strategy } from '@/shared/v2';
+import type { AlertStateName, ConnectionConfig, PaperOverride, PaperPlan, StrategyDefinition, TriState, UnitState, V2Strategy } from '@/shared/v2';
 import { TIMEFRAME, candleRequestsPerProduct, defaultPaperPlan, effectivePlan, expiryText, legName, paperGroups, planSizing, policyText, resolveRules } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
+import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../../components/table/ColumnFilters';
 import { Badge, Card, EmptyState, IconButton, Spinner } from '../../components/ui';
 import { V2ApiError, v2Api, type ConnectionRow, type ExplainResult } from '../api';
 import { InstrumentChip, LegBadge, ProductLegs, Section, TriBadge, UnitStateBadge, UnitTag } from '../components';
@@ -206,6 +207,23 @@ interface PaperSettings {
   overrides: Record<string, PaperOverride>;
 }
 
+const UNIT_COLUMNS: Column<UnitState>[] = [
+  {
+    key: 'unit',
+    label: 'Unit',
+    help: { title: 'Unit', body: 'The contracts (strike · expiry) the connection checks.' },
+    fields: [
+      { key: 'unit', label: 'Unit', type: 'text', value: (u) => u.unitKey },
+      { key: 'strike', label: 'Strike', type: 'number', value: (u) => u.lastEvaluation?.unit.baseStrike },
+      { key: 'expiry', label: 'Expiry', type: 'date', value: (u) => u.lastEvaluation?.unit.expiry },
+    ],
+  },
+  { key: 'result', label: 'Result', help: { title: 'Result', body: 'Whether the conditions were true on the last candle checked.' }, type: 'enum', value: (u) => u.lastResult, display: (v) => H.tri[v as TriState]?.title ?? v, order: ['TRUE', 'FALSE', 'UNKNOWN'] },
+  { key: 'state', label: 'State', help: { title: 'State', body: 'Idle, triggered, cooling down, acknowledged or disabled — hover a badge for details.' }, type: 'enum', value: (u) => u.state, display: (v) => H.unit[v as AlertStateName]?.title ?? v },
+  { key: 'evaluated', label: 'Evaluated', help: { title: 'Evaluated', body: 'When the unit was last checked (IST).' }, type: 'datetime', value: (u) => u.updatedAt },
+  { key: 'lastAlert', label: 'Last alert', help: { title: 'Last alert', body: 'When the unit last sent an alert (IST).' }, type: 'datetime', value: (u) => u.lastAlertAt },
+];
+
 function ConnectionRowView({ c, definition, paper }: { c: ConnectionRow; definition?: StrategyDefinition; paper?: PaperSettings }) {
   const qc = useQueryClient();
   const [panel, setPanel] = useState<'units' | 'explain' | 'edit' | 'paper' | null>(null);
@@ -223,6 +241,7 @@ function ConnectionRowView({ c, definition, paper }: { c: ConnectionRow; definit
   const save = useMutation({ mutationFn: () => v2Api.updateConnection(c.id, config), onSuccess: () => (setPanel(null), setError(null), refresh()), onError });
   const run = useMutation({ mutationFn: () => v2Api.explainConnection(c.id), onSuccess: (r) => (setExplain(r), setPanel('explain')), onError });
   const units = useQuery({ queryKey: ['v2-units', c.id], queryFn: () => v2Api.units(c.id), enabled: panel === 'units', refetchInterval: 30_000 });
+  const unitsT = useTable(units.data, UNIT_COLUMNS);
   const p = c.product;
   const btn = 'p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-ink-800';
   const hasOptions = definition?.legs.some((l) => l.kind === 'CE' || l.kind === 'PE');
@@ -312,18 +331,19 @@ function ConnectionRowView({ c, definition, paper }: { c: ConnectionRow; definit
           {units.isLoading ? (
             <SkeletonRows rows={2} dense />
           ) : units.data?.length ? (
+            <>
+            <FilterSummary table={unitsT} noun="units" className="rounded-md border" />
             <table className="w-full text-xs">
               <thead className="text-left text-[10px] uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th className="py-1 pr-3">Unit</th>
-                  <th className="py-1 pr-3">Result</th>
-                  <th className="py-1 pr-3">State</th>
-                  <th className="py-1 pr-3">Evaluated</th>
-                  <th className="py-1">Last alert</th>
+                  {UNIT_COLUMNS.map((col) => (
+                    <ColumnHead key={col.key} table={unitsT} k={col.key} className="py-1 pr-3" />
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-700/40">
-                {units.data.map((u) => (
+                <NoMatchRow table={unitsT} colSpan={5} />
+                {unitsT.rows.map((u) => (
                   <tr key={u.unitKey}>
                     <td className="py-1 pr-3">{u.lastEvaluation ? <UnitTag unit={u.lastEvaluation.unit} symbol={p?.symbol ?? ''} /> : u.unitKey}</td>
                     <td className="py-1 pr-3">
@@ -338,6 +358,7 @@ function ConnectionRowView({ c, definition, paper }: { c: ConnectionRow; definit
                 ))}
               </tbody>
             </table>
+            </>
           ) : (
             <p className="text-xs text-slate-500">Not evaluated yet — switched-on connections are evaluated when their trigger candle closes during market hours.</p>
           )}
