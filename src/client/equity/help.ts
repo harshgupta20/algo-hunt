@@ -97,6 +97,9 @@ export const E = {
     barsAgo: { title: 'Days / weeks ago', body: 'Read the value this many candles back on the strategy’s timeframe (0 = now) — e.g. close > close 1 day ago.' },
     number: { title: 'Number', body: 'A fixed level, e.g. 60 for RSI.' },
     readsAs: { title: 'Reads as', body: 'This condition in plain words.' },
+    valuePanel: { title: 'Value', body: 'What the condition looks at: a price field, an indicator (with its settings), optionally a few candles back or scaled.' },
+    comparedPanel: { title: 'Compared with', body: 'What the value is compared with: another price or indicator, or a fixed number.', example: 'SMA(50) crosses above SMA(100) · RSI(14) greater than 60' },
+    more: { title: 'More settings', body: 'Read the value a few candles back, or scale it (e.g. 2 × SMA of volume).' },
   },
 
   chart: {

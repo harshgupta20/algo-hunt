@@ -8,11 +8,11 @@
  */
 import { useState, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { RotateCcw, Save, X } from 'lucide-react';
+import { Clock, Crosshair, Receipt, RotateCcw, Save, X, type LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import type { PaperOverride, PaperOverrideKey, PaperPlan } from '@/shared/v2';
 import { PAPER_DEFAULTS, diffOverride, effectivePlan, planConditions, trailingIssue, watchWindowIssue } from '@/shared/v2';
-import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
+import { Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { InlineSpinner } from '../../components/loaders';
 import { v2Api } from '../api';
 import { NumberInput, Toggle } from '../components';
@@ -20,21 +20,42 @@ import { H } from '../help';
 import { inr } from './money';
 
 
+/**
+ * A block of the trade plan: icon + title (explained on hover) + its settings. Shared with "What to trade" and the
+ * trailing rules, so the whole plan reads as a few titled blocks.
+ */
+export function PlanBlock({ icon: Icon, title, help, aside, children, className }: { icon: LucideIcon; title: string; help: TooltipContent; aside?: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <section className={clsx('flex min-w-0 flex-col rounded-lg border border-ink-700 bg-ink-900', className)}>
+      <header className="flex flex-wrap items-center gap-2 border-b border-ink-700/70 px-3 py-2">
+        <Icon aria-hidden className="h-4 w-4 shrink-0 text-accent-soft" />
+        <Tooltip content={help}>
+          <h4 className="cursor-help text-[13px] font-semibold text-fg">{title}</h4>
+        </Tooltip>
+        {aside && <div className="ml-auto flex flex-wrap items-center gap-2">{aside}</div>}
+      </header>
+      <div className="flex flex-col gap-2 p-3">{children}</div>
+    </section>
+  );
+}
+
+/** One setting: a label column (explained on hover; "own ↺" when it differs from the strategy's) and its controls. */
 function Field({ label, help, own, onReset, children }: { label: string; help: TooltipContent; own?: boolean; onReset?: () => void; children: ReactNode }) {
   return (
-    <div className={clsx('flex flex-col gap-1 rounded-lg px-2 py-1.5', own && 'bg-accent/5 ring-1 ring-accent/30')}>
-      <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-        {label}
-        <InfoTip content={help} />
+    <div className={clsx('-mx-1.5 grid grid-cols-[6.75rem_minmax(0,1fr)] items-center gap-x-2 rounded-md px-1.5 py-0.5', own && 'bg-accent/5 ring-1 ring-accent/30')}>
+      <span className="flex flex-col items-start leading-tight">
+        <Tooltip content={help}>
+          <span className="cursor-help text-[12px] font-medium text-slate-400 underline decoration-slate-600 decoration-dotted underline-offset-2">{label}</span>
+        </Tooltip>
         {own && onReset && (
           <Tooltip content={H.paper.own}>
-            <button type="button" aria-label={`${label}: use the strategy's value`} onClick={onReset} className="ml-1 inline-flex items-center gap-0.5 normal-case tracking-normal text-accent-soft hover:underline">
+            <button type="button" aria-label={`${label}: use the strategy's value`} onClick={onReset} className="inline-flex items-center gap-0.5 text-[11px] text-accent-soft hover:underline">
               own <RotateCcw className="w-3 h-3" />
             </button>
           </Tooltip>
         )}
       </span>
-      <div className="flex flex-wrap items-center gap-1.5">{children}</div>
+      <div className="flex min-h-[30px] min-w-0 flex-wrap items-center gap-1.5">{children}</div>
     </div>
   );
 }
@@ -43,17 +64,65 @@ function Field({ label, help, own, onReset, children }: { label: string; help: T
 function PctField({ label, value, fallback, max, required, onChange }: { label: string; value: number | null; fallback: number; max: number; required?: boolean; onChange: (v: number | null) => void }) {
   return (
     <>
-      <input type="checkbox" aria-label={`${label} on`} className="accent-[rgb(var(--accent))] disabled:opacity-40" checked={value !== null} disabled={required && value !== null} onChange={(e) => onChange(e.target.checked ? fallback : null)} />
+      <Tooltip content={{ ...H.paper.pctOn, title: `${label.replace(' %', '')}: ${value === null ? 'off' : 'on'}`, note: required && value !== null ? 'Needed while Trailing SL is on — trailing starts there.' : undefined }}>
+        <input type="checkbox" aria-label={`${label} on`} className="accent-[rgb(var(--accent))] disabled:opacity-40" checked={value !== null} disabled={required && value !== null} onChange={(e) => onChange(e.target.checked ? fallback : null)} />
+      </Tooltip>
       <NumberInput label={label} min={0.1} max={max} step={1} disabled={value === null} className="input py-1 text-xs w-20 tabular-nums disabled:opacity-40" value={value} placeholder="none" onChange={onChange} />
       <span className="text-xs text-slate-400">%</span>
     </>
   );
 }
 
+/** A from–until pair of times. */
+function TimeRange({ label, from, to, onFrom, onTo }: { label: string; from: string; to: string; onFrom: (v: string) => void; onTo: (v: string) => void }) {
+  return (
+    <>
+      <input aria-label={`${label} from`} type="time" className="input py-1 text-xs" value={from} onChange={(e) => e.target.value && onFrom(e.target.value)} />
+      <span className="text-xs text-slate-500">–</span>
+      <input aria-label={`${label} until`} type="time" className="input py-1 text-xs" value={to} onChange={(e) => e.target.value && onTo(e.target.value)} />
+    </>
+  );
+}
+
 /**
- * Money, exits, watch window and costs. `base` = the strategy's plan when editing a connection's own values (or the
- * saved plan on a backtest page). `sizing` = which size fields the traded legs need (lots for futures / options, ₹
- * for stocks); `nseOnly` = no MCX times (NSE / BSE products only).
+ * Where a trade closes, drawn: stop-loss (loss side) ◄ entry ► target (profit side) → trailing rules. The two sides
+ * are sized by their %, so a −15 % stop with a +40 % target looks like one.
+ */
+function TradePath({ stopPct, targetPct, trailing }: { stopPct: number | null; targetPct: number | null; trailing: boolean }) {
+  const w = (pct: number | null) => Math.max(pct ?? 10, 6);
+  const trail = trailing && targetPct !== null;
+  return (
+    <Tooltip content={H.paper.tradePath} className="block">
+      <div className="cursor-help rounded-md border border-ink-700/70 bg-ink-850 px-3 pb-2 pt-2.5">
+        <div className="flex h-2 items-stretch overflow-hidden rounded-full">
+          <div style={{ flexGrow: w(stopPct) }} className={stopPct === null ? 'bg-ink-700' : 'bg-bear/70'} />
+          <div className="w-1 bg-fg" />
+          <div style={{ flexGrow: w(targetPct) }} className={targetPct === null ? 'bg-ink-700' : trail ? 'bg-bull/50' : 'bg-bull/70'} />
+          {trail && <div style={{ flexGrow: w(targetPct) * 0.7 }} className="bg-gradient-to-r from-accent/70 to-accent/5" />}
+        </div>
+        <div className="mt-1.5 flex text-[11px] leading-tight">
+          <div style={{ flexGrow: w(stopPct) }} className="flex justify-between gap-2 pr-1">
+            <span className={stopPct === null ? 'text-slate-500' : 'font-semibold text-bear'}>{stopPct === null ? 'No stop-loss' : `−${stopPct}% stop-loss`}</span>
+            <span className="font-semibold text-fg">Entry</span>
+          </div>
+          <div style={{ flexGrow: w(targetPct) }} className="flex justify-end pl-1">
+            <span className={targetPct === null ? 'text-slate-500' : 'font-semibold text-bull'}>{targetPct === null ? 'No target' : trail ? `+${targetPct}% trailing starts` : `+${targetPct}% target`}</span>
+          </div>
+          {trail && (
+            <div style={{ flexGrow: w(targetPct) * 0.7 }} className="flex justify-end pl-1">
+              <span className="font-semibold text-accent-soft">trailing rules →</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </Tooltip>
+  );
+}
+
+/**
+ * Money, exits, watch window and costs, as three blocks (side by side when there is room). `base` = the strategy's
+ * plan when editing a connection's own values (or the saved plan on a backtest page). `sizing` = which size fields
+ * the traded legs need (lots for futures / options, ₹ for stocks); `nseOnly` = no MCX times (NSE / BSE products only).
  */
 export function PaperTermsFields({
   value,
@@ -83,8 +152,8 @@ export function PaperTermsFields({
   // Switching Trailing SL on fills in a target to start at.
   const setTrailing = (trailing: boolean) => set({ trailing, ...(trailing && value.targetPct === null ? { targetPct: PAPER_DEFAULTS.targetPct } : {}) });
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-end gap-2">
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(19rem,1fr))] items-start gap-3">
+      <PlanBlock icon={Crosshair} title="Size & exits" help={H.paper.blockSize}>
         {sizing.lots && (
           <Field label="Lots per trade" help={H.paper.lots} own={own('lotsPerTrade')} onReset={() => reset('lotsPerTrade')}>
             <NumberInput label="Lots per trade" min={1} max={1000} step={1} className="input py-1 text-xs w-20 tabular-nums" value={value.lotsPerTrade} onChange={(n) => set({ lotsPerTrade: Math.max(1, Math.round(n)) })} />
@@ -92,7 +161,7 @@ export function PaperTermsFields({
           </Field>
         )}
         {sizing.cash && (
-          <Field label={sizing.lots ? 'Stocks: ₹ per trade' : '₹ per trade'} help={H.paper.cash} own={own('cashPerTrade')} onReset={() => reset('cashPerTrade')}>
+          <Field label={sizing.lots ? 'Stocks: ₹ / trade' : '₹ per trade'} help={H.paper.cash} own={own('cashPerTrade')} onReset={() => reset('cashPerTrade')}>
             <span className="text-xs text-slate-400">₹</span>
             <NumberInput label="₹ per trade" min={100} max={1e9} step={1000} className="input py-1 text-xs w-28 tabular-nums" value={value.cashPerTrade} onChange={(cashPerTrade) => set({ cashPerTrade })} />
           </Field>
@@ -106,46 +175,43 @@ export function PaperTermsFields({
         <Field label="Trailing SL" help={H.paper.trailing} own={own('trailing')} onReset={() => reset('trailing')}>
           <Toggle checked={value.trailing} onChange={setTrailing} label="Trail from the target" help={noRules ? H.paper.trailingNoRules : H.paper.trailing} disabled={noRules && !value.trailing} />
         </Field>
-      </div>
-      {value.trailing && value.targetPct !== null && (
-        <Tooltip content={H.paper.trailsAtTarget}>
-          <p tabIndex={0} className="w-fit text-[11px] text-slate-500 outline-none">
-            {value.stopPct !== null ? `The −${value.stopPct} % stop-loss guards the trade until the +${value.targetPct} % target. ` : `Until the +${value.targetPct} % target nothing but the other exits guards the trade. `}
-            There it keeps running: your trailing rules take over, and the stop-loss and target no longer apply.
-          </p>
-        </Tooltip>
-      )}
-      {trailIssue && <p className="text-[11px] text-warn">{trailIssue}</p>}
-      {noRules && <p className="text-[11px] text-slate-500">{value.trailing ? 'Trailing SL needs trailing rules — this strategy has none: add them in its trade plan (Strategies → ✎ → 4 · Paper trading), or switch Trailing SL off here.' : 'Trailing SL: add trailing rules in the strategy’s trade plan first (Strategies → ✎ → 4 · Paper trading).'}</p>}
-      <div className="flex flex-wrap items-end gap-2">
+        <TradePath stopPct={value.stopPct} targetPct={value.targetPct} trailing={value.trailing} />
+        {value.trailing && value.targetPct !== null && (
+          <Tooltip content={H.paper.trailsAtTarget}>
+            <p tabIndex={0} className="w-fit text-[11px] leading-relaxed text-slate-500 outline-none">
+              {value.stopPct !== null ? `The −${value.stopPct}% stop-loss guards the trade until +${value.targetPct}%. ` : `Until +${value.targetPct}% nothing but the other exits guards the trade. `}
+              From there your trailing rules take over; the stop-loss and target no longer apply.
+            </p>
+          </Tooltip>
+        )}
+        {trailIssue && <p className="text-[11px] text-warn">{trailIssue}</p>}
+        {noRules && <p className="text-[11px] text-slate-500">{value.trailing ? 'Trailing SL needs trailing rules — this strategy has none: add them in its trade plan (Strategies → ✎ → 4 · Paper trading), or switch Trailing SL off here.' : 'Trailing SL: add trailing rules in the strategy’s trade plan first (Strategies → ✎ → 4 · Paper trading).'}</p>}
+      </PlanBlock>
+
+      <PlanBlock icon={Clock} title="When it trades" help={H.paper.blockWhen}>
         <Field label="Watch" help={H.paper.watch} own={own('watch')} onReset={() => reset('watch')}>
           <Toggle checked={value.watch} onChange={(watch) => set({ watch })} label="Only between set times" help={H.paper.watch} />
         </Field>
         {value.watch && (
           <>
-            <Field label={nseOnly ? 'Watch from – until' : 'NSE / BSE from – until'} help={H.paper.watchNse} own={own('watchNseFrom', 'watchNseTo')} onReset={() => reset('watchNseFrom', 'watchNseTo')}>
-              <input aria-label="Watch NSE / BSE from" type="time" className="input py-1 text-xs" value={value.watchNseFrom} onChange={(e) => e.target.value && set({ watchNseFrom: e.target.value })} />
-              <span className="text-xs text-slate-500">–</span>
-              <input aria-label="Watch NSE / BSE until" type="time" className="input py-1 text-xs" value={value.watchNseTo} onChange={(e) => e.target.value && set({ watchNseTo: e.target.value })} />
+            <Field label={nseOnly ? 'From – until' : 'NSE / BSE'} help={H.paper.watchNse} own={own('watchNseFrom', 'watchNseTo')} onReset={() => reset('watchNseFrom', 'watchNseTo')}>
+              <TimeRange label="Watch NSE / BSE" from={value.watchNseFrom} to={value.watchNseTo} onFrom={(watchNseFrom) => set({ watchNseFrom })} onTo={(watchNseTo) => set({ watchNseTo })} />
             </Field>
             {!nseOnly && (
-              <Field label="MCX from – until" help={H.paper.watchMcx} own={own('watchMcxFrom', 'watchMcxTo')} onReset={() => reset('watchMcxFrom', 'watchMcxTo')}>
-                <input aria-label="Watch MCX from" type="time" className="input py-1 text-xs" value={value.watchMcxFrom} onChange={(e) => e.target.value && set({ watchMcxFrom: e.target.value })} />
-                <span className="text-xs text-slate-500">–</span>
-                <input aria-label="Watch MCX until" type="time" className="input py-1 text-xs" value={value.watchMcxTo} onChange={(e) => e.target.value && set({ watchMcxTo: e.target.value })} />
+              <Field label="MCX" help={H.paper.watchMcx} own={own('watchMcxFrom', 'watchMcxTo')} onReset={() => reset('watchMcxFrom', 'watchMcxTo')}>
+                <TimeRange label="Watch MCX" from={value.watchMcxFrom} to={value.watchMcxTo} onFrom={(watchMcxFrom) => set({ watchMcxFrom })} onTo={(watchMcxTo) => set({ watchMcxTo })} />
               </Field>
             )}
-            {windowIssue && <p className="self-center text-[11px] text-warn">{windowIssue}</p>}
+            {windowIssue && <p className="text-[11px] text-warn">{windowIssue}</p>}
           </>
         )}
-      </div>
-      <div className="flex flex-wrap items-end gap-2">
+        <div className="border-t border-dashed border-ink-700" />
         <Field label="Intraday" help={H.paper.squareOff} own={own('squareOff')} onReset={() => reset('squareOff')}>
           <Toggle checked={value.squareOff} onChange={(squareOff) => set({ squareOff })} label="Square off daily" help={H.paper.squareOff} />
         </Field>
         {value.squareOff && (
           <>
-            <Field label="NSE / BSE at" help={H.paper.squareOffNse} own={own('squareOffNse')} onReset={() => reset('squareOffNse')}>
+            <Field label={nseOnly ? 'Square off at' : 'NSE / BSE at'} help={H.paper.squareOffNse} own={own('squareOffNse')} onReset={() => reset('squareOffNse')}>
               <input aria-label="NSE / BSE square-off time" type="time" className="input py-1 text-xs" value={value.squareOffNse} onChange={(e) => e.target.value && set({ squareOffNse: e.target.value })} />
             </Field>
             {!nseOnly && (
@@ -156,18 +222,24 @@ export function PaperTermsFields({
           </>
         )}
         {hasGroups && (
-          <Field label="Other group" help={H.paper.opposite} own={own('exitOnOpposite')} onReset={() => reset('exitOnOpposite')}>
-            <Toggle checked={value.exitOnOpposite} onChange={(exitOnOpposite) => set({ exitOnOpposite })} label="Exit when another group fires" help={H.paper.opposite} />
-          </Field>
+          <>
+            <div className="border-t border-dashed border-ink-700" />
+            <Field label="Other group" help={H.paper.opposite} own={own('exitOnOpposite')} onReset={() => reset('exitOnOpposite')}>
+              <Toggle checked={value.exitOnOpposite} onChange={(exitOnOpposite) => set({ exitOnOpposite })} label="Exit when another group fires" help={H.paper.opposite} />
+            </Field>
+          </>
         )}
-        <Field label="Costs" help={H.paper.charges} own={own('charges')} onReset={() => reset('charges')}>
-          <Toggle checked={value.charges} onChange={(charges) => set({ charges })} label="Deduct charges" help={H.paper.charges} />
+      </PlanBlock>
+
+      <PlanBlock icon={Receipt} title="Costs" help={H.paper.blockCosts}>
+        <Field label="Charges" help={H.paper.charges} own={own('charges')} onReset={() => reset('charges')}>
+          <Toggle checked={value.charges} onChange={(charges) => set({ charges })} label="Deduct brokerage & taxes" help={H.paper.charges} />
         </Field>
         <Field label="Slippage" help={H.paper.slippage} own={own('slippagePct')} onReset={() => reset('slippagePct')}>
           <NumberInput label="Slippage %" min={0} max={10} step={0.1} className="input py-1 text-xs w-20 tabular-nums" value={value.slippagePct} onChange={(slippagePct) => set({ slippagePct })} />
-          <span className="text-xs text-slate-400">%</span>
+          <span className="text-xs text-slate-400">% per fill</span>
         </Field>
-      </div>
+      </PlanBlock>
     </div>
   );
 }

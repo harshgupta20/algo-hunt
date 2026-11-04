@@ -606,10 +606,10 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
               {reversed && <p className="-mt-2 text-xs text-warn">“From” must be on or before “to”.</p>}
 
               <div className="rounded-lg border border-ink-700/60 bg-ink-950/30 p-3">
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                    Trades — the strategy’s plan (paper trading uses the same) <InfoTip content={H.backtest.plan} />
-                  </p>
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <h4 className="ui-section-title text-sm font-semibold text-slate-200">Trade plan</h4>
+                  <span className="text-[12px] text-slate-500">the strategy’s plan — paper trading uses the same</span>
+                  <InfoTip content={H.backtest.plan} />
                   {changed ? (
                     <Tooltip content={H.backtest.saveToStrategy} className="ml-auto">
                       <button type="button" className="btn-ghost py-0.5 text-[11px]" disabled={savePlan.isPending || !!planIssue} onClick={() => savePlan.mutate()}>

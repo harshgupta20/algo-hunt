@@ -7,14 +7,16 @@
  * strategy): which leg to trade, Buy or Sell, and its trailing rules. Both backtests
  * start from this plan.
  */
-import { RotateCcw } from 'lucide-react';
+import { ArrowRight, ArrowRightLeft, RotateCcw } from 'lucide-react';
+import clsx from 'clsx';
 import type { LegId, PaperPlan, PaperRule, PaperSide, StrategyDefinition } from '@/shared/v2';
 import { PAPER_DEFAULTS, legName, paperGroups, planSizing, resolveRules } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
-import { Cell, Segmented, Toggle } from '../components';
+import { Segmented, Toggle } from '../components';
+import { LEG_KIND_TEXT } from '../format';
 import { H } from '../help';
 import { ConditionsEditor } from '../paper/ConditionsEditor';
-import { PaperTermsFields } from '../paper/PaperFields';
+import { PaperTermsFields, PlanBlock } from '../paper/PaperFields';
 
 /** What each top-level group (or the whole strategy) trades: the leg and Buy / Sell ("Don't trade" = exit only). */
 export function PaperRulesEditor({ def, rules, onChange }: { def: StrategyDefinition; rules: PaperRule[]; onChange: (r: PaperRule[]) => void }) {
@@ -23,39 +25,57 @@ export function PaperRulesEditor({ def, rules, onChange }: { def: StrategyDefini
   const groupLabel = (r: PaperRule) => (r.group === null ? 'Whole strategy' : (groups.find((g) => g.id === r.group)?.label ?? 'Group'));
   const spotLeg = rules.some((r) => def.legs.find((l) => l.id === r.leg)?.kind === 'SPOT');
   return (
-    <Cell label="What to trade" help={H.paper.rules} className="items-stretch">
-      <div className="flex w-full flex-col gap-2">
-        {rules.map((r, i) => (
-          <div key={r.group ?? 'all'} className="flex flex-wrap items-center gap-2 rounded-lg border border-ink-700 bg-ink-950/40 px-2.5 py-2">
-            <Tooltip content={H.paper.group}>
-              <span className="min-w-[7rem] text-xs font-semibold text-slate-200">{groupLabel(r)}</span>
-            </Tooltip>
-            <Tooltip content={H.paper.leg}>
-              <select aria-label={`Leg to trade (${groupLabel(r)})`} className="input py-1 text-xs" value={r.leg ?? ''} onChange={(e) => setRule(i, { leg: (e.target.value || null) as LegId | null })}>
-                {def.legs.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {legName(l)}
-                  </option>
-                ))}
-                <option value="">Don’t trade (exit only)</option>
-              </select>
-            </Tooltip>
-            {r.leg && (
-              <Segmented<PaperSide>
-                label={`Buy or sell (${groupLabel(r)})`}
-                value={r.side}
-                onChange={(side) => setRule(i, { side })}
-                options={[
-                  { value: 'BUY', label: 'Buy', help: H.paper.buy },
-                  { value: 'SELL', label: 'Sell', help: H.paper.sell },
-                ]}
-              />
-            )}
-          </div>
-        ))}
-        {spotLeg && <p className="text-[11px] text-warn">A Spot leg trades only on stocks — on indices and MCX those alerts won’t open a trade.</p>}
+    <PlanBlock icon={ArrowRightLeft} title="What to trade" help={H.paper.rules}>
+      <div className="flex flex-col divide-y divide-ink-700/60">
+        <div className="hidden grid-cols-[minmax(10rem,14rem)_1.25rem_minmax(0,1fr)] gap-x-2 pb-1.5 text-[11px] font-medium text-slate-500 sm:grid">
+          <span>When this fires</span>
+          <span />
+          <span>Trade</span>
+        </div>
+        {rules.map((r, i) => {
+          const leg = def.legs.find((l) => l.id === r.leg);
+          return (
+            <div key={r.group ?? 'all'} className="grid grid-cols-1 items-center gap-x-2 gap-y-1.5 py-2 sm:grid-cols-[minmax(10rem,14rem)_1.25rem_minmax(0,1fr)]">
+              <Tooltip content={H.paper.group}>
+                <span className="cursor-help text-[13px] font-semibold text-fg">{groupLabel(r)}</span>
+              </Tooltip>
+              <ArrowRight aria-hidden className="hidden h-4 w-4 text-slate-500 sm:block" />
+              <div className="flex flex-wrap items-center gap-2">
+                <Tooltip content={H.paper.tradeSide}>
+                  <select
+                    aria-label={`Leg to trade (${groupLabel(r)})`}
+                    className={clsx('input py-1 text-xs font-semibold', leg ? LEG_KIND_TEXT[leg.kind] : 'text-slate-400')}
+                    value={r.leg ?? ''}
+                    onChange={(e) => setRule(i, { leg: (e.target.value || null) as LegId | null })}
+                  >
+                    {def.legs.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {legName(l)}
+                      </option>
+                    ))}
+                    <option value="">Don’t trade (exit only)</option>
+                  </select>
+                </Tooltip>
+                {r.leg ? (
+                  <Segmented<PaperSide>
+                    label={`Buy or sell (${groupLabel(r)})`}
+                    value={r.side}
+                    onChange={(side) => setRule(i, { side })}
+                    options={[
+                      { value: 'BUY', label: 'Buy', help: H.paper.buy },
+                      { value: 'SELL', label: 'Sell', help: H.paper.sell },
+                    ]}
+                  />
+                ) : (
+                  <span className="text-[11px] text-slate-500">only closes trades</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
-    </Cell>
+      {spotLeg && <p className="text-[11px] text-warn">A Spot leg trades only on stocks — on indices and MCX those alerts won’t open a trade.</p>}
+    </PlanBlock>
   );
 }
 

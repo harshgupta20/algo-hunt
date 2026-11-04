@@ -303,3 +303,34 @@
     animation-duration: 4s;
   }
 }
+
+/* ---- Condition editor (src/client/v2/strategies/ExpressionEditor.tsx) ------------------------- */
+/* Value → comparison → Compared with: side by side when the editor is wide enough, stacked otherwise.
+   A container query, so it follows the editor's own width (it sits in panels of different sizes). */
+.cond-body {
+  container-type: inline-size;
+}
+.cond-cols {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+.cond-cols .cond-arrow {
+  display: none;
+}
+.cond-cols .cond-op {
+  justify-content: flex-start;
+}
+@container (min-width: 860px) {
+  .cond-cols {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+  .cond-cols .cond-arrow {
+    display: block;
+  }
+  .cond-cols .cond-op {
+    justify-content: center;
+    align-self: center;
+  }
+}

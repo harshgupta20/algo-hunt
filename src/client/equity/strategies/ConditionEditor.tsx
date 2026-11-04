@@ -3,15 +3,21 @@
 /**
  * Equity condition builder: operands (price / indicator / number), conditions, and nested ALL / ANY groups
  * with the AND / OR drawn between items. Every condition reads in plain words and shows its own checks.
+ *
+ * Same structure as the V2 builder (src/client/components/condition.tsx):
+ *   group header   All of these (AND) | Any of these (OR) — must be true · N items
+ *   item card      ① sentence (value · comparison · value)                     ↑ ↓ ✕   ▾ collapse
+ *                  Value panel  →  comparison  →  Compared-with panel          (stacks when narrow)
  */
 import { Fragment, useState } from 'react';
 import clsx from 'clsx';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, FolderPlus, Plus, Trash2 } from 'lucide-react';
 import type { EqCondition, EqGroup, EqNode, EqOperand, EqTimeframe, PriceField, ValidationIssue } from '@/shared/equity';
-import { EQ_INDICATOR, EQ_INDICATORS, EQ_MA_TYPES, EQ_OPERATORS, PRICE_FIELDS, conditionText } from '@/shared/equity';
+import { EQ_INDICATOR, EQ_INDICATORS, EQ_MA_TYPES, EQ_OPERATORS, PRICE_FIELDS, operandText } from '@/shared/equity';
 import { Tooltip } from '../../components/Tooltip';
-import { IconButton, Segmented } from '../../components/ui';
-import { Cell, NumberInput } from '../../components/form';
+import { IconButton } from '../../components/ui';
+import { NumberInput } from '../../components/form';
+import { ItemCard, Joiner, LogicToggle, Mini, OpWord, OperatorBox, Panel, Row } from '../../components/condition';
 import { E } from '../help';
 import { uid } from '../format';
 
@@ -40,54 +46,66 @@ function OperandEditor({ value, onChange, tf, side }: { value: EqOperand; onChan
     if (k === value.kind) return;
     onChange(k === 'NUMBER' ? { kind: 'NUMBER', value: 60 } : k === 'PRICE' ? { kind: 'PRICE', field: 'close' } : defaultIndicator('SMA'));
   };
+  const left = side === 'Left';
   return (
-    <div className="flex flex-wrap items-end gap-2">
-      <Cell label={`${side} value`} help={E.cond.kind}>
-        <select aria-label={`${side} value kind`} className={sel} value={value.kind} onChange={(e) => setKind(e.target.value as EqOperand['kind'])}>
-          <option value="PRICE">Price / volume</option>
-          <option value="INDICATOR">Indicator</option>
-          <option value="NUMBER">Number</option>
-        </select>
-      </Cell>
+    <Panel
+      title={left ? 'Value' : 'Compared with'}
+      help={left ? E.cond.valuePanel : E.cond.comparedPanel}
+      footer={
+        value.kind !== 'NUMBER' && (
+          <Row label="More">
+            <Tooltip content={{ ...E.cond.more, title: more ? 'Fewer settings' : 'More settings' }}>
+              <button type="button" className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 hover:text-slate-300" onClick={() => setMore(!more)}>
+                {more ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />} {more ? 'Hide' : `${tf === '1w' ? 'Weeks' : 'Days'} ago, multiplier`}
+              </button>
+            </Tooltip>
+            {more && (
+              <>
+                <Mini label={tf === '1w' ? 'Weeks ago' : 'Days ago'} help={E.cond.barsAgo}>
+                  <NumberInput label={`${side} candles ago`} min={0} max={500} step={1} className={numBox} value={value.barsAgo ?? 0} onChange={(n) => onChange({ ...value, barsAgo: Math.round(n) || undefined })} />
+                </Mini>
+                {value.kind === 'INDICATOR' && (
+                  <Mini label="×" help={E.cond.multiplier}>
+                    <NumberInput label={`${side} multiplier`} min={0.01} max={100} step={0.1} className={numBox} value={value.multiplier ?? 1} onChange={(n) => onChange({ ...value, multiplier: n === 1 ? undefined : n })} />
+                  </Mini>
+                )}
+              </>
+            )}
+          </Row>
+        )
+      }
+    >
+      <Row label="What">
+        <Tooltip content={E.cond.kind}>
+          <select aria-label={`${side} value kind`} className={sel} value={value.kind} onChange={(e) => setKind(e.target.value as EqOperand['kind'])}>
+            <option value="PRICE">Price / volume</option>
+            <option value="INDICATOR">Indicator</option>
+            <option value="NUMBER">Number</option>
+          </select>
+        </Tooltip>
+      </Row>
       {value.kind === 'NUMBER' && (
-        <Cell label="Number" help={E.cond.number}>
-          <NumberInput label={`${side} number`} className="input py-1 text-xs w-24 tabular-nums" value={value.value} onChange={(n) => onChange({ ...value, value: n })} />
-        </Cell>
+        <Row label="Number">
+          <Tooltip content={E.cond.number}>
+            <NumberInput label={`${side} number`} className="input py-1 text-xs w-28 font-semibold tabular-nums" value={value.value} onChange={(n) => onChange({ ...value, value: n })} />
+          </Tooltip>
+        </Row>
       )}
       {value.kind === 'PRICE' && (
-        <Cell label="Field" help={E.cond.field}>
-          <select aria-label={`${side} field`} className={sel} value={value.field} onChange={(e) => onChange({ ...value, field: e.target.value as PriceField })}>
-            {PRICE_FIELDS.map((f) => (
-              <option key={f.value} value={f.value}>
-                {f.label}
-              </option>
-            ))}
-          </select>
-        </Cell>
+        <Row label="Field">
+          <Tooltip content={E.cond.field}>
+            <select aria-label={`${side} field`} className={clsx(sel, 'font-semibold')} value={value.field} onChange={(e) => onChange({ ...value, field: e.target.value as PriceField })}>
+              {PRICE_FIELDS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </Tooltip>
+        </Row>
       )}
       {value.kind === 'INDICATOR' && <IndicatorFields value={value} onChange={onChange} side={side} />}
-      {value.kind !== 'NUMBER' && (
-        <>
-          {more ? (
-            <>
-              <Cell label={tf === '1w' ? 'Weeks ago' : 'Days ago'} help={E.cond.barsAgo}>
-                <NumberInput label={`${side} candles ago`} min={0} max={500} step={1} className={numBox} value={value.barsAgo ?? 0} onChange={(n) => onChange({ ...value, barsAgo: Math.round(n) || undefined })} />
-              </Cell>
-              {value.kind === 'INDICATOR' && (
-                <Cell label="× Mult." help={E.cond.multiplier}>
-                  <NumberInput label={`${side} multiplier`} min={0.01} max={100} step={0.1} className={numBox} value={value.multiplier ?? 1} onChange={(n) => onChange({ ...value, multiplier: n === 1 ? undefined : n })} />
-                </Cell>
-              )}
-            </>
-          ) : null}
-          <Tooltip content={{ title: more ? 'Fewer settings' : 'More settings', body: `${tf === '1w' ? 'Weeks' : 'Days'} ago and a multiplier for this value.` }}>
-            <button type="button" className="mb-0.5 inline-flex items-center gap-0.5 text-[11px] text-slate-500 hover:text-slate-300" onClick={() => setMore(!more)}>
-              {more ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />} {more ? 'less' : 'more'}
-            </button>
-          </Tooltip>
-        </>
-      )}
-    </div>
+    </Panel>
   );
 }
 
@@ -95,75 +113,85 @@ function IndicatorFields({ value, onChange, side }: { value: Indicator; onChange
   const spec = EQ_INDICATOR[value.indicator];
   return (
     <>
-      <Cell label="Indicator" help={E.cond.indicator}>
-        <select
-          aria-label={`${side} indicator`}
-          className={sel}
-          value={value.indicator}
-          onChange={(e) => {
-            const next = defaultIndicator(e.target.value as Indicator['indicator']);
-            onChange({ ...next, barsAgo: value.barsAgo });
-          }}
-        >
-          {EQ_INDICATORS.map((i) => (
-            <option key={i.id} value={i.id}>
-              {i.label}
-            </option>
-          ))}
-        </select>
-      </Cell>
-      {spec.params.map((p) => (
-        <Cell key={p.name} label={p.label} help={{ ...E.cond.param, title: `${spec.short} ${p.label.toLowerCase()}`, note: `${p.min}–${p.max}` }}>
-          <NumberInput
-            label={`${side} ${spec.short} ${p.label}`}
-            min={p.min}
-            max={p.max}
-            step={p.integer ? 1 : 0.1}
-            className={numBox}
-            value={value.params[p.name] ?? p.default}
-            onChange={(n) => onChange({ ...value, params: { ...value.params, [p.name]: p.integer ? Math.round(n) : n } })}
-          />
-        </Cell>
-      ))}
-      {spec.sources && spec.sources.length > 1 && (
-        <Cell label="Computed on" help={E.cond.source}>
-          <select aria-label={`${side} source`} className={sel} value={value.source ?? spec.defaultSource} onChange={(e) => onChange({ ...value, source: e.target.value === spec.defaultSource ? undefined : (e.target.value as PriceField) })}>
-            {spec.sources.map((s) => (
-              <option key={s} value={s}>
-                {PRICE_FIELDS.find((f) => f.value === s)?.label ?? s}
-              </option>
-            ))}
-          </select>
-        </Cell>
-      )}
-      {spec.outputs && (
-        <Cell label="Line" help={E.cond.output}>
-          <select aria-label={`${side} line`} className={sel} value={value.output ?? spec.outputs[0]!.value} onChange={(e) => onChange({ ...value, output: e.target.value === spec.outputs![0]!.value ? undefined : e.target.value })}>
-            {spec.outputs.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </Cell>
-      )}
-      {spec.smoothable && (
-        <Cell label="MA of it" help={E.cond.ma}>
+      <Row label="Indicator">
+        <Tooltip content={E.cond.indicator}>
           <select
-            aria-label={`${side} moving average of the indicator`}
-            className={sel}
-            value={value.ma?.type ?? ''}
-            onChange={(e) => onChange({ ...value, ma: e.target.value ? { type: e.target.value as 'SMA', period: value.ma?.period ?? 9 } : undefined })}
+            aria-label={`${side} indicator`}
+            className={clsx(sel, 'font-semibold')}
+            value={value.indicator}
+            onChange={(e) => {
+              const next = defaultIndicator(e.target.value as Indicator['indicator']);
+              onChange({ ...next, barsAgo: value.barsAgo });
+            }}
           >
-            <option value="">None</option>
-            {EQ_MA_TYPES.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
+            {EQ_INDICATORS.map((i) => (
+              <option key={i.id} value={i.id}>
+                {i.label}
               </option>
             ))}
           </select>
-          {value.ma && <NumberInput label={`${side} MA period`} min={1} max={500} step={1} className={numBox} value={value.ma.period} onChange={(n) => onChange({ ...value, ma: { ...value.ma!, period: Math.round(n) } })} />}
-        </Cell>
+        </Tooltip>
+      </Row>
+      <Row label="Settings">
+        {spec.params.map((p) => (
+          <Mini key={p.name} label={p.label} help={{ ...E.cond.param, title: `${spec.short} ${p.label.toLowerCase()}`, note: `${p.min}–${p.max}` }}>
+            <NumberInput
+              label={`${side} ${spec.short} ${p.label}`}
+              min={p.min}
+              max={p.max}
+              step={p.integer ? 1 : 0.1}
+              className={numBox}
+              value={value.params[p.name] ?? p.default}
+              onChange={(n) => onChange({ ...value, params: { ...value.params, [p.name]: p.integer ? Math.round(n) : n } })}
+            />
+          </Mini>
+        ))}
+        {spec.sources && spec.sources.length > 1 && (
+          <Mini label="of" help={E.cond.source}>
+            <select aria-label={`${side} source`} className={sel} value={value.source ?? spec.defaultSource} onChange={(e) => onChange({ ...value, source: e.target.value === spec.defaultSource ? undefined : (e.target.value as PriceField) })}>
+              {spec.sources.map((src) => (
+                <option key={src} value={src}>
+                  {PRICE_FIELDS.find((f) => f.value === src)?.label ?? src}
+                </option>
+              ))}
+            </select>
+          </Mini>
+        )}
+        {spec.outputs && (
+          <Mini label="Line" help={E.cond.output}>
+            <select aria-label={`${side} line`} className={sel} value={value.output ?? spec.outputs[0]!.value} onChange={(e) => onChange({ ...value, output: e.target.value === spec.outputs![0]!.value ? undefined : e.target.value })}>
+              {spec.outputs.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Mini>
+        )}
+      </Row>
+      {spec.smoothable && (
+        <Row label="MA of it">
+          <Tooltip content={E.cond.ma}>
+            <select
+              aria-label={`${side} moving average of the indicator`}
+              className={sel}
+              value={value.ma?.type ?? ''}
+              onChange={(e) => onChange({ ...value, ma: e.target.value ? { type: e.target.value as 'SMA', period: value.ma?.period ?? 9 } : undefined })}
+            >
+              <option value="">None</option>
+              {EQ_MA_TYPES.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </Tooltip>
+          {value.ma && (
+            <Mini label="Period" help={E.cond.ma}>
+              <NumberInput label={`${side} MA period`} min={1} max={500} step={1} className={numBox} value={value.ma.period} onChange={(n) => onChange({ ...value, ma: { ...value.ma!, period: Math.round(n) } })} />
+            </Mini>
+          )}
+        </Row>
       )}
     </>
   );
@@ -175,25 +203,29 @@ function issuesAt(issues: ValidationIssue[], path: string) {
 
 function ConditionRow({ c, tf, onChange, issues, path }: { c: EqCondition; tf: EqTimeframe; onChange: (c: EqCondition) => void; issues: ValidationIssue[]; path: string }) {
   const mine = issuesAt(issues, path);
+  const op = EQ_OPERATORS.find((o) => o.value === c.op);
   return (
-    <div className="flex flex-col gap-2">
-      <OperandEditor value={c.left} onChange={(left) => onChange({ ...c, left })} tf={tf} side="Left" />
-      <Cell label="Operator" help={E.cond.operator}>
-        <select aria-label="Operator" className={sel} value={c.op} onChange={(e) => onChange({ ...c, op: e.target.value as EqCondition['op'] })}>
-          {EQ_OPERATORS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </Cell>
-      <OperandEditor value={c.right} onChange={(right) => onChange({ ...c, right })} tf={tf} side="Right" />
-      <Tooltip content={E.cond.readsAs} className="block">
-        <p className="font-mono text-[11px] text-slate-400">
-          <span className="font-sans text-slate-500">Reads as: </span>
-          {conditionText(c, tf)}
-        </p>
-      </Tooltip>
+    <div className="cond-body flex flex-col gap-2.5">
+      <div className="cond-cols">
+        <OperandEditor value={c.left} onChange={(left) => onChange({ ...c, left })} tf={tf} side="Left" />
+        <OperatorBox>
+          <Tooltip content={{ ...E.cond.operator, title: `Comparison — ${op?.label ?? ''}` }}>
+            <select
+              aria-label="Operator"
+              className="input w-40 border-accent/40 bg-accent/5 py-1.5 pl-2 pr-6 text-center text-xs font-semibold text-accent-soft"
+              value={c.op}
+              onChange={(e) => onChange({ ...c, op: e.target.value as EqCondition['op'] })}
+            >
+              {EQ_OPERATORS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Tooltip>
+        </OperatorBox>
+        <OperandEditor value={c.right} onChange={(right) => onChange({ ...c, right })} tf={tf} side="Right" />
+      </div>
       {mine.map((i) => (
         <p key={i.message} className={clsx('text-[11px]', i.severity === 'error' ? 'text-bear' : 'text-warn')}>
           {i.message}
@@ -203,16 +235,27 @@ function ConditionRow({ c, tf, onChange, issues, path }: { c: EqCondition; tf: E
   );
 }
 
-/** The group's AND / OR drawn between its items, so the logic reads down the list. */
-function Joiner({ type }: { type: EqGroup['type'] }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="h-px flex-1 bg-accent/25" />
-      <Tooltip content={type === 'AND' ? E.cond.joinAll : E.cond.joinAny}>
-        <span className="block rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-[10px] font-bold tracking-widest text-accent-soft">{type}</span>
+/** An item's sentence: "SMA(50) crosses above SMA(100)", the comparison highlighted. */
+function Sentence({ n, tf }: { n: EqNode; tf: EqTimeframe }) {
+  if (n.type === 'CONDITION') {
+    const op = EQ_OPERATORS.find((o) => o.value === n.op);
+    return (
+      <Tooltip content={E.cond.readsAs}>
+        <span className="flex cursor-help flex-wrap items-center gap-x-1.5 gap-y-1">
+          <span className="font-semibold text-fg">{operandText(n.left, tf)}</span>
+          <OpWord>{op?.label.toLowerCase() ?? n.op}</OpWord>
+          <span className="font-semibold text-fg">{operandText(n.right, tf)}</span>
+        </span>
       </Tooltip>
-      <span className="h-px flex-1 bg-accent/25" />
-    </div>
+    );
+  }
+  return (
+    <>
+      <span className="font-semibold text-fg">Group</span>
+      <span className="text-slate-400">
+        — {n.type === 'AND' ? 'all' : 'any'} of {n.children.length} item{n.children.length === 1 ? '' : 's'}
+      </span>
+    </>
   );
 }
 
@@ -231,38 +274,23 @@ export function GroupEditor({ group, onChange, tf, issues, path, depth = 0 }: { 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <Segmented
-          label="Group logic"
-          value={group.type}
-          onChange={(type) => onChange({ ...group, type })}
-          options={[
-            { value: 'AND', label: 'ALL', help: { ...E.cond.group, title: 'ALL — every item must be true' } },
-            { value: 'OR', label: 'ANY', help: { ...E.cond.group, title: 'ANY — one is enough' } },
-          ]}
-        />
-        <span className="text-[11px] text-slate-500">
-          {group.children.length} item{group.children.length === 1 ? '' : 's'} · {group.type === 'AND' ? 'all must be true' : 'any one is enough'}
-        </span>
+        <LogicToggle value={group.type} onChange={(type) => onChange({ ...group, type })} count={group.children.length} />
       </div>
       {own.map((i) => (
         <p key={i.message} className={clsx('text-[11px]', i.severity === 'error' ? 'text-bear' : 'text-warn')}>
           {i.message}
         </p>
       ))}
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-1">
         {group.children.map((c, i) => (
           <Fragment key={c.id}>
-            {i > 0 && <Joiner type={group.type} />}
-            <div className="rounded-lg border border-ink-700/60 bg-ink-850 p-3">
-              <div className="flex items-start gap-2">
-                <div className="min-w-0 flex-1">
-                  {c.type === 'CONDITION' ? (
-                    <ConditionRow c={c} tf={tf} onChange={(n) => setChild(i, n)} issues={issues} path={`${path}.${i}`} />
-                  ) : (
-                    <GroupEditor group={c} onChange={(n) => setChild(i, n)} tf={tf} issues={issues} path={`${path}.${i}`} depth={depth + 1} />
-                  )}
-                </div>
-                <div className="flex shrink-0 items-center gap-0.5">
+            {i > 0 && <Joiner type={group.type} help={group.type === 'AND' ? E.cond.joinAll : E.cond.joinAny} />}
+            <ItemCard
+              number={i + 1}
+              tone={c.type === 'CONDITION' ? 'plain' : 'group'}
+              sentence={<Sentence n={c} tf={tf} />}
+              tools={
+                <>
                   <IconButton help={E.cond.moveUp} onClick={() => move(i, -1)} disabled={i === 0} className={btn}>
                     <ArrowUp className="w-3.5 h-3.5" />
                   </IconButton>
@@ -272,9 +300,15 @@ export function GroupEditor({ group, onChange, tf, issues, path, depth = 0 }: { 
                   <IconButton help={E.cond.remove} onClick={() => remove(i)} className="p-1.5 rounded-md text-slate-500 hover:text-bear hover:bg-bear/10">
                     <Trash2 className="w-3.5 h-3.5" />
                   </IconButton>
-                </div>
-              </div>
-            </div>
+                </>
+              }
+            >
+              {c.type === 'CONDITION' ? (
+                <ConditionRow c={c} tf={tf} onChange={(n) => setChild(i, n)} issues={issues} path={`${path}.${i}`} />
+              ) : (
+                <GroupEditor group={c} onChange={(n) => setChild(i, n)} tf={tf} issues={issues} path={`${path}.${i}`} depth={depth + 1} />
+              )}
+            </ItemCard>
           </Fragment>
         ))}
       </div>

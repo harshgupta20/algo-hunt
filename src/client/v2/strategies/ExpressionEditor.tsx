@@ -5,15 +5,21 @@
  * conditions (any leg vs any leg or a number) and candlestick patterns, with
  * reordering. Each condition reads in plain words and warns about incompatible
  * comparisons.
+ *
+ * Layout, the same for every item so a strategy scans at a glance:
+ *   group header   All of these (AND) | Any of these (OR) — must be true · 3 items · name
+ *   item card      ① sentence (leg chips · value · comparison · value)        ↑ ↓ NOT ✕   ▾ collapse
+ *                  Value panel  →  comparison  →  Compared-with panel          (stacks when narrow)
+ *   between items  the group's AND / OR
  */
 import clsx from 'clsx';
 import { AlertTriangle, ArrowDown, ArrowUp, Ban, CandlestickChart, FolderPlus, Info, Plus, Trash2, Undo2 } from 'lucide-react';
-import { Fragment, useState } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import type { ConditionNode, ExprNode, GroupNode, LegDef, LegId, LegKind, Operand, PatternNode, SeriesSpec } from '@/shared/v2';
-import { OPERATORS, PATTERNS, conditionText, legName, nodeText, operandUnit } from '@/shared/v2';
+import { OPERATORS, PATTERN, PATTERNS, TIMEFRAME, candleText, legName, legNameById, operandCore, operandUnit } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { IconButton } from '../../components/ui';
-import { Cell } from '../components';
+import { ItemCard, Joiner, LogicToggle, OpWord, OperatorBox, Panel, Row } from '../../components/condition';
 import { LEG_KIND_TEXT } from '../format';
 import { H } from '../help';
 import { adaptCondition, compareWithClose, isPriceLevel } from './comparison';
@@ -29,20 +35,20 @@ interface Ctx {
 function Toolbar({ index, count, onMove, onRemove, onNot, isNot }: { index: number; count: number; onMove: (d: -1 | 1) => void; onRemove: () => void; onNot: () => void; isNot: boolean }) {
   const btn = 'p-1.5 rounded-md text-slate-500 hover:text-slate-200 hover:bg-ink-800 disabled:opacity-30';
   return (
-    <div className="flex items-center gap-0.5 ml-auto self-start">
+    <>
       <IconButton help={H.editor.moveUp} onClick={() => onMove(-1)} disabled={index === 0} className={btn}>
         <ArrowUp className="w-3.5 h-3.5" />
       </IconButton>
       <IconButton help={H.editor.moveDown} onClick={() => onMove(1)} disabled={index >= count - 1} className={btn}>
         <ArrowDown className="w-3.5 h-3.5" />
       </IconButton>
-      <IconButton help={isNot ? H.editor.unwrapNot : H.editor.wrapNot} onClick={onNot} className={btn}>
+      <IconButton help={isNot ? H.editor.unwrapNot : H.editor.wrapNot} onClick={onNot} className={clsx(btn, isNot && 'text-warn')}>
         {isNot ? <Undo2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
       </IconButton>
       <IconButton help={H.editor.remove} onClick={onRemove} className="p-1.5 rounded-md text-slate-500 hover:text-bear hover:bg-bear/10">
         <Trash2 className="w-3.5 h-3.5" />
       </IconButton>
-    </div>
+    </>
   );
 }
 
@@ -56,6 +62,78 @@ const UNIT_LABEL: Record<string, string> = {
   ratio: 'a ratio',
   percent: 'a percentage',
 };
+
+// ---- the sentence in each item's header ---------------------------------------------------------
+
+/** "B · CE ATM · 15 min" in the leg's colour (candle type shown when it isn't Normal). */
+function SeriesChip({ s, legs }: { s: SeriesSpec; legs: LegDef[] }) {
+  const leg = legs.find((l) => l.id === s.leg);
+  return (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-ink-700 bg-ink-850 px-1.5 py-px text-[11px]">
+      <span className={clsx('font-semibold', leg ? LEG_KIND_TEXT[leg.kind] : 'text-warn')}>{legNameById(s.leg, legs)}</span>
+      <span className="text-slate-500">
+        · {TIMEFRAME[s.timeframe].label}
+        {s.candle.type !== 'NORMAL' ? ` · ${candleText(s.candle)}` : ''}
+      </span>
+    </span>
+  );
+}
+
+const sameSeries = (a: SeriesSpec, b: SeriesSpec) => JSON.stringify(a) === JSON.stringify(b);
+
+function OperandWords({ o, legs, chip }: { o: Operand; legs: LegDef[]; chip: boolean }) {
+  return (
+    <>
+      {chip && o.kind !== 'CONSTANT' && <SeriesChip s={o.series} legs={legs} />}
+      <span className="font-semibold text-fg">{operandCore(o)}</span>
+    </>
+  );
+}
+
+function ConditionSentence({ node, legs }: { node: ConditionNode; legs: LegDef[] }) {
+  const op = OPERATORS.find((o) => o.value === node.operator);
+  const same = node.left.kind !== 'CONSTANT' && node.right.kind !== 'CONSTANT' && sameSeries(node.left.series, node.right.series);
+  return (
+    <>
+      <OperandWords o={node.left} legs={legs} chip />
+      <OpWord>{op?.label.toLowerCase() ?? node.operator}</OpWord>
+      <OperandWords o={node.right} legs={legs} chip={!same} />
+    </>
+  );
+}
+
+function Sentence({ node, legs }: { node: ExprNode; legs: LegDef[] }) {
+  switch (node.type) {
+    case 'CONDITION':
+      return <ConditionSentence node={node} legs={legs} />;
+    case 'PATTERN':
+      return (
+        <>
+          <SeriesChip s={node.series} legs={legs} />
+          <span className="font-semibold text-fg">{PATTERN[node.pattern]?.label ?? node.pattern}</span>
+          <span className="text-slate-400">detected</span>
+        </>
+      );
+    case 'NOT':
+      return (
+        <>
+          <span className="text-[11px] font-bold tracking-widest text-warn">NOT</span>
+          <Sentence node={node.child} legs={legs} />
+        </>
+      );
+    default:
+      return (
+        <>
+          <span className="font-semibold text-fg">{node.label?.trim() || 'Group'}</span>
+          <span className="text-slate-400">
+            — {node.type === 'AND' ? 'all' : 'any'} of {node.children.length} item{node.children.length === 1 ? '' : 's'}
+          </span>
+        </>
+      );
+  }
+}
+
+// ---- item bodies ----------------------------------------------------------------------------------
 
 function ConditionEditor({ node, ctx, onChange }: { node: ConditionNode; ctx: Ctx; onChange: (n: ConditionNode) => void }) {
   const [note, setNote] = useState<string | undefined>();
@@ -71,30 +149,34 @@ function ConditionEditor({ node, ctx, onChange }: { node: ConditionNode; ctx: Ct
   // A price level (band, average) compared with a number — usually a leftover; offer the natural form.
   const levelVsNumber = isPriceLevel(node.left) && node.right.kind === 'CONSTANT';
   return (
-    <div className="flex flex-col gap-3">
-      <OperandEditor side="Left" value={node.left} onChange={(left) => edit('left', left)} defaultSeries={ctx.defaultSeries} legs={ctx.legs} onAddLeg={ctx.onAddLeg} allowConstant={false} />
-      <div className="flex flex-wrap items-end gap-3">
-        <Cell label="Operator" help={{ ...H.editor.operator, title: `Operator — ${opSpec?.label ?? ''}` }}>
-          <select aria-label="Operator" className="input py-1 text-xs" value={node.operator} onChange={(e) => onChange({ ...node, operator: e.target.value as ConditionNode['operator'] })}>
-            {OPERATORS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </Cell>
+    <div className="cond-body flex flex-col gap-2.5">
+      <div className="cond-cols">
+        <OperandEditor side="Left" value={node.left} onChange={(left) => edit('left', left)} defaultSeries={ctx.defaultSeries} legs={ctx.legs} onAddLeg={ctx.onAddLeg} allowConstant={false} />
+        <OperatorBox>
+          <Tooltip content={{ ...H.editor.operatorBox, title: `Comparison — ${opSpec?.label ?? ''}`, note: H.editor.operator.body }}>
+            <select
+              aria-label="Operator"
+              className="input w-40 border-accent/40 bg-accent/5 py-1.5 pl-2 pr-6 text-center text-xs font-semibold text-accent-soft"
+              value={node.operator}
+              onChange={(e) => onChange({ ...node, operator: e.target.value as ConditionNode['operator'] })}
+            >
+              {OPERATORS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Tooltip>
+        </OperatorBox>
+        <OperandEditor
+          side="Right"
+          value={node.right}
+          onChange={(right) => edit('right', right)}
+          defaultSeries={node.left.kind === 'CONSTANT' ? ctx.defaultSeries : node.left.series}
+          legs={ctx.legs}
+          onAddLeg={ctx.onAddLeg}
+        />
       </div>
-      <OperandEditor
-        side="Right"
-        value={node.right}
-        onChange={(right) => edit('right', right)}
-        defaultSeries={node.left.kind === 'CONSTANT' ? ctx.defaultSeries : node.left.series}
-        legs={ctx.legs}
-        onAddLeg={ctx.onAddLeg}
-      />
-      <p className="text-[11px] text-slate-500">
-        Reads as: <span className="font-mono text-slate-300">{conditionText(node, ctx.legs)}</span>
-      </p>
       {note && !levelVsNumber && (
         <p className="flex items-center gap-1.5 text-[11px] text-accent-soft">
           <Info className="w-3.5 h-3.5 shrink-0" />
@@ -125,33 +207,29 @@ function ConditionEditor({ node, ctx, onChange }: { node: ConditionNode; ctx: Ct
 function PatternEditor({ node, ctx, onChange }: { node: PatternNode; ctx: Ctx; onChange: (n: PatternNode) => void }) {
   const groups = [...new Set(PATTERNS.map((p) => p.group))];
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-end gap-3">
-        <Cell label="Pattern" help={H.editor.pattern}>
-          <select aria-label="Pattern" className="input py-1 text-xs" value={node.pattern} onChange={(e) => onChange({ ...node, pattern: e.target.value as PatternNode['pattern'] })}>
-            {groups.map((g) => (
-              <optgroup key={g} label={g}>
-                {PATTERNS.filter((p) => p.group === g).map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </Cell>
-        <SeriesPicker label="Pattern" value={node.series} onChange={(series) => onChange({ ...node, series })} legs={ctx.legs} onAddLeg={ctx.onAddLeg} />
-      </div>
-      <p className="text-[11px] text-slate-500">
-        Reads as: <span className="font-mono text-slate-300">{nodeText(node, ctx.legs)}</span>
-      </p>
+    <div className="max-w-xl">
+      <Panel title="Candlestick pattern" help={H.editor.addPattern} footer={<SeriesPicker label="Pattern" value={node.series} onChange={(series) => onChange({ ...node, series })} legs={ctx.legs} onAddLeg={ctx.onAddLeg} />}>
+        <Row label="Pattern">
+          <Tooltip content={H.editor.pattern}>
+            <select aria-label="Pattern" className="input py-1 text-xs font-semibold" value={node.pattern} onChange={(e) => onChange({ ...node, pattern: e.target.value as PatternNode['pattern'] })}>
+              {groups.map((g) => (
+                <optgroup key={g} label={g}>
+                  {PATTERNS.filter((p) => p.group === g).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </Tooltip>
+        </Row>
+      </Panel>
     </div>
   );
 }
 
-function Leaf({ node, ctx, onChange }: { node: ConditionNode | PatternNode; ctx: Ctx; onChange: (n: ExprNode) => void }) {
-  return node.type === 'CONDITION' ? <ConditionEditor node={node} ctx={ctx} onChange={onChange} /> : <PatternEditor node={node} ctx={ctx} onChange={onChange} />;
-}
+// ---- an item: header (number, sentence, tools) + body ---------------------------------------------
 
 function NodeEditor({
   node,
@@ -176,40 +254,30 @@ function NodeEditor({
   const inner = isNot ? node.child : node;
   const setInner = (n: ExprNode) => onChange(isNot ? { ...node, child: n } : n);
   const toggleNot = () => onChange(isNot ? node.child : wrapNot(node));
+  const isGroup = inner.type === 'AND' || inner.type === 'OR';
+
+  let body: ReactNode;
+  if (isGroup) body = <GroupEditor group={inner} ctx={ctx} onChange={setInner} depth={depth + 1} embedded />;
+  else if (inner.type === 'NOT') body = <p className="text-xs text-slate-400">Nested NOT — remove one to edit.</p>;
+  else if (inner.type === 'CONDITION') body = <ConditionEditor node={inner} ctx={ctx} onChange={setInner} />;
+  else body = <PatternEditor node={inner as PatternNode} ctx={ctx} onChange={setInner} />;
 
   return (
-    <div className={clsx('rounded-lg border p-3', isNot ? 'border-warn/40 bg-warn/5' : 'border-ink-700/60 bg-ink-850')}>
-      <div className="flex items-start gap-2">
-        {isNot && (
+    <ItemCard
+      number={index + 1}
+      tone={isNot ? 'not' : isGroup ? 'group' : 'plain'}
+      badge={
+        isNot && (
           <Tooltip content={H.editor.not}>
-            <span className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-warn">NOT</span>
+            <span className="cursor-help rounded bg-warn/15 px-1.5 py-px text-[10px] font-bold tracking-widest text-warn">NOT</span>
           </Tooltip>
-        )}
-        <div className="flex-1 min-w-0">
-          {inner.type === 'AND' || inner.type === 'OR' ? (
-            <GroupEditor group={inner} ctx={ctx} onChange={setInner} depth={depth + 1} embedded />
-          ) : inner.type === 'NOT' ? (
-            <p className="text-xs text-slate-400">Nested NOT — remove one to edit.</p>
-          ) : (
-            <Leaf node={inner as ConditionNode | PatternNode} ctx={ctx} onChange={setInner} />
-          )}
-        </div>
-        <Toolbar index={index} count={count} onMove={onMove} onRemove={onRemove} onNot={toggleNot} isNot={isNot} />
-      </div>
-    </div>
-  );
-}
-
-/** The group's AND / OR drawn between its items, so the logic reads down the list. */
-function Joiner({ type }: { type: GroupNode['type'] }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="h-px flex-1 bg-accent/25" />
-      <Tooltip content={type === 'AND' ? H.editor.joinAnd : H.editor.joinOr}>
-        <span className="block rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-[10px] font-bold tracking-widest text-accent-soft">{type}</span>
-      </Tooltip>
-      <span className="h-px flex-1 bg-accent/25" />
-    </div>
+        )
+      }
+      sentence={<Sentence node={inner} legs={ctx.legs} />}
+      tools={<Toolbar index={index} count={count} onMove={onMove} onRemove={onRemove} onNot={toggleNot} isNot={isNot} />}
+    >
+      {body}
+    </ItemCard>
   );
 }
 
@@ -224,58 +292,33 @@ export function GroupEditor({ group, ctx, onChange, depth = 0, embedded }: { gro
     onChange({ ...group, children });
   };
   const add = (n: ExprNode) => onChange({ ...group, children: [...group.children, n] });
+  const n = group.children.length;
 
   return (
-    <div className={clsx(!embedded && 'rounded-xl border border-ink-700 bg-ink-900 p-3')}>
-      <div className="flex flex-wrap items-center gap-2 mb-2">
-        <div role="radiogroup" aria-label="Group logic" className="flex rounded-lg overflow-hidden border border-ink-700 text-xs">
-          {(['AND', 'OR'] as const).map((l) => (
-            <Tooltip key={l} content={{ ...H.editor.group, title: l === 'AND' ? 'AND — all must be true' : 'OR — any one is enough' }}>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={group.type === l}
-                onClick={() => onChange({ ...group, type: l })}
-                className={clsx('px-2.5 py-1 font-semibold', group.type === l ? 'bg-accent text-white' : 'bg-ink-800 text-slate-400')}
-              >
-                {l}
-              </button>
-            </Tooltip>
-          ))}
-        </div>
-        <Tooltip content={H.editor.groupLabel}>
+    <div className={clsx(!embedded && 'rounded-xl border border-ink-700 bg-ink-950/40 p-3')}>
+      <div className="mb-2.5 flex flex-wrap items-center gap-2">
+        <LogicToggle value={group.type} onChange={(type) => onChange({ ...group, type })} count={n} />
+        {depth > 2 && <span className="text-[11px] text-warn">Deep nesting — consider simplifying</span>}
+        <Tooltip content={H.editor.groupLabel} className="ml-auto">
           <input
             aria-label="Group name"
-            className="input py-1 text-xs w-44"
+            className="input w-48 py-1 text-xs"
             placeholder={depth === 0 ? 'Name (optional)' : 'e.g. Option conditions'}
             value={group.label ?? ''}
             onChange={(e) => onChange({ ...group, label: e.target.value || undefined })}
           />
         </Tooltip>
-        <span className="text-[11px] text-slate-500">
-          {group.children.length} item{group.children.length === 1 ? '' : 's'} · {group.type === 'AND' ? 'all must be true' : 'any one is enough'}
-        </span>
-        {depth > 2 && <span className="text-[11px] text-warn">Deep nesting — consider simplifying</span>}
       </div>
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-1">
         {group.children.map((c, i) => (
           <Fragment key={c.id}>
-            {i > 0 && <Joiner type={group.type} />}
-            <NodeEditor
-              node={c}
-              ctx={ctx}
-              index={i}
-              count={group.children.length}
-              depth={depth}
-              onChange={(n) => setChild(i, n)}
-              onRemove={() => remove(i)}
-              onMove={(d) => move(i, d)}
-            />
+            {i > 0 && <Joiner type={group.type} help={group.type === 'AND' ? H.editor.joinAnd : H.editor.joinOr} />}
+            <NodeEditor node={c} ctx={ctx} index={i} count={n} depth={depth} onChange={(next) => setChild(i, next)} onRemove={() => remove(i)} onMove={(d) => move(i, d)} />
           </Fragment>
         ))}
-        {group.children.length === 0 && <p className="text-xs text-warn">Empty group — add a condition.</p>}
+        {n === 0 && <p className="text-xs text-warn">Empty group — add a condition.</p>}
       </div>
-      <div className="flex flex-wrap gap-2 mt-2">
+      <div className="mt-2.5 flex flex-wrap gap-2">
         <Tooltip content={H.editor.addCondition}>
           <button type="button" className="btn-ghost py-1 text-xs" onClick={() => add(newCondition(ctx.defaultSeries))}>
             <Plus className="w-3.5 h-3.5" /> Condition
@@ -324,18 +367,21 @@ export function ExpressionEditor({
   defaultSeries,
   legs,
   onAddLeg,
+  bare,
 }: {
   expression: ExprNode;
   onChange: (root: ExprNode) => void;
   defaultSeries: SeriesSpec;
   legs: LegDef[];
   onAddLeg?: Ctx['onAddLeg'];
+  /** No box around the root group (it already sits in a card). */
+  bare?: boolean;
 }) {
   const root: GroupNode = expression.type === 'AND' || expression.type === 'OR' ? expression : newGroup('AND', [expression]);
   return (
     <>
       <OneLegHint legs={legs} onAddLeg={onAddLeg} />
-      <GroupEditor group={root} ctx={{ defaultSeries, legs, onAddLeg }} onChange={onChange} />
+      <GroupEditor group={root} ctx={{ defaultSeries, legs, onAddLeg }} onChange={onChange} embedded={bare} />
     </>
   );
 }

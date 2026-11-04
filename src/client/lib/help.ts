@@ -74,6 +74,16 @@ export const HELP = {
     play: { title: 'Play sound', body: 'Your browser blocked the sound because the page hasn’t been clicked yet — press to hear the alarm (sound works from now on).' },
   },
 
+  /** The condition builders (V2 strategies / trailing rules, Equity entry / exit) — the shared parts. */
+  builder: {
+    collapse: { title: 'Collapse', body: 'Show only this item’s sentence — handy once it’s set up. Nothing changes in the strategy.' },
+    expand: { title: 'Expand', body: 'Show this item’s settings to edit them.' },
+    itemNumber: { title: 'Item number', body: 'Its place in this group — reorder with the arrows on the right (the order doesn’t change the result).' },
+    groupNumber: { title: 'Nested group', body: 'A group inside this one, with its own All / Any — open it to edit its items.' },
+    all: { title: 'All of these (AND)', body: 'The group is true only when every item in it is true.', note: 'Groups can be nested: an “Any” group inside an “All” group, and so on.' },
+    any: { title: 'Any of these (OR)', body: 'The group is true when at least one item in it is true.', note: 'Groups can be nested: an “All” group inside an “Any” group, and so on.' },
+  },
+
   /** Column filters and sorting — the same in every table of the app. */
   table: {
     sort: {

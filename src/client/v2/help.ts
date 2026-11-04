@@ -170,6 +170,19 @@ export const H = {
       example: 'A · FUT Close crossed above A · FUT Bollinger Bands(20,2) Upper',
     },
     pattern: { title: 'Pattern', body: 'Candlestick pattern on the chosen leg’s candles.' },
+    valuePanel: {
+      title: 'Value',
+      body: 'What the condition looks at: what it is (an indicator, a price field, the OI change), and the leg, timeframe and candle type it is read from.',
+    },
+    comparedPanel: {
+      title: 'Compared with',
+      body: 'What the value is compared with: another indicator or price (on any leg, timeframe, candle type) or a fixed number.',
+      example: 'Close crossed below SMA(20) · RSI(14) greater than 60',
+    },
+    operatorBox: {
+      title: 'Comparison',
+      body: 'How the value is compared: greater / less / equal look at the two values now; crossed above / below needs the previous candle on the other side and this one across.',
+    },
   } satisfies Record<string, TooltipContent>,
 
   connection: {
@@ -472,6 +485,16 @@ export const H = {
     defaults: { title: 'Reset to defaults', body: '1 lot per futures / options trade, ₹10,000 per stock trade, +20 % target, −10 % stop-loss, no trailing stop, the whole session watched, square-off 15:20 NSE / 23:20 MCX, exit on the other group, charges and 0.5 % slippage on.' },
     savedWith: { title: 'Saved with the strategy', body: 'The paper plan is saved when you save the strategy. Changes apply to new trades; open trades keep the settings they opened with.' },
     own: { title: 'Own value', body: 'This connection uses its own value here instead of the strategy’s. Click to go back to the strategy’s value.' },
+    blockSize: { title: 'Size & exits', body: 'How big each trade is, and where it closes: the target above, the stop-loss below — or, with Trailing SL, your trailing rules from the target on.' },
+    blockWhen: { title: 'When it trades', body: 'Which alerts open trades (an optional watch window), the daily intraday square-off, and closing when the strategy’s other group fires.' },
+    blockCosts: { title: 'Costs', body: 'What the simulation takes off so paper P&L stays close to real: brokerage, taxes and fees, and slippage on every fill.' },
+    tradePath: {
+      title: 'The trade’s path',
+      body: 'Where a trade closes, measured from its entry price: at the stop-loss on the loss side, at the target on the profit side. With Trailing SL the target isn’t an exit — your trailing rules take over there.',
+      note: 'Profit and loss sides: for a sell, profit is the price falling.',
+    },
+    pctOn: { title: 'On / off', body: 'Tick to use it, untick for none.' },
+    tradeSide: { title: 'Leg and side', body: 'The contract this group’s alerts trade, and whether they buy or sell it. “Don’t trade” = the group only closes trades (with “Exit when another group fires”).' },
     chip: { title: 'Paper settings', body: 'Lots (or ₹ for stocks) per trade, target / stop-loss and trailing stop this connection paper trades with. Click to change them — or its watch window — for this connection only.' },
     connectionOn: { title: 'Paper trade this connection', body: 'On: every alert of this connection opens a paper trade. Off: alerts only for this product (its past paper trades are kept).' },
     saveOwn: { title: 'Save', body: 'Save the values that differ from the strategy’s as this connection’s own. Applies to new trades.' },
