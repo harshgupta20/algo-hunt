@@ -7,7 +7,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ExprNode, PaperPlan, PaperTrade, StrategyDefinition, UnitEvaluation, V2Connection, V2Product, V2Strategy, V2Unit } from '../../src/shared/v2';
-import { PAPER_DEFAULTS, defaultPaperPlan, normalizePaperSummary, paperPlanSchema, resolveRules } from '../../src/shared/v2';
+import { PAPER_DEFAULTS, defaultPaperPlan, normalizePaperSummary, paperPlanSchema, resolveRules, stopNow } from '../../src/shared/v2';
 import { calendars } from '../../src/server/v2/calendar/MarketCalendar';
 import { ProductService } from '../../src/server/v2/data/ProductService';
 import { roundTripCharges } from '../../src/server/v2/paper/charges';
@@ -176,6 +176,16 @@ describe('paper trading — end to end through the scanner', () => {
     expect(charges).toBeCloseTo(63.35, 1);
     expect(closed).toMatchObject({ status: 'CLOSED', exitReason: 'TARGET', exitPrice: 120.6, grossPnl: 1507.5, charges, netPnl: 1507.5 - charges });
 
+    // Its story's path: Kite's 1-minute candles from the entry's minute (11:00) to the exit's (11:05), then 12 after.
+    env.provider.set(atmCe, '1m', Array.from({ length: 30 }, (_, j) => ({ time: (ist(D, '10:55') + j * 60_000) / 1000, open: 100 + j, high: 101 + j, low: 99 + j, close: 100.5 + j, volume: 1 })));
+    const path = await env.svc.paperTradePath(closed!.id);
+    expect(path).toMatchObject({ step: 1, held: 6 });
+    expect(path!.bars).toHaveLength(18);
+    expect(path!.bars[0]![0]).toBe(ist(D, '11:00') / 1000);
+    env.provider.set(atmCe, '1m', []); // Kite has none (an expired contract): no path, the timeline still shows
+    expect(await env.svc.paperTradePath(closed!.id)).toBeNull();
+    await expect(env.svc.paperTradePath('no-such-trade')).rejects.toMatchObject({ status: 404 });
+
     const sum = await env.svc.paperSummary();
     expect(sum.overall).toMatchObject({ trades: 1, open: 0, wins: 1, winRate: 100, capitalPeak: 7537.5, netPnl: 1507.5 - charges, profitFactor: null, avgWin: 1507.5 - charges, avgLoss: null, todayPnl: 1507.5 - charges });
     expect(sum.daily).toEqual([{ date: D, pnl: 1507.5 - charges, trades: 1, wins: 1 }]);
@@ -272,7 +282,7 @@ function trader(start = ist(D, '11:00'), provider?: FixtureV2Provider) {
 }
 
 describe('paper trader', () => {
-  it('stop / target conditions: checked live on Kite’s candles once each candle after entry closes, on the legs the trade opened on', async () => {
+  it('trailing rules: checked live on Kite’s candles once each candle after entry closes, on the legs the trade opened on', async () => {
     const provider = new FixtureV2Provider([spotI, futI, ceI, peI]);
     const times = timesEndingAt(ist(D, '11:00'), 15, 40, NSE_SESSION);
     const env = trader(ist(D, '11:00'), provider);
@@ -280,7 +290,7 @@ describe('paper trader', () => {
     provider.set(ceI, '15m', candlesAt(times.slice(0, -1), times.slice(0, -1).map(() => 100)));
     const stopWhen = cond(field(legSeries('B')), 'LT', num(95));
     await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), targetPct: null, stopPct: null, rules: [{ group: bull.id, leg: 'B', side: 'BUY', stopWhen }, { group: bear.id, leg: 'C', side: 'BUY' }] });
-    expect(await env.alert('bull')).toMatch(/· stop condition/);
+    expect(await env.alert('bull')).toMatch(/· trailing rules/);
     const [opened] = env.store.data.paperTrades;
     expect(opened!.conditions).toMatchObject({ stopWhen, legs: { B: ceI } });
 
@@ -289,7 +299,7 @@ describe('paper trader', () => {
     expect((await env.t.monitor(cals)).closed).toEqual([]);
     env.clock.now = ist(D, '11:15') + 5_000;
     expect((await env.t.monitor(cals)).closed).toEqual([]);
-    // Published: 94 < 95 → closed as a stop condition at the market price.
+    // Published: 94 < 95 → closed by the trailing rule at the market price.
     provider.set(ceI, '15m', candlesAt(times, [...times.slice(0, -1).map(() => 100), 94]));
     env.prices.set(ceI.token, 93.5);
     env.clock.now = ist(D, '11:15') + 20_000;
@@ -315,6 +325,54 @@ describe('paper trader', () => {
     const { closed } = await env.t.monitor(cals);
     expect(closed[0]).toMatchObject({ exitReason: 'TRAIL' });
     expect(paperHit({ ...closed[0]!, status: 'OPEN', peakPrice: 100.5, terms: { ...closed[0]!.terms, trailPct: 20 } }, 90)).toBe('STOP'); // trail 80.4 is looser than the fixed 90.45
+  });
+
+  it('target + trailing stop: the target starts the trail instead of closing; before it only the stop-loss counts', async () => {
+    const env = trader();
+    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), targetPct: 10, stopPct: 10, trailPct: 5 });
+    // Entry 100.5: target 110.55, stop-loss 90.45; no trailing stop until the target.
+    expect(await env.alert('bull')).toMatch(/target ₹110\.55 starts trailing 5% · stop ₹90\.45/);
+    const at = (price: number) => env.prices.set(ceI.token, price);
+    const trade = () => env.store.data.paperTrades[0]!;
+    at(105);
+    expect((await env.t.monitor(cals)).closed).toEqual([]);
+    at(99); // 5 % from the best (105) would be 99.75 — not on before the target
+    expect((await env.t.monitor(cals)).closed).toEqual([]);
+    expect(trade().trailingAt).toBeUndefined();
+    at(112); // past the target: not closed — trailing starts (stop 112 × 0.95 = 106.4)
+    expect((await env.t.monitor(cals)).closed).toEqual([]);
+    expect(trade()).toMatchObject({ status: 'OPEN', peakPrice: 112, trailingAt: new Date(env.clock.now).toISOString() });
+    expect(stopNow(trade())).toEqual({ price: 106.4, reason: 'TRAIL' });
+    at(106.5);
+    expect((await env.t.monitor(cals)).closed).toEqual([]);
+    at(106.3);
+    const { closed } = await env.t.monitor(cals);
+    expect(closed[0]).toMatchObject({ exitReason: 'TRAIL' });
+    // Without trailing the target closes the trade, as before.
+    expect(paperHit({ ...closed[0]!, status: 'OPEN', terms: { ...closed[0]!.terms, trailPct: null } }, 111)).toBe('TARGET');
+  });
+
+  it('trailing rules with a target: not before the price reaches it, then on the candles closing after it', async () => {
+    const provider = new FixtureV2Provider([spotI, futI, ceI, peI]);
+    const times = timesEndingAt(ist(D, '11:15'), 15, 40, NSE_SESSION);
+    const env = trader(ist(D, '11:00'), provider);
+    const stopWhen = cond(field(legSeries('B')), 'LT', num(95));
+    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), targetPct: 10, stopPct: null, rules: [{ group: bull.id, leg: 'B', side: 'BUY', stopWhen }, { group: bear.id, leg: 'C', side: 'BUY' }] });
+    expect(await env.alert('bull')).toMatch(/target ₹110\.55 starts trailing rules/);
+    // The call's 15-minute candles close at 94 from 11:00 on: the rule is true, but the target isn't reached yet.
+    provider.set(ceI, '15m', candlesAt(times, times.map((t) => (t >= ist(D, '11:00') ? 94 : 100))));
+    env.prices.set(ceI.token, 99);
+    env.clock.now = ist(D, '11:15') + 20_000;
+    expect((await env.t.monitor(cals)).closed).toEqual([]);
+    // 11:20: the price reaches the target — not closed, trailing starts; the 11:15 close came before it.
+    env.prices.set(ceI.token, 111);
+    env.clock.now = ist(D, '11:20');
+    expect((await env.t.monitor(cals)).closed).toEqual([]);
+    expect(env.store.data.paperTrades[0]).toMatchObject({ status: 'OPEN', peakPrice: 111, trailingAt: new Date(ist(D, '11:20')).toISOString() });
+    // The 11:15–11:30 candle is the first to close after it: closed by the trailing rule.
+    env.clock.now = ist(D, '11:30') + 20_000;
+    const { closed } = await env.t.monitor(cals);
+    expect(closed[0]).toMatchObject({ exitReason: 'STOP_RULE' });
   });
 
   it('sizes futures / options in the plan’s lots, stocks in ₹ per trade', async () => {

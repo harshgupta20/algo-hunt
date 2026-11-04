@@ -117,6 +117,7 @@ export function createRouter(ctx: AppContext): Router {
   r.get('/v2/paper/trades', v2.paperTrades);
   r.get('/v2/paper/counts', v2.paperCounts);
   r.get('/v2/paper/sync', v2.paperSync);
+  r.get('/v2/paper/trades/:id/path', v2.paperTradePath);
   r.post('/v2/paper/trades/:id/close', v2.closePaperTrade);
   r.delete('/v2/paper/strategies/:id/trades', v2.resetPaper);
   r.get('/v2/settings', v2.settings);

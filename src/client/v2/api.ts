@@ -14,6 +14,7 @@ import type {
   PaperSummary,
   PaperBookStatus,
   PaperTrade,
+  TradePath,
   ScanRun,
   SignalOutcome,
   StrategyDefinition,
@@ -239,6 +240,8 @@ export const v2Api = {
   paperCounts: (q: PaperQuery = {}) => request<StrategyCounts>(`/paper/counts?${filterParams(q)}`),
   /** Paper trades waiting on this computer for the end-of-day sync (null: saved to the database at once). */
   paperSync: () => request<PaperBookStatus | null>('/paper/sync'),
+  /** A paper trade's price path from Kite's 1-minute candles (null: Kite has none, e.g. an expired contract). */
+  paperTradePath: (id: string) => request<TradePath | null>(`/paper/trades/${id}/path`),
   closePaperTrade: (id: string) => post<PaperTrade>(`/paper/trades/${id}/close`),
   resetPaper: (strategyId: string) => request<{ deleted: number }>(`/paper/strategies/${strategyId}/trades`, { method: 'DELETE' }),
 

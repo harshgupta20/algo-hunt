@@ -203,8 +203,8 @@ export interface V2Store {
     listOpen(): Promise<PaperTrade[]>;
     /** Close a trade that is still open; null when it was already closed (another process got there first). */
     closeTrade(id: string, patch: Pick<PaperTrade, 'exitAt' | 'exitPrice' | 'exitReason' | 'grossPnl' | 'charges' | 'netPnl' | 'lastPrice' | 'lastPriceAt'>): Promise<PaperTrade | null>;
-    /** Open trades' latest prices (and best price so far, when it moved — the trailing stop follows it). */
-    updateMarks(marks: Array<{ id: string; lastPrice: number; at: string; peakPrice?: number }>): Promise<void>;
+    /** Open trades' latest prices (and best price so far, when it moved — the trailing stop follows it; when trailing started at the target). */
+    updateMarks(marks: Array<{ id: string; lastPrice: number; at: string; peakPrice?: number; trailingAt?: string }>): Promise<void>;
     /** Newest first; `since` = entered at or after (ISO). */
     listTrades(f: { status?: 'OPEN' | 'CLOSED'; strategyId?: string; connectionId?: string; since?: string; limit?: number }): Promise<PaperTrade[]>;
     /** A connection's own values over its strategy's plan (null = none). */

@@ -342,10 +342,10 @@ export class MemoryV2Store implements V2Store {
       Object.assign(t, clone(patch), { status: 'CLOSED' });
       return clone(t);
     },
-    updateMarks: async (marks: Array<{ id: string; lastPrice: number; at: string; peakPrice?: number }>) => {
+    updateMarks: async (marks: Array<{ id: string; lastPrice: number; at: string; peakPrice?: number; trailingAt?: string }>) => {
       for (const m of marks) {
         const t = this.data.paperTrades.find((x) => x.id === m.id && x.status === 'OPEN');
-        if (t) Object.assign(t, { lastPrice: m.lastPrice, lastPriceAt: m.at }, m.peakPrice !== undefined ? { peakPrice: m.peakPrice } : {});
+        if (t) Object.assign(t, { lastPrice: m.lastPrice, lastPriceAt: m.at }, m.peakPrice !== undefined ? { peakPrice: m.peakPrice } : {}, m.trailingAt ? { trailingAt: m.trailingAt } : {});
       }
     },
     listTrades: async (f: { status?: 'OPEN' | 'CLOSED'; strategyId?: string; connectionId?: string; since?: string; limit?: number }) =>

@@ -13,7 +13,7 @@ import { stopNow } from '@/shared/v2';
 import { compact, niceTicks } from './EquityChart';
 import { inr } from './money';
 
-function useWidth(ref: RefObject<HTMLDivElement | null>, min = 240): number {
+export function useWidth(ref: RefObject<HTMLDivElement | null>, min = 240): number {
   const [w, setW] = useState(480);
   useLayoutEffect(() => {
     const el = ref.current;

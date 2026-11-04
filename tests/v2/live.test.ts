@@ -409,6 +409,26 @@ describe('live worker end to end', () => {
     expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'CLOSED', exitReason: 'TRAIL', exitPrice: 25_571.5 });
   });
 
+  it('with a target the ticks start the trailing stop there instead of closing the trade', async () => {
+    const e = await liveEnv({ close: 25_160, level: 25_150, paper: { targetPct: 1, trailPct: 1 } });
+    expect(e.channels.sent[0]!.message.text).toMatch(/target ₹25,538\.65 starts trailing 1%/); // 25,285.8 × 1.01
+    await e.step('09:21:00');
+    const tick = (price: number) => {
+      const tt = e.t() + 500;
+      e.worker.events.ticks([{ token: nFut.token, price, volume: 900, tradeTime: tt, exchangeTime: tt, dayOpen: 25_100, index: false }], tt + 100);
+    };
+    tick(25_600); // past the target: not closed — trailing starts (stop 25,344)
+    await e.worker.idle();
+    await e.step('09:21:15');
+    expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'OPEN', peakPrice: 25_600, trailingAt: expect.any(String) });
+    tick(25_400);
+    await e.worker.idle();
+    expect(e.store.data.paperTrades[0]!.status).toBe('OPEN');
+    tick(25_300); // through 25,344 → closed by the trailing stop
+    await e.worker.idle();
+    expect(e.store.data.paperTrades[0]).toMatchObject({ status: 'CLOSED', exitReason: 'TRAIL' });
+  });
+
   it('the cron scanner steps aside while the worker streams, and warns once if it dies', async () => {
     const e = await liveEnv({ close: 25_110, level: 25_300 });
     const covering = await e.svc.scan();

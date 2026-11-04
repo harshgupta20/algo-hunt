@@ -202,6 +202,7 @@ export function v2Controller(ctx: AppContext) {
       });
     },
     closePaperTrade: (req) => svc().closePaperTrade(req.params.id!),
+    paperTradePath: (req) => svc().paperTradePath(req.params.id!),
     resetPaper: (req) => svc().resetPaper(req.params.id!),
 
     settings: () => svc().settings(),

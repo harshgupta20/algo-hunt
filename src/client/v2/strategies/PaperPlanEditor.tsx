@@ -4,7 +4,7 @@
  * Step 4 of the strategy editor: paper trading — on for every connection of the strategy by default.
  * These are the defaults its connections trade with (each connection can change its own values in
  * Connections or on the Paper tab), plus one rule per top-level group (or one for the whole
- * strategy): which leg to trade, Buy or Sell, and its stop-loss / target conditions. Both backtests
+ * strategy): which leg to trade, Buy or Sell, and its trailing rules. Both backtests
  * start from this plan.
  */
 import { RotateCcw } from 'lucide-react';
@@ -59,12 +59,9 @@ export function PaperRulesEditor({ def, rules, onChange }: { def: StrategyDefini
   );
 }
 
-/** Default legs / sides with each group's stop / target conditions kept (built by hand — "Defaults" never wipes them). */
+/** Default legs / sides with each group's trailing rules kept (built by hand — "Defaults" never wipes them). */
 const keepConditions = (fresh: PaperRule[], cur: PaperRule[]): PaperRule[] =>
-  fresh.map((r) => {
-    const was = cur.find((x) => x.group === r.group);
-    return { ...r, stopWhen: was?.stopWhen ?? null, targetWhen: was?.targetWhen ?? null };
-  });
+  fresh.map((r) => ({ ...r, stopWhen: cur.find((x) => x.group === r.group)?.stopWhen ?? null }));
 
 export function PaperPlanEditor({ def, plan, onChange }: { def: StrategyDefinition; plan: PaperPlan; onChange: (p: PaperPlan) => void }) {
   const groups = paperGroups(def);
@@ -91,7 +88,7 @@ export function PaperPlanEditor({ def, plan, onChange }: { def: StrategyDefiniti
           <PaperTermsFields value={plan} onChange={(p) => onChange({ ...p, rules })} hasGroups={groups.length > 0} sizing={planSizing(def, rules)} />
 
           <PaperRulesEditor def={def} rules={rules} onChange={(r) => set({ rules: r })} />
-          <ConditionsEditor def={def} rules={rules} onChange={(r) => set({ rules: r })} />
+          <ConditionsEditor def={def} rules={rules} targetPct={plan.targetPct} onChange={(r) => set({ rules: r })} />
           <Tooltip content={H.paper.savedWith}>
             <p className="text-[11px] text-slate-500">Defaults for every connection of this strategy — a connection can change its own values in Connections or on the Paper tab. Saved with the strategy; open trades keep their settings.</p>
           </Tooltip>

@@ -19,6 +19,7 @@ import type {
   SignalQuery,
   PaperTrade,
   StrategyDefinition,
+  TradePath,
   V2Alert,
   V2Connection,
   V2Instrument,
@@ -41,6 +42,7 @@ import {
   resolveRules,
   incompatibility,
   strategySummary,
+  tradePath,
   validateConnection,
   validateStrategy,
   watchWindowIssue,
@@ -67,6 +69,7 @@ import { atmReference, resolveUnits, unitInstruments } from './universe/resolve'
 
 /** After a failed end-of-day paper sync, wait this long before trying again. */
 const PAPER_SYNC_RETRY_MS = 3 * 60_000;
+const DAY_MS = 86_400_000;
 
 export class V2ServiceError extends Error {
   constructor(
@@ -532,7 +535,7 @@ export class V2Service {
     return s;
   }
 
-  /** The request's strategy, its period and the plan's stop / target conditions checked (the same for both backtests). */
+  /** The request's strategy, its period and the plan's trailing rules checked (the same for both backtests). */
   private async checkedBacktest(req: BacktestRequest): Promise<V2Strategy> {
     const s = await this.getStrategy(req.strategyId);
     if (req.from > req.to) throw new V2ServiceError(400, '“From” must be on or before “to”');
@@ -540,13 +543,13 @@ export class V2Service {
     return s;
   }
 
-  /** A plan's watch window, and its stop / target conditions with the same checks as the strategy's own conditions. */
+  /** A plan's watch window, and its trailing rules with the same checks as the strategy's own conditions. */
   private checkPlan(s: V2Strategy, plan: PaperPlan): void {
     const window = watchWindowIssue(normalizePlan(plan));
     if (window) throw new V2ServiceError(400, window);
-    for (const x of planConditions(resolveRules(s.definition, plan.rules))) {
+    for (const x of planConditions(resolveRules(s.definition, normalizePlan(plan).rules))) {
       const issue = validateStrategy({ ...s.definition, expression: x.when }).find((i) => i.severity === 'error');
-      if (issue) throw new V2ServiceError(400, `${x.kind === 'STOP' ? 'Stop-loss' : 'Target'} condition: ${issue.message}`);
+      if (issue) throw new V2ServiceError(400, `Trailing rules: ${issue.message}`);
     }
   }
 
@@ -644,7 +647,7 @@ export class V2Service {
     return paperTables(async () => {
       const s = await this.getStrategy(strategyId);
       const plan = await this.deps.store.paper.getPlan(strategyId);
-      return plan ? { ...normalizePlan(plan), rules: resolveRules(s.definition, plan.rules) } : defaultPaperPlan(s.definition);
+      return plan ? { ...normalizePlan(plan), rules: resolveRules(s.definition, normalizePlan(plan).rules) } : defaultPaperPlan(s.definition);
     });
   }
 
@@ -652,7 +655,7 @@ export class V2Service {
     return paperTables(async () => {
       const s = await this.getStrategy(strategyId);
       this.checkPlan(s, plan);
-      return this.deps.store.paper.savePlan(strategyId, { ...normalizePlan(plan), rules: resolveRules(s.definition, plan.rules) });
+      return this.deps.store.paper.savePlan(strategyId, { ...normalizePlan(plan), rules: resolveRules(s.definition, normalizePlan(plan).rules) });
     });
   }
 
@@ -730,7 +733,7 @@ export class V2Service {
       const [strategies, plans, overrides] = await Promise.all([store.strategies.list(), store.paper.listPlans(), store.paper.listOverrides()]);
       const saved = new Map(plans.map((p) => [p.strategyId, p.plan]));
       return {
-        plans: Object.fromEntries(strategies.map((s) => [s.id, saved.get(s.id) ? { ...normalizePlan(saved.get(s.id)!), rules: resolveRules(s.definition, saved.get(s.id)!.rules) } : defaultPaperPlan(s.definition)])),
+        plans: Object.fromEntries(strategies.map((s) => [s.id, saved.get(s.id) ? { ...normalizePlan(saved.get(s.id)!), rules: resolveRules(s.definition, normalizePlan(saved.get(s.id)!).rules) } : defaultPaperPlan(s.definition)])),
         overrides: Object.fromEntries(overrides.map((o) => [o.connectionId, o.override])),
       };
     });
@@ -778,6 +781,26 @@ export class V2Service {
       for (const t of list) if ((!scope || scope.trade(t)) && (!rest.result || (rest.result === 'win' ? (t.netPnl ?? 0) > 0 : (t.netPnl ?? 0) < 0))) counts[t.strategyId] = (counts[t.strategyId] ?? 0) + 1;
       return { counts, total: Object.values(counts).reduce((a, b) => a + b, 0) };
     });
+  }
+
+  /**
+   * A paper trade's price path for its story, from Kite's 1-minute candles: entry to exit (now, while open) and a
+   * little after. Null when Kite has none (it doesn't keep expired contracts' candles).
+   */
+  async paperTradePath(id: string): Promise<TradePath | null> {
+    const t = await paperTables(async () => (await this.paperTradesFor({})).find((x) => x.id === id));
+    if (!t) throw new V2ServiceError(404, 'No paper trade with that id (it may have been deleted)');
+    await this.requireKite('show this trade’s prices');
+    const now = this.now();
+    const entry = Date.parse(t.entryAt);
+    const exit = t.exitAt ? Date.parse(t.exitAt) : null;
+    const until = exit === null ? now : Math.min(now, exit + Math.max(DAY_MS, (exit - entry) / 2));
+    try {
+      const rows = await this.deps.provider.getHistoricalCandles({ instrument: t.instrument, interval: '1m', from: istDate(entry), to: istDate(until) });
+      return tradePath(rows, entry, exit) ?? null;
+    } catch {
+      return null;
+    }
   }
 
   async closePaperTrade(id: string): Promise<PaperTrade> {

@@ -77,7 +77,7 @@ export interface CompareRequest {
   cooldownMinutes?: number | null;
   /** The plan's watch window: trigger candles outside it don't alert (absent = the whole session). */
   watch?: Pick<PaperPlan, 'watch' | 'watchNseFrom' | 'watchNseTo' | 'watchMcxFrom' | 'watchMcxTo'>;
-  /** Backtest stop / target conditions: for each, the candle closes (ms) where it is true are returned in `exits[key]`. */
+  /** Backtest trailing rules: for each, the candle closes (ms) where it is true are returned in `exits[key]`. */
   exits?: Array<{ key: string; when: ExprNode }>;
 }
 
@@ -335,7 +335,7 @@ export class V2Tools {
           if (decision.outcome) r.alerts.push({ candleTime: e.triggerCandle, prices: e.prices, trace: e.trace });
           prev = e.result;
         }
-        // Stop / target conditions: every close of their own timeframe where they are true.
+        // Trailing rules: every close of their own timeframe where they are true.
         if (exits.length) {
           r.exits = {};
           for (const x of exits) {

@@ -17,7 +17,7 @@
  *   candles   close finished minutes
  *   evaluate  connections whose trigger candle just closed (live-candle mode: every minute)
  *   paper     open paper trades: stop / trailing stop / target on every tick; square-off, expiry, prices and
- *             stop / target conditions on Kite's candles (every 10 s)
+ *             trailing rules on Kite's candles (every 10 s)
  *   status    heartbeat row for the app and the backup scanner (every 5 s)
  */
 import { randomUUID } from 'node:crypto';
@@ -35,7 +35,7 @@ import { buildSeries } from '../engine/candles';
 import { evaluateUnit, type SeriesLookup, type SeriesResult, type UnitEvalInput } from '../engine/evaluator';
 import { seriesKey, seriesOf } from '../engine/series';
 import type { V2Store } from '../persistence/V2Store';
-import { PaperTrader, newPeak, paperHit, type PaperMark } from '../paper/PaperTrader';
+import { PaperTrader, markChanges, paperHit, type PaperMark } from '../paper/PaperTrader';
 import { commitUnit, previousResult, type Clock, type CommitDeps, type CommitStats, type UnitTarget } from '../scanner/commit';
 import { clockFor } from '../scanner/V2Scanner';
 import { resolveUnits } from '../universe/resolve';
@@ -731,7 +731,7 @@ export class LiveWorker {
     }
   }
 
-  /** Stop-loss / trailing stop / target on each tick of a contract with an open paper trade; new best prices move the trailing stop. */
+  /** Stop-loss / trailing stop / target on each tick of a contract with an open paper trade; new best prices move the trailing stop, the target starts it. */
   private paperTicks(ticks: Tick[]): void {
     for (const tick of ticks) {
       const list = this.paperOpen.get(tick.token);
@@ -740,10 +740,12 @@ export class LiveWorker {
         if (this.paperClosing.has(trade.id)) continue;
         const hit = paperHit(trade, tick.price);
         if (!hit) {
-          const peak = newPeak(trade, tick.price);
-          if (peak !== undefined) {
-            list[i] = { ...trade, peakPrice: peak };
-            this.paperPeaks.set(trade.id, { id: trade.id, lastPrice: tick.price, at: new Date(this.now()).toISOString(), peakPrice: peak });
+          const at = new Date(this.now()).toISOString();
+          const changes = markChanges(trade, tick.price, at);
+          if (changes.peakPrice !== undefined || changes.trailingAt) {
+            const next = { ...trade, ...changes };
+            list[i] = next;
+            this.paperPeaks.set(trade.id, { id: trade.id, lastPrice: tick.price, at, ...(next.peakPrice !== undefined ? { peakPrice: next.peakPrice } : {}), ...(next.trailingAt ? { trailingAt: next.trailingAt } : {}) });
           }
           continue;
         }

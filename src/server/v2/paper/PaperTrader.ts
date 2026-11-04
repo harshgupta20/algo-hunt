@@ -6,16 +6,19 @@
  *   open   an alert of a strategy whose paper plan is on → the rule of the group that fired (leg + side)
  *          → futures / options: the plan's lots per trade; stocks: as many shares as the ₹ per trade covers
  *          at the market price (+ slippage), at least one
- *   exit   stop-loss / trailing stop / target (on every price the caller sees), the group's stop / target
- *          condition (at each close of its timeframe, on Kite's candles — exitConditions.ts), the other group
- *          firing, the intraday square-off time, or the contract's expiry; charges are deducted when it closes
+ *   exit   stop-loss / trailing stop / target (on every price the caller sees), the group's trailing rules (at
+ *          each close of their timeframe, on Kite's candles — exitConditions.ts), the other group firing, the
+ *          intraday square-off time, or the contract's expiry; charges are deducted when it closes
+ *   trail  with a target and trailing (a trailing stop % or trailing rules) the target doesn't close the trade:
+ *          reaching it starts the trailing stop and the trailing rules (trailingAt); without a target they run
+ *          from the entry
  *
  * One open position per connection and strike shift. Both the live worker (every tick) and the backup
  * scanner (once a minute, while the worker is off) drive exits; closing is conditional on the trade
  * still being open, so the two can never close a trade twice.
  */
 import type { LegId, Market, PaperConditions, PaperExitReason, PaperPlan, PaperRule, PaperSide, PaperTrade, ProductKind, StrategyDefinition, UnitEvaluation, V2Connection, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
-import { defaultPaperPlan, effectivePlan, hasCondition, marketOfExchange, paperGroups, resolveRules, stopNow, trailLevel } from '@/shared/v2';
+import { atTarget, defaultPaperPlan, effectivePlan, hasCondition, marketOfExchange, paperGroups, resolveRules, stopNow, trailLevel, trailsPastTarget } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
 import type { V2DataProvider } from '../data/DataProvider';
@@ -27,12 +30,13 @@ const MINUTE = 60_000;
 /** A square-off / expiry close uses the live price until this long after the deadline, then the last known price. */
 const LATE_EXIT_MS = 5 * MINUTE;
 
-/** An open trade's latest price (and best price so far, when it improved). */
+/** An open trade's latest price (and best price so far, when it improved; when trailing started, once it did). */
 export interface PaperMark {
   id: string;
   lastPrice: number;
   at: string;
   peakPrice?: number;
+  trailingAt?: string;
 }
 
 /** Latest prices for contracts (token → price); contracts without a price are left out. */
@@ -42,7 +46,7 @@ export interface PaperDeps {
   store: V2Store;
   now: () => number;
   prices: PriceSource;
-  /** Kite's candles for trades' stop / target conditions (absent = conditions aren't checked). */
+  /** Kite's candles for trades' trailing rules (absent = the rules aren't checked). */
   provider?: V2DataProvider;
 }
 
@@ -86,12 +90,12 @@ export function exitDeadline(t: PaperTrade, cal: MarketCalendar): { at: number; 
   return null;
 }
 
-/** Stop-loss, trailing stop or target reached at this price (a stop wins when both are). */
+/** Stop-loss, trailing stop or target reached at this price (a stop wins when both are; a trade that trails past its target isn't closed there). */
 export function paperHit(t: PaperTrade, price: number): 'STOP' | 'TRAIL' | 'TARGET' | null {
   const buy = t.side === 'BUY';
   const stop = stopNow(t);
   if (stop && (buy ? price <= stop.price : price >= stop.price)) return stop.reason;
-  if (t.targetPrice !== null && (buy ? price >= t.targetPrice : price <= t.targetPrice)) return 'TARGET';
+  if (atTarget(t, price) && !trailsPastTarget(t)) return 'TARGET';
   return null;
 }
 
@@ -99,6 +103,13 @@ export function paperHit(t: PaperTrade, price: number): 'STOP' | 'TRAIL' | 'TARG
 export function newPeak(t: Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice'>, price: number): number | undefined {
   const peak = t.peakPrice ?? t.entryPrice;
   return (t.side === 'BUY' ? price > peak : price < peak) ? price : undefined;
+}
+
+/** What seeing `price` at `at` changes on an open trade it didn't close: a new best price, and trailing starting at the target. */
+export function markChanges(t: PaperTrade, price: number, at: string): Pick<PaperMark, 'peakPrice' | 'trailingAt'> {
+  const peak = newPeak(t, price);
+  const starts = !t.trailingAt && trailsPastTarget(t) && atTarget(t, price);
+  return { ...(peak !== undefined ? { peakPrice: peak } : {}), ...(starts ? { trailingAt: at } : {}) };
 }
 
 /** Exit fill, P&L and charges if the trade closed at `price` now. */
@@ -125,7 +136,7 @@ const REASON_TEXT: Record<PaperExitReason, string> = {
   TARGET: 'target hit',
   STOP: 'stop-loss hit',
   TRAIL: 'trailing stop hit',
-  STOP_RULE: 'stop-loss condition',
+  STOP_RULE: 'trailing rule',
   TARGET_RULE: 'target condition',
   SQUARE_OFF: 'square-off',
   OPPOSITE: 'the other group fired',
@@ -134,17 +145,14 @@ const REASON_TEXT: Record<PaperExitReason, string> = {
   END: 'end of the backtest',
 };
 
-/** The stop / target conditions a rule's trades carry (with the unit's contracts to check them on), or undefined. */
+/** The trailing rules a rule's trades carry (with the unit's contracts to check them on), or undefined. */
 export function tradeConditions(rule: PaperRule, d: Pick<StrategyDefinition, 'legs'>, unit: V2Unit): PaperConditions | undefined {
-  const stop = hasCondition(rule.stopWhen) ? rule.stopWhen : undefined;
-  const target = hasCondition(rule.targetWhen) ? rule.targetWhen : undefined;
-  if (!stop && !target) return undefined;
-  return { ...(stop ? { stopWhen: stop } : {}), ...(target ? { targetWhen: target } : {}), legDefs: d.legs, legs: unit.legs };
+  return hasCondition(rule.stopWhen) ? { stopWhen: rule.stopWhen, legDefs: d.legs, legs: unit.legs } : undefined;
 }
 
 /**
  * A new open trade for `ref` (the market price): futures / options the plan's lots per trade, stocks whole shares for
- * the ₹ per trade (≥ 1); slippage, target / stop, trailing stop from the fill.
+ * the ₹ per trade (≥ 1); slippage, target / stop, trailing stop from the fill (or from the target).
  */
 export function buildTrade(x: {
   plan: PaperPlan;
@@ -304,12 +312,11 @@ export class PaperTrader {
     }
     const perLot = trade.capitalUsed / trade.lots;
     const trail = trailLevel(trade);
+    const trails = [trade.terms.trailPct != null ? `trailing ${trade.terms.trailPct}%${trail !== null ? ` (${rupees(trail)} now)` : ''}` : null, trade.conditions?.stopWhen ? 'trailing rules' : null].filter(Boolean).join(' + ');
     const exits = [
-      trade.targetPrice !== null ? `target ${rupees(trade.targetPrice)}` : null,
+      trade.targetPrice !== null ? (trails ? `target ${rupees(trade.targetPrice)} starts ${trails}` : `target ${rupees(trade.targetPrice)}`) : null,
       trade.stopPrice !== null ? `stop ${rupees(trade.stopPrice)}` : null,
-      trail !== null ? `trailing ${trade.terms.trailPct}% (${rupees(trail)} now)` : null,
-      trade.conditions?.stopWhen ? 'stop condition' : null,
-      trade.conditions?.targetWhen ? 'target condition' : null,
+      trade.targetPrice === null && trails ? trails : null,
     ].filter(Boolean);
     const budget = trade.overBudget ? ` · 1 share costs ${rupees(perLot)}, over the ${rupees(plan.cashPerTrade)} per trade` : '';
     lines.push(`📄 Paper: ${describe(trade)} @ ${rupees(trade.entryPrice)}${exits.length ? ` · ${exits.join(' · ')}` : ''}${budget}`);
@@ -333,8 +340,8 @@ export class PaperTrader {
 
   /**
    * Check every open trade: square-off / expiry deadlines, then stop-loss / trailing stop / target at the latest
-   * price (recording it, and the best price so far), then stop / target conditions on candles that closed since the
-   * last look. Prices are asked only for contracts whose market is open.
+   * price (recording it, the best price so far and when trailing started), then trailing rules on candles that
+   * closed since the last look. Prices are asked only for contracts whose market is open.
    */
   async monitor(cals: Record<Market, MarketCalendar>): Promise<{ open: PaperTrade[]; closed: PaperTrade[]; requested: boolean }> {
     const { store } = this.deps;
@@ -360,10 +367,10 @@ export class PaperTrader {
         const hit = paperHit(t, px);
         if (hit) exit = this.close(t, px, hit);
         else {
-          const peak = newPeak(t, px);
           const at = new Date(now).toISOString();
-          marks.push({ id: t.id, lastPrice: px, at, ...(peak !== undefined ? { peakPrice: peak } : {}) });
-          next = { ...t, lastPrice: px, lastPriceAt: at, ...(peak !== undefined ? { peakPrice: peak } : {}) };
+          const changes = markChanges(t, px, at);
+          marks.push({ id: t.id, lastPrice: px, at, ...changes });
+          next = { ...t, lastPrice: px, lastPriceAt: at, ...changes };
         }
       }
       if (exit) {

@@ -1,11 +1,12 @@
 /**
  * Backtest: the strategy's past alerts (as Compare finds them) traded like paper trades with the plan — futures /
  * options in lots, no account limit — exits found on the contract's 1-minute candles (target, stop-loss, trailing
- * stop, stop / target conditions, square-off, end of test); nothing alerts outside the watch window.
+ * stop, trailing rules, square-off, end of test; with trailing the target starts it instead of closing); nothing
+ * alerts outside the watch window. Every trade carries its price path (its story).
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { PaperPlan, PaperRule, StrategyDefinition } from '../../src/shared/v2';
-import { backtestRequestSchema, defaultPaperPlan } from '../../src/shared/v2';
+import { backtestRequestSchema, defaultPaperPlan, normalizePlan, tradeStory } from '../../src/shared/v2';
 import { ProductService } from '../../src/server/v2/data/ProductService';
 import { RuntimeV2Store, createRuntimeState } from '../../src/server/v2/persistence/RuntimeV2Store';
 import type { RawCandle } from '../../src/server/v2/engine/candles';
@@ -50,8 +51,8 @@ describe('backtest', () => {
 
   const plan = (patch: Partial<PaperPlan>): PaperPlan => ({ ...defaultPaperPlan(S), slippagePct: 0, targetPct: 1, stopPct: 0.5, ...patch });
   const run = (p: Partial<PaperPlan>) => svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: plan(p) });
-  /** The whole strategy's rule with a stop / target condition. */
-  const withConditions = (c: Pick<PaperRule, 'stopWhen' | 'targetWhen'>, p: Partial<PaperPlan> = {}): PaperPlan => plan({ ...p, rules: [{ group: null, leg: 'A', side: 'BUY', ...c }] });
+  /** The whole strategy's rule with trailing rules. */
+  const withConditions = (c: Pick<PaperRule, 'stopWhen'>, p: Partial<PaperPlan> = {}): PaperPlan => plan({ ...p, rules: [{ group: null, leg: 'A', side: 'BUY', ...c }] });
 
   it('enters at the alert candle’s close and exits at the target found in 1-minute candles', async () => {
     provider.set(niftyFut, '1m', risingMinutes(40));
@@ -96,6 +97,44 @@ describe('backtest', () => {
     // 25,222 × 0.998 = 25,171.556 → 25,171.55 (tick 0.05) — the 10:10 minute's own high doesn't count yet.
     expect(r.trades[0]).toMatchObject({ exitReason: 'TRAIL', exitPrice: 25_171.55, exitAt: new Date(ist(D, '10:11')).toISOString(), peakPrice: 25_222 });
     expect(r.notes.some((n) => /^Trailing stop-loss 0.2% from the best price since entry/.test(n))).toBe(true);
+  });
+
+  it('target + trailing stop: the target starts the trail instead of closing', async () => {
+    // Up through the target (25,371.2, in the 10:24 minute) to a high of 25,422 at 10:29, then a fall at 10:30.
+    const fall = { time: Math.floor(ist(D, '10:30') / 1000), open: 25_420, high: 25_425, low: 25_300, close: 25_310, volume: 10 };
+    provider.set(niftyFut, '1m', [...risingMinutes(30), fall]);
+    const r = await run({ targetPct: 1, stopPct: 0.5, trailPct: 0.1 });
+    // 25,422 × 0.999 = 25,396.578 → 25,396.6: above the target — the winner ran.
+    expect(r.trades[0]).toMatchObject({ exitReason: 'TRAIL', exitPrice: 25_396.6, exitAt: new Date(ist(D, '10:31')).toISOString(), trailingAt: new Date(ist(D, '10:24')).toISOString() });
+    expect(r.notes.some((n) => /^Trailing stop-loss 0.1% from the best price since entry, from the target on/.test(n))).toBe(true);
+  });
+
+  it('target + trailing stop: before the target only the stop-loss guards the trade', async () => {
+    // A dip that hits a 0.1 % trail from the entry — before the target, so it doesn't count (a separate test: candles are cached per run).
+    const dip = { time: Math.floor(ist(D, '10:05') / 1000), open: 25_170, high: 25_172, low: 25_140, close: 25_150, volume: 10 };
+    provider.set(niftyFut, '1m', [...risingMinutes(5), dip]);
+    expect((await run({ targetPct: 1, stopPct: 0.5, trailPct: 0.1 })).trades[0]).toMatchObject({ exitReason: 'SQUARE_OFF' });
+    // Without a target the trail runs from the entry: the dip closes it.
+    expect((await run({ targetPct: null, stopPct: 0.5, trailPct: 0.1 })).trades[0]).toMatchObject({ exitReason: 'TRAIL', exitAt: new Date(ist(D, '10:06')).toISOString() });
+  });
+
+  it('every trade carries its price path: the story shows the trailing stop taking over and rising', async () => {
+    const fall = { time: Math.floor(ist(D, '10:30') / 1000), open: 25_420, high: 25_425, low: 25_300, close: 25_310, volume: 10 };
+    provider.set(niftyFut, '1m', [...risingMinutes(30), fall, ...risingMinutes(5, 25_310, 1).map((c, j) => ({ ...c, time: Math.floor(ist(D, '10:31') / 1000) + j * 60 }))]);
+    const [t] = (await run({ targetPct: 1, stopPct: 0.5, trailPct: 0.1 })).trades;
+    // 31 minutes held (10:00–10:30) in 1-minute bars, then the 5 minutes after the exit.
+    expect(t!.path).toMatchObject({ step: 1, held: 31 });
+    expect(t!.path!.bars).toHaveLength(36);
+    expect(t!.path!.bars[0]).toEqual([ist(D, '10:00') / 1000, 25_120, 25_132, 25_118, 25_130]);
+    const story = tradeStory(t!, t!.path!);
+    expect(story.trailingFrom).toEqual({ at: ist(D, '10:24'), bar: 24 });
+    // The trail takes over from the stop-loss at 10:25 and rises every minute after; the exit minute shows the trade's own stop.
+    expect(story.moves[0]).toMatchObject({ at: ist(D, '10:25'), from: { reason: 'STOP' }, to: { reason: 'TRAIL' } });
+    expect(story.moves.at(-1)).toMatchObject({ at: ist(D, '10:30'), to: { price: 25_396.6, reason: 'TRAIL' } });
+    expect(story.finalStop).toEqual({ price: 25_396.6, reason: 'TRAIL' });
+    // The best is the trade's own (25,422 at 10:29) — not the exit minute's high, which came after the stop was hit.
+    expect(story.best).toMatchObject({ price: 25_422, at: ist(D, '10:29') });
+    expect(story.after).toMatchObject({ minutes: 5, high: 25_317, low: 25_308 });
   });
 
   it('a trailing stop looser than the fixed stop-loss: the fixed one counts (and says so)', async () => {
@@ -163,28 +202,42 @@ describe('backtest', () => {
     expect(r.trades[0]).toMatchObject({ exitReason: 'TARGET', exitPrice: 25_371.2, grossPnl: 18_840 });
   });
 
-  it('stop / target conditions: the trade closes at the first candle close where one is true', async () => {
+  it('trailing rules: from the entry without a target, at the first candle close where they are true', async () => {
     provider.set(niftyFut, '1m', risingMinutes(60));
     // Entered at 10:00 (close 25,120); 15-minute closes rise by 1 → above 25,122 first on the 10:30–10:45 candle.
     const above = cond(field(legSeries('A')), 'GT', num(25_122));
     const bt = (p: PaperPlan) => svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: p });
-    const r = await bt(withConditions({ targetWhen: above }, { targetPct: null, stopPct: null }));
-    expect(r.trades[0]).toMatchObject({ exitReason: 'TARGET_RULE', exitAt: new Date(ist(D, '10:45')).toISOString(), exitPrice: 25_570 }); // the 10:44 minute's close
-    expect(r.notes.some((n) => /^Target condition: .*checked at each 15m candle close/.test(n))).toBe(true);
-    // The same condition as a stop: named as a stop.
-    expect((await bt(withConditions({ stopWhen: above }, { targetPct: null, stopPct: null }))).trades[0]).toMatchObject({ exitReason: 'STOP_RULE', exitAt: new Date(ist(D, '10:45')).toISOString() });
-    // Both true on the same close: the stop counts.
-    expect((await bt(withConditions({ stopWhen: above, targetWhen: above }, { targetPct: null, stopPct: null }))).trades[0]).toMatchObject({ exitReason: 'STOP_RULE' });
-    // A % target that comes first still wins.
-    expect((await bt(withConditions({ targetWhen: above }))).trades[0]).toMatchObject({ exitReason: 'TARGET' });
+    const r = await bt(withConditions({ stopWhen: above }, { targetPct: null, stopPct: null }));
+    expect(r.trades[0]).toMatchObject({ exitReason: 'STOP_RULE', exitAt: new Date(ist(D, '10:45')).toISOString(), exitPrice: 25_570 }); // the 10:44 minute's close
+    expect(r.notes.some((n) => /^Trailing rules: .*checked at each 15m candle close/.test(n))).toBe(true);
     // Several conditions: AND needs both — never true here, so the trade runs to the square-off.
     const r2 = await bt(withConditions({ stopWhen: and(above, cond(field(legSeries('A')), 'LT', num(25_000))) }, { targetPct: null, stopPct: null }));
     expect(r2.trades[0]).toMatchObject({ exitReason: 'SQUARE_OFF' });
   });
 
-  it('stop / target conditions are checked like the strategy’s own conditions (backtest and saving the plan)', async () => {
+  it('with a target, trailing rules start there: the target doesn’t close the trade, earlier closes are ignored', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(60));
+    // True from the 10:00–10:15 close (25,121) on; the target 25,371.2 is reached in the 10:24 minute.
+    const early = cond(field(legSeries('A')), 'GT', num(25_120));
+    const bt = (p: PaperPlan) => svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: p });
+    expect((await bt(withConditions({ stopWhen: early }, { targetPct: null }))).trades[0]).toMatchObject({ exitReason: 'STOP_RULE', exitAt: new Date(ist(D, '10:15')).toISOString() });
+    const r = await bt(withConditions({ stopWhen: early }));
+    // The 10:15 close came before the target; the 10:30 close is the first after it — at the 10:29 minute's close.
+    expect(r.trades[0]).toMatchObject({ exitReason: 'STOP_RULE', exitAt: new Date(ist(D, '10:30')).toISOString(), exitPrice: 25_420, trailingAt: new Date(ist(D, '10:24')).toISOString() });
+    expect(r.notes).toContain('Trades that trail don’t close at the target: reaching it starts the trailing stop / trailing rules, and the fixed stop-loss stays only as a floor.');
+  });
+
+  it('target conditions were removed: an old plan’s are dropped, its target closes the trade again', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    const old = { ...plan({}), rules: [{ group: null, leg: 'A', side: 'BUY', targetWhen: cond(field(legSeries('A')), 'GT', num(25_120)) } as PaperRule] };
+    expect(normalizePlan(old).rules[0]).toEqual({ group: null, leg: 'A', side: 'BUY' });
+    const r = await svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: old });
+    expect(r.trades[0]).toMatchObject({ exitReason: 'TARGET', exitAt: new Date(ist(D, '10:25')).toISOString() });
+  });
+
+  it('trailing rules are checked like the strategy’s own conditions (backtest and saving the plan)', async () => {
     const bad = withConditions({ stopWhen: cond(field(legSeries('D')), 'GT', num(1)) });
-    await expect(svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: bad })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^Stop-loss condition: /) });
+    await expect(svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: bad })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^Trailing rules: /) });
     await expect(svc.savePaperPlan(strategyId, bad)).rejects.toMatchObject({ status: 400 });
   });
 

@@ -7,20 +7,23 @@
  *             stocks the shares the ₹ per trade covers — no account limit, like paper trading
  *   exits     stop-loss / trailing stop / target inside each minute (a stop and the target in one minute → the
  *             stop; a gap past the stop fills at the minute's open; the trailing stop follows the best price of
- *             the minutes before), a stop / target condition coming true (at that candle's close), the other
- *             group firing, the day's square-off, expiry, or the end of the test (still open → the last price)
+ *             the minutes before), a trailing rule coming true (at that candle's close), the other group firing,
+ *             the day's square-off, expiry, or the end of the test (still open → the last price)
+ *   trailing  with a target and trailing (a trailing stop % or trailing rules) the minute that reaches the target
+ *             starts trailing instead of closing the trade (from the next minute; rules from the candles closing
+ *             after it); without a target trailing runs from the entry
+ *   path      each closed trade carries its price path (story.ts) — what its story shows
  *   one open position per product (a backtest tests one strike position)
  */
-import type { BacktestSkip, ConditionKind, PaperExitReason, PaperPlan, PaperTrade, StrategyDefinition, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
-import { conditionKey, nodeText, paperGroups, planConditions, planSizing, watchWindow } from '@/shared/v2';
+import type { BacktestSkip, PaperExitReason, PaperPlan, PaperTrade, StrategyDefinition, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
+import { atTarget, conditionKey, nodeText, paperGroups, planConditions, planSizing, tradePath, trailing, trailsPastTarget, watchWindow } from '@/shared/v2';
 import { exitDefinition } from '../engine/series';
 import { istDate } from '../../utils/marketTime';
 import type { MarketCalendar } from '../calendar/MarketCalendar';
 import type { RawCandle } from '../engine/candles';
-import { buildTrade, exitDeadline, firedGroupOf, newPeak, settle, squareOffAt, stopNow } from './PaperTrader';
+import { buildTrade, exitDeadline, firedGroupOf, newPeak, settle, squareOffAt, stopNow, tradeConditions } from './PaperTrader';
 
 const MINUTE = 60_000;
-const CONDITION_REASON: Record<ConditionKind, PaperExitReason> = { STOP: 'STOP_RULE', TARGET: 'TARGET_RULE' };
 
 /** An alert to trade: when its trigger candle closed, the unit (legs → contracts) it fired on and its prices. */
 export interface SimAlert {
@@ -41,7 +44,7 @@ export interface SimInput {
   alerts: SimAlert[];
   /** A contract's 1-minute candles, ascending (empty when there are none). */
   minutes: (instrument: V2Instrument) => RawCandle[];
-  /** Candle closes (ms, ascending) where a rule's condition is true (`conditionKey(group, kind)`). */
+  /** Candle closes (ms, ascending) where a rule's trailing rules are true (`conditionKey(group)`). */
   exitsFor: (alert: SimAlert, key: string) => number[];
   /** The end of the test (ms): trades still open are played out to here, then closed at their last price. */
   end: number;
@@ -59,8 +62,10 @@ interface Open {
   i: number;
   lastClose: number;
   deadline: { at: number; reason: 'SQUARE_OFF' | 'EXPIRY' } | null;
-  /** Candle closes after entry where the trade's stop / target condition is true (ascending; the stop first on a tie). */
-  exits: Array<{ at: number; reason: PaperExitReason }>;
+  /** Candle closes after entry where the trade's trailing rules are true (ascending). */
+  exits: number[];
+  /** Next of `exits` to look at (the ones before trailing started are passed over). */
+  x: number;
 }
 
 /** What a backtest's notes say about how its trades were made and closed (both backtests). */
@@ -85,10 +90,15 @@ export function planNotes(d: StrategyDefinition, plan: PaperPlan, opts: { condit
     'Each alert is entered at its trigger candle’s close (± slippage) and exited on the traded contract’s 1-minute candles; if a stop and the target fall in the same minute the stop counts.',
     ...(sizing.lots ? [`Futures and options: ${plan.lotsPerTrade} lot${plan.lotsPerTrade === 1 ? '' : 's'} per trade, at each contract’s own lot size.`] : []),
     ...(sizing.cash ? [`Stocks: as many shares as ₹${plan.cashPerTrade.toLocaleString('en-IN')} buys at the entry (at least one).`] : []),
-    ...(plan.trailPct !== null ? [`Trailing stop-loss ${plan.trailPct}% from the best price since entry, moved after each 1-minute candle (never against the trade).`] : []),
+    ...(plan.targetPct !== null && (plan.trailPct !== null || planConditions(plan.rules).length)
+      ? ['Trades that trail don’t close at the target: reaching it starts the trailing stop / trailing rules, and the fixed stop-loss stays only as a floor.']
+      : []),
+    ...(plan.trailPct !== null
+      ? [`Trailing stop-loss ${plan.trailPct}% from the best price since entry${plan.targetPct !== null ? ', from the target on' : ''}, moved after each 1-minute candle (never against the trade).`]
+      : []),
     ...planConditions(plan.rules).map((x) => {
       const group = groups.find((g) => g.id === x.group)?.label;
-      return `${x.kind === 'STOP' ? 'Stop-loss' : 'Target'} condition${group ? ` (${group})` : ''}: ${nodeText(x.when, d.legs)} — checked at each ${exitDefinition(d, x.when).evaluation.triggerTimeframe} candle close${opts.conditionLegs}; the trade exits at that close.`;
+      return `Trailing rules${group ? ` (${group})` : ''}: ${nodeText(x.when, d.legs)} — checked ${plan.targetPct !== null ? 'from the target on, ' : ''}at each ${exitDefinition(d, x.when).evaluation.triggerTimeframe} candle close${opts.conditionLegs}; the trade exits at that close.`;
     }),
   ];
 }
@@ -110,14 +120,20 @@ export function simulate(x: SimInput): SimOutput {
   const finish = (o: Open, price: number, reason: PaperExitReason, at: number) => {
     const s = settle(o.t, price, reason);
     const exitAt = new Date(at).toISOString();
-    closed.push({ ...o.t, ...s, status: 'CLOSED', exitAt, exitReason: reason, lastPrice: price, lastPriceAt: exitAt });
+    const path = tradePath(o.candles, Date.parse(o.t.entryAt), at);
+    closed.push({ ...o.t, ...s, status: 'CLOSED', exitAt, exitReason: reason, lastPrice: price, lastPriceAt: exitAt, ...(path ? { path } : {}) });
     open.delete(o.t.slot);
   };
 
-  /** The next timed exit: the square-off / expiry deadline or a condition, whichever is first. */
+  /** The next timed exit: the square-off / expiry deadline or a trailing rule (once trailing is on), whichever is first. */
   const due = (o: Open): { at: number; reason: PaperExitReason } | null => {
-    const rule = o.exits[0];
-    if (rule !== undefined && (!o.deadline || rule.at < o.deadline.at)) return rule;
+    let rule: number | undefined;
+    if (trailing(o.t)) {
+      const since = Date.parse(o.t.trailingAt ?? o.t.entryAt);
+      while (o.x < o.exits.length && o.exits[o.x]! <= since) o.x++;
+      rule = o.exits[o.x];
+    }
+    if (rule !== undefined && (!o.deadline || rule < o.deadline.at)) return { at: rule, reason: 'STOP_RULE' };
     return o.deadline;
   };
 
@@ -137,18 +153,21 @@ export function simulate(x: SimInput): SimOutput {
       // The stop as it stood when this minute opened (the trailing stop follows the minutes before).
       const stop = stopNow(t);
       const hitStop = stop !== null && (buy ? c.low <= stop.price : c.high >= stop.price);
-      const hitTarget = t.targetPrice !== null && (buy ? c.high >= t.targetPrice : c.low <= t.targetPrice);
+      const hitTarget = atTarget(t, buy ? c.high : c.low);
       if (hitStop) {
         // A gap through the stop fills at the minute's open.
         finish(o, buy ? Math.min(stop.price, c.open) : Math.max(stop.price, c.open), stop.reason, t0 + MINUTE);
         return true;
       }
-      if (hitTarget) {
+      const trails = trailsPastTarget(t);
+      if (hitTarget && !trails) {
         finish(o, t.targetPrice!, 'TARGET', t0 + MINUTE);
         return true;
       }
       const peak = newPeak(t, buy ? c.high : c.low);
-      if (peak !== undefined) o.t = { ...t, peakPrice: peak };
+      // Reaching the target starts trailing (the trailing stop from the next minute, the rules from the candles closing after this one opened).
+      const starts = hitTarget && trails && !t.trailingAt;
+      if (peak !== undefined || starts) o.t = { ...t, ...(peak !== undefined ? { peakPrice: peak } : {}), ...(starts ? { trailingAt: new Date(t0).toISOString() } : {}) };
       o.lastClose = c.close;
       o.i++;
     }
@@ -212,13 +231,12 @@ export function simulate(x: SimInput): SimOutput {
       ids: { strategyId: strategy.id, connectionId: `backtest:${e.productId}`, productId: e.productId, slot, unitKey: e.unit.key, alertId: null },
       group: fired,
       leg: rule.leg,
+      conditions: tradeConditions(rule, d, e.unit),
     });
     const t: PaperTrade = { ...draft, id: `bt-${++n}` };
     const first = candles.findIndex((c) => c.time * 1000 >= e.at);
-    const exits = (['STOP', 'TARGET'] as const)
-      .flatMap((kind) => x.exitsFor(e, conditionKey(rule.group, kind)).filter((at) => at > e.at).map((at) => ({ at, reason: CONDITION_REASON[kind] })))
-      .sort((a, b) => a.at - b.at || (a.reason === 'STOP_RULE' ? -1 : 1));
-    open.set(slot, { t, candles, i: first < 0 ? candles.length : first, lastClose: ref, deadline: exitDeadline(t, cal), exits });
+    const exits = x.exitsFor(e, conditionKey(rule.group)).filter((at) => at > e.at);
+    open.set(slot, { t, candles, i: first < 0 ? candles.length : first, lastClose: ref, deadline: exitDeadline(t, cal), exits, x: 0 });
   }
   // Play out what's still open, then close the rest at the last price.
   for (const o of [...open.values()]) if (!advance(o, x.end)) finish(o, o.lastClose, 'END', Math.min(x.end, (o.candles.at(-1)?.time ?? x.end / 1000) * 1000 + MINUTE));

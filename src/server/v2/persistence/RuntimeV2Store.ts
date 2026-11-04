@@ -919,13 +919,13 @@ export class RuntimeV2Store implements V2Store {
       return clone(closed);
     },
     /** Latest prices of open trades: memory, the book's file within 30 s, the database at the next sync. */
-    updateMarks: async (marks: Array<{ id: string; lastPrice: number; at: string; peakPrice?: number }>) => {
+    updateMarks: async (marks: Array<{ id: string; lastPrice: number; at: string; peakPrice?: number; trailingAt?: string }>) => {
       const open = await this.openMap();
       for (const m of marks) {
         const t = open.get(m.id);
         if (!t) continue;
-        open.set(m.id, { ...t, lastPrice: m.lastPrice, lastPriceAt: m.at, ...(m.peakPrice !== undefined ? { peakPrice: m.peakPrice } : {}) });
-        this.book.mark(m.id, m.lastPrice, m.at, m.peakPrice);
+        open.set(m.id, { ...t, lastPrice: m.lastPrice, lastPriceAt: m.at, ...(m.peakPrice !== undefined ? { peakPrice: m.peakPrice } : {}), ...(m.trailingAt ? { trailingAt: m.trailingAt } : {}) });
+        this.book.mark(m.id, m.lastPrice, m.at, m.peakPrice, m.trailingAt);
       }
     },
     /** Open trades and every closed one from memory (closed ones read from the database once). */

@@ -3,7 +3,7 @@
 /**
  * Backtest: "if I had traded this strategy on these products, what would I have made?"
  *   setup    strategy · products · period · the strategy's trade plan — size, target / stop-loss / trailing stop,
- *            watch window, what each group trades, stop / target conditions (editable to try out; "Save to
+ *            watch window, what each group trades, trailing rules (editable to try out; "Save to
  *            strategy" makes it the plan paper trading uses) · alert settings
  *   results  P&L, return on the money needed, the paper-trading figures and charts, by product, every trade,
  *            alerts that weren't traded (and why), how it was tested
@@ -69,7 +69,7 @@ const duration = (seconds: number) => {
 const planKey = (p: PaperPlan) =>
   JSON.stringify({
     ...p,
-    rules: p.rules.map((r) => ({ group: r.group, leg: r.leg, side: r.side, stopWhen: hasCondition(r.stopWhen) ? r.stopWhen : null, targetWhen: hasCondition(r.targetWhen) ? r.targetWhen : null })),
+    rules: p.rules.map((r) => ({ group: r.group, leg: r.leg, side: r.side, stopWhen: hasCondition(r.stopWhen) ? r.stopWhen : null })),
   });
 
 /** What to change when alerts were skipped for this reason. */
@@ -592,7 +592,7 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
                 <div className="flex flex-col gap-3">
                   <PaperTermsFields value={plan} onChange={setPlan} base={saved ?? undefined} hasGroups={paperGroups(def).length > 0} sizing={sizing} nseOnly={upstox} />
                   <PaperRulesEditor def={def} rules={rules} onChange={(r) => setPlan({ ...plan, rules: r })} />
-                  <ConditionsEditor def={def} rules={rules} onChange={(r) => setPlan({ ...plan, rules: r })} />
+                  <ConditionsEditor def={def} rules={rules} targetPct={plan.targetPct} onChange={(r) => setPlan({ ...plan, rules: r })} />
                   {savePlan.error && <p className="text-xs text-bear">{(savePlan.error as Error).message}</p>}
                 </div>
               </div>

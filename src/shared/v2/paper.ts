@@ -1,18 +1,21 @@
 /**
  * Paper trading — on by default for every connection: every alert opens a simulated trade on one of the
- * strategy's legs, closed by target / stop-loss / trailing stop / a stop or target condition / intraday
- * square-off / the opposite group / expiry. The strategy's plan holds the defaults (and what each group
+ * strategy's legs, closed by target / stop-loss / trailing stop / a trailing rule / intraday square-off / the
+ * opposite group / expiry. With a target and trailing (a trailing stop % or trailing rules) the target doesn't close
+ * the trade: it is where trailing starts (see `trailing`). The strategy's plan holds the defaults (and what each group
  * trades, with its conditions); each connection can override the money, exit and watch settings. The
  * backtests trade the same plan. Nothing is ever sent to a broker.
  */
 import { z } from 'zod';
 import { exprNode } from './schema';
 import type { AlertSide, ExprNode, ExprTrace, LegDef, LegId, Market, StrategyDefinition, Timeframe, V2Instrument } from './types';
+import type { TradePath } from './story';
 
 export type PaperSide = 'BUY' | 'SELL';
 /**
- * TRAIL: the trailing stop-loss. STOP_RULE / TARGET_RULE: the group's stop-loss / target condition came true.
- * END: a backtest ended with the trade still open (closed at the last price).
+ * TRAIL: the trailing stop-loss. STOP_RULE: one of the group's trailing rules came true. TARGET_RULE: a target
+ * condition (a setting since removed — older trades only). END: a backtest ended with the trade still open (closed
+ * at the last price).
  */
 export type PaperExitReason = 'TARGET' | 'STOP' | 'TRAIL' | 'STOP_RULE' | 'TARGET_RULE' | 'SQUARE_OFF' | 'OPPOSITE' | 'EXPIRY' | 'MANUAL' | 'END';
 
@@ -23,12 +26,12 @@ export interface PaperRule {
   leg: LegId | null;
   side: PaperSide;
   /**
-   * Close the trade as a stop-loss / at target when this comes true — an AND / OR condition tree on any of the
-   * strategy's legs (e.g. "close crossed below SMA 20", "close below the previous candle's low"). Checked at every
-   * close of the smallest timeframe it uses; the trade exits at that close. Absent / null = none.
+   * Trailing rules: close the trade when this comes true — an AND / OR condition tree on any of the strategy's legs
+   * (e.g. "close crossed below SMA 20", "close below the previous candle's low"). Checked from the target on (from
+   * the entry when there is no target), at every close of the smallest timeframe it uses; the trade exits at that
+   * close. Absent / null = none.
    */
   stopWhen?: ExprNode | null;
-  targetWhen?: ExprNode | null;
 }
 
 export interface PaperPlan {
@@ -38,10 +41,16 @@ export interface PaperPlan {
   /** Stocks (Spot legs): ₹ per trade — as many shares as fit at the entry price (at least 1). */
   cashPerTrade: number;
   rules: PaperRule[];
-  /** % move from entry that closes the trade in profit / loss; null = none. */
+  /**
+   * % move from entry for the target / the stop-loss; null = none. The target closes the trade — unless it trails (a
+   * trailing stop % or trailing rules), then it is where trailing starts and the trade runs on.
+   */
   targetPct: number | null;
   stopPct: number | null;
-  /** Trailing stop-loss: this % below the best price since entry (above it, for a sell) — it only moves in the trade's favour. null = none. */
+  /**
+   * Trailing stop-loss: this % below the best price since entry (above it, for a sell) — it only moves in the trade's
+   * favour. Starts at the target (at the entry when there is no target). null = none.
+   */
   trailPct: number | null;
   /**
    * Watch only between these times (IST, per market): trigger candles that don't lie inside send no alert and open
@@ -111,7 +120,10 @@ export type PaperOverride = Partial<Pick<PaperPlan, PaperOverrideKey>>;
 
 /** A saved plan with every field — one saved before a field existed gets its default. */
 export function normalizePlan(plan: PaperPlan): PaperPlan {
-  return { ...PAPER_DEFAULTS, ...plan };
+  const out = { ...PAPER_DEFAULTS, ...plan };
+  // Target conditions were removed (2026-11-04): the target is where trailing starts instead.
+  if (out.rules.some((r) => 'targetWhen' in r)) out.rules = out.rules.map(({ targetWhen: _t, ...r }: PaperRule & { targetWhen?: unknown }) => r);
+  return out;
 }
 
 /** The plan a connection trades with: its strategy's plan with the connection's own values on top. */
@@ -165,7 +177,9 @@ export interface PaperTrade {
   stopPrice: number | null;
   /** Best price since entry — the highest for a buy, the lowest for a sell; what a trailing stop follows. */
   peakPrice?: number;
-  /** The group's stop / target conditions the trade was opened with, and the legs (contracts) they are checked on. */
+  /** When the price reached the target and trailing started (trades that trail past their target). */
+  trailingAt?: string;
+  /** The group's trailing rules the trade was opened with, and the legs (contracts) they are checked on. */
   conditions?: PaperConditions;
   terms: PaperTerms;
   status: 'OPEN' | 'CLOSED';
@@ -179,11 +193,12 @@ export interface PaperTrade {
   netPnl: number | null;
   /** Open trades in API responses: P&L if closed at the last price now (after slippage and charges). */
   openPnl?: number;
+  /** Backtest trades: the price path the trade was walked on — what its story shows (paper trades read it from Kite when asked). */
+  path?: TradePath;
 }
 
 export interface PaperConditions {
   stopWhen?: ExprNode;
-  targetWhen?: ExprNode;
   /** The strategy's legs and the contracts of the unit the trade opened on. */
   legDefs: LegDef[];
   legs: Partial<Record<LegId, V2Instrument | null>>;
@@ -383,15 +398,36 @@ const nearTick = (n: number, tick: number) => {
 };
 
 /** The trailing stop's level now: trailPct from the best price since entry (null when the trade has none). */
-export function trailLevel(t: Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice' | 'terms' | 'instrument'>): number | null {
+type TrailFields = Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice' | 'targetPrice' | 'terms' | 'conditions'>;
+
+/** The trade trails past its target: it has a target and trailing (a trailing stop % or trailing rules), so reaching the target starts trailing instead of closing it. */
+export function trailsPastTarget(t: Pick<PaperTrade, 'targetPrice' | 'terms' | 'conditions'>): boolean {
+  return t.targetPrice !== null && ((t.terms.trailPct ?? null) !== null || hasCondition(t.conditions?.stopWhen));
+}
+
+/** The price is at or past the trade's target. */
+export function atTarget(t: Pick<PaperTrade, 'side' | 'targetPrice'>, price: number): boolean {
+  return t.targetPrice !== null && (t.side === 'BUY' ? price >= t.targetPrice : price <= t.targetPrice);
+}
+
+/** Trailing is on: no target to wait for, or the price reached it (the best price since entry is at or past it). */
+export function trailing(t: TrailFields): boolean {
+  return t.targetPrice === null || atTarget(t, t.peakPrice ?? t.entryPrice);
+}
+
+/** The trailing stop's level now — null without a trailing stop, or while the trade waits for its target. */
+export function trailLevel(t: Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice' | 'targetPrice' | 'terms' | 'conditions' | 'instrument'>): number | null {
   const pct = t.terms.trailPct ?? null;
-  if (pct === null) return null;
+  if (pct === null || !trailing(t)) return null;
   const peak = t.peakPrice ?? t.entryPrice;
   return nearTick(peak * (t.side === 'BUY' ? 1 - pct / 100 : 1 + pct / 100), t.instrument.tickSize);
 }
 
-/** The stop a trade has now: its fixed stop-loss or the trailing stop, whichever is tighter (the fixed one on a tie). */
-export function stopNow(t: Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice' | 'terms' | 'instrument' | 'stopPrice'>): { price: number; reason: 'STOP' | 'TRAIL' } | null {
+/**
+ * The stop a trade has now: its fixed stop-loss or the trailing stop (once trailing is on), whichever is tighter — the
+ * fixed one on a tie, so a stop never moves against the trade.
+ */
+export function stopNow(t: Pick<PaperTrade, 'side' | 'entryPrice' | 'peakPrice' | 'targetPrice' | 'terms' | 'conditions' | 'instrument' | 'stopPrice'>): { price: number; reason: 'STOP' | 'TRAIL' } | null {
   const trail = trailLevel(t);
   const fixed = t.stopPrice;
   if (trail === null) return fixed === null ? null : { price: fixed, reason: 'STOP' };
@@ -405,19 +441,12 @@ export function hasCondition(n: ExprNode | null | undefined): n is ExprNode {
   return !!n && !((n.type === 'AND' || n.type === 'OR') && !n.children.length);
 }
 
-export type ConditionKind = 'STOP' | 'TARGET';
-/** Key of a rule's condition: `<group or *>|STOP` / `|TARGET`. */
-export const conditionKey = (group: string | null, kind: ConditionKind) => `${group ?? '*'}|${kind}`;
+/** Key of a rule's trailing rules: `<group or *>|STOP`. */
+export const conditionKey = (group: string | null) => `${group ?? '*'}|STOP`;
 
-/** The stop / target conditions of the rules that trade. */
-export function planConditions(rules: PaperRule[]): Array<{ key: string; group: string | null; kind: ConditionKind; when: ExprNode }> {
-  const out: Array<{ key: string; group: string | null; kind: ConditionKind; when: ExprNode }> = [];
-  for (const r of rules) {
-    if (!r.leg) continue;
-    if (hasCondition(r.stopWhen)) out.push({ key: conditionKey(r.group, 'STOP'), group: r.group, kind: 'STOP', when: r.stopWhen });
-    if (hasCondition(r.targetWhen)) out.push({ key: conditionKey(r.group, 'TARGET'), group: r.group, kind: 'TARGET', when: r.targetWhen });
-  }
-  return out;
+/** The trailing rules of the rules that trade. */
+export function planConditions(rules: PaperRule[]): Array<{ key: string; group: string | null; when: ExprNode }> {
+  return rules.flatMap((r) => (r.leg && hasCondition(r.stopWhen) ? [{ key: conditionKey(r.group), group: r.group, when: r.stopWhen }] : []));
 }
 
 // ---- watch window -----------------------------------------------------------------------------
@@ -497,7 +526,6 @@ export const paperPlanSchema = z
           leg: z.enum(['A', 'B', 'C', 'D']).nullable(),
           side: z.enum(['BUY', 'SELL']),
           stopWhen: exprNode.nullable().optional(),
-          targetWhen: exprNode.nullable().optional(),
         }),
       )
       .max(8),

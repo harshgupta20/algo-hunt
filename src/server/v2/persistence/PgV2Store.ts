@@ -734,14 +734,15 @@ export class PgV2Store implements V2Store {
       ).rows[0];
       return r ? mapPaperTrade(r) : null;
     },
-    updateMarks: async (marks: Array<{ id: string; lastPrice: number; at: string; peakPrice?: number }>) => {
+    updateMarks: async (marks: Array<{ id: string; lastPrice: number; at: string; peakPrice?: number; trailingAt?: string }>) => {
       if (!marks.length) return;
       await this.pool.query(
         `UPDATE v2_paper_trades t SET trade = t.trade || jsonb_build_object('lastPrice', m.p, 'lastPriceAt', m.at)
            || CASE WHEN m.pk IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('peakPrice', m.pk) END
-         FROM (SELECT unnest($1::uuid[]) AS id, unnest($2::float8[]) AS p, unnest($3::text[]) AS at, unnest($4::float8[]) AS pk) m
+           || CASE WHEN m.ta IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('trailingAt', m.ta) END
+         FROM (SELECT unnest($1::uuid[]) AS id, unnest($2::float8[]) AS p, unnest($3::text[]) AS at, unnest($4::float8[]) AS pk, unnest($5::text[]) AS ta) m
          WHERE t.id = m.id AND t.status = 'OPEN'`,
-        [marks.map((m) => m.id), marks.map((m) => m.lastPrice), marks.map((m) => m.at), marks.map((m) => m.peakPrice ?? null)],
+        [marks.map((m) => m.id), marks.map((m) => m.lastPrice), marks.map((m) => m.at), marks.map((m) => m.peakPrice ?? null), marks.map((m) => m.trailingAt ?? null)],
       );
     },
     listTrades: async (f: { status?: 'OPEN' | 'CLOSED'; strategyId?: string; connectionId?: string; since?: string; limit?: number }) => {

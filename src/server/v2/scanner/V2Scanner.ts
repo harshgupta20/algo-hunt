@@ -14,8 +14,8 @@
  *  10 evaluate     expression per unit (three-valued), seeded previous result
  *  11 alert        policy → signal (deduped by identity) → alert → paper trade → delivery; persist
  *
- * Before the gate: open paper trades are checked for their exits (target / stop / trailing stop / stop and
- * target conditions / square-off / expiry) — only while the live worker is off; it checks them itself.
+ * Before the gate: open paper trades are checked for their exits (target / stop / trailing stop / trailing
+ * rules / square-off / expiry) — only while the live worker is off; it checks them itself.
  */
 import { randomUUID } from 'node:crypto';
 import type { Market, ScanError, ScanRun, StrategyDefinition, Timeframe, UnitEvaluation, UnitState, V2Connection, V2Instrument, V2Product, V2Settings, V2Strategy, V2Unit } from '@/shared/v2';

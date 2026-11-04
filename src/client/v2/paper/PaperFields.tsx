@@ -11,7 +11,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { RotateCcw, Save, X } from 'lucide-react';
 import clsx from 'clsx';
 import type { PaperOverride, PaperOverrideKey, PaperPlan } from '@/shared/v2';
-import { PAPER_DEFAULTS, diffOverride, effectivePlan, watchWindowIssue } from '@/shared/v2';
+import { PAPER_DEFAULTS, diffOverride, effectivePlan, planConditions, watchWindowIssue } from '@/shared/v2';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { InlineSpinner } from '../../components/loaders';
 import { v2Api } from '../api';
@@ -102,6 +102,13 @@ export function PaperTermsFields({
           <PctField label="Trailing stop %" value={value.trailPct} fallback={TRAIL_DEFAULT} max={100} onChange={(trailPct) => set({ trailPct })} />
         </Field>
       </div>
+      {value.targetPct !== null && (value.trailPct !== null || planConditions(value.rules).length > 0) && (
+        <Tooltip content={H.paper.trailsAtTarget}>
+          <p tabIndex={0} className="w-fit text-[11px] text-slate-500 outline-none">
+            At the target (+{value.targetPct} %) the trade keeps running: trailing starts there{value.stopPct !== null ? ` — until then the −${value.stopPct} % stop-loss guards it` : ''}.
+          </p>
+        </Tooltip>
+      )}
       <div className="flex flex-wrap items-end gap-2">
         <Field label="Watch" help={H.paper.watch} own={own('watch')} onReset={() => reset('watch')}>
           <Toggle checked={value.watch} onChange={(watch) => set({ watch })} label="Only between set times" help={H.paper.watch} />
@@ -157,11 +164,11 @@ export function PaperTermsFields({
   );
 }
 
-/** "1 lot · +20/−10% · trail 10%" — a connection's paper settings in one line (size as its legs trade: lots and / or ₹). */
+/** "1 lot · +20/−10% · trail 10% from target" — a connection's paper settings in one line (size as its legs trade: lots and / or ₹). */
 export function paperBrief(p: Pick<PaperPlan, 'lotsPerTrade' | 'cashPerTrade' | 'targetPct' | 'stopPct' | 'trailPct'>, sizing = { lots: true, cash: false }): string {
   const size = [sizing.lots ? `${p.lotsPerTrade} lot${p.lotsPerTrade === 1 ? '' : 's'}` : null, sizing.cash ? inr(p.cashPerTrade, 0) : null].filter(Boolean).join(' / ');
   const exits = p.targetPct === null && p.stopPct === null ? '' : `${p.targetPct === null ? '—' : `+${p.targetPct}`}/${p.stopPct === null ? '—' : `−${p.stopPct}`}%`;
-  return [size, exits, p.trailPct !== null ? `trail ${p.trailPct}%` : ''].filter(Boolean).join(' · ');
+  return [size, exits, p.trailPct !== null ? `trail ${p.trailPct}%${p.targetPct !== null ? ' from target' : ''}` : ''].filter(Boolean).join(' · ');
 }
 
 /** A connection's paper settings chip: click to edit. */
@@ -223,7 +230,7 @@ export function PaperConnectionEditor({
       </div>
       {value.enabled && <PaperTermsFields value={value} onChange={setValue} base={strategyPlan} hasGroups={hasGroups} sizing={sizing} />}
       <p className="text-[11px] text-slate-500">
-        Which leg each group trades (Buy / Sell) and its stop / target conditions are set per strategy (strategy editor, step 4). Changes apply to new trades; the watch window applies to this connection’s alerts too.
+        Which leg each group trades (Buy / Sell) and its trailing rules are set per strategy (strategy editor, step 4). Changes apply to new trades; the watch window applies to this connection’s alerts too.
       </p>
       {(save.error || reset.error) && <p className="text-xs text-bear">{((save.error ?? reset.error) as Error).message}</p>}
       <div className="flex flex-wrap gap-2">

@@ -129,21 +129,33 @@ added later — plans and trades are JSONB, so new fields need no migration). Bo
 - **Entry:** market price (live worker: streamed last price; scanner: Kite LTP; fallback: the leg's close on the
   trigger candle) ± slippage, rounded against the trader to the tick; futures / options `lotsPerTrade` lots, stocks
   (Spot legs) whole shares for `cashPerTrade` (≥ 1); money counted as premium (bought options, stocks) or estimated
-  margin (futures, sold options). The trade snapshots its terms (incl. `trailPct`) and, when its group has stop /
-  target conditions, `conditions` = the trees + the strategy's legs + the unit's contracts.
+  margin (futures, sold options). The trade snapshots its terms (incl. `trailPct`) and, when its group has trailing
+  rules, `conditions` = the tree + the strategy's legs + the unit's contracts.
 - **Exits:** stop-loss / trailing stop / target on every tick (live worker) or once a minute on LTP (scanner, only
   while the worker isn't covering). The trailing stop = `trailPct` from `peakPrice` (best price since entry),
   the tighter of it and the fixed stop wins (`stopNow`, shared with the client); the worker keeps tick peaks in
   memory and saves them with `updateMarks` at the next paper step (every 10 s); the paper book keeps them on disk.
-  Stop / target conditions (`paper/exitConditions.ts`, from `monitor`): at every close of the condition's smallest
-  timeframe after entry, on Kite's candles (`CandleService`), waiting with `pendingReason` until the candle is
-  published; TRUE → closed at the market price as `STOP_RULE` / `TARGET_RULE` (the stop first). Square-off on the
+  **Target → trailing** (`trailsPastTarget` / `trailing` in `shared/v2/paper.ts`): a trade with a target and trailing
+  (a `trailPct` or trailing rules) isn't closed at the target — the trailing stop and the rules are off until the
+  best price reaches it (derived from `peakPrice`), then on; `markChanges` records `trailingAt` (saved with the marks
+  like `peakPrice`) so the rules only look at candles closing after it. Without a target trailing runs from entry;
+  without trailing the target closes the trade. Target conditions were removed (2026-11-04; `normalizePlan` drops
+  them from older plans). Trailing rules (`paper/exitConditions.ts`, from `monitor`): at every close of their
+  smallest timeframe after trailing started, on Kite's candles (`CandleService`), waiting with `pendingReason` until
+  the candle is published; TRUE → closed at the market price as `STOP_RULE`. Square-off on the
   entry day or expiry close; charges from `paper/charges.ts`. Closing is conditional on `status = 'OPEN'`, so two
   processes can't close a trade twice. The worker keeps open trades' contracts subscribed even after the ATM moves.
 - **Results:** `paper/summary.ts` — per strategy / connection / overall stats (win rate, profit factor, average
   win / loss, today's P&L, drawdown on cumulative net P&L); money needed = the peak of capital in use at the same
   time; return = net P&L ÷ that; P&L per day, per exit reason and per entry hour; a sparkline per connection /
   strategy. `from` limits everything to trades entered since an IST date.
+- **Trade story** (`shared/v2/story.ts`, client `paper/TradeStory.tsx`): `tradePath` merges a trade's 1-minute
+  candles from the entry's minute to the exit's into ≤ 48 bars (+ ≤ 12 bars after the exit); `tradeStory` replays the
+  stop over them with `stopNow` (the exit bar uses the trade's own final stop, so it matches the exit), the stop
+  moves (trailing takeover / raises), when the target started trailing, best / worst while held (a closed trade's
+  best capped at its `peakPrice`) and what came after. Backtest trades carry `path` (recorded by `simulate.finish`,
+  in memory with the job — never in Neon); a paper trade's is read on demand (`GET /v2/paper/trades/:id/path`, Kite
+  1-minute candles; null when Kite has none, e.g. expired contracts). The client reads an open trade's once a minute.
 
 ## 5. Module map
 
@@ -160,7 +172,7 @@ src/server/v2/
 ├── scanner/          V2Scanner · commit (alert decision shared with the live worker)
 ├── live/             LiveWorker · KiteStream · ticks (Kite binary protocol) · LiveCandles · plan · verify
 │                     · FetchQueue · health
-├── paper/            PaperTrader (open on alerts, exits) · exitConditions (live stop / target conditions) · charges (Zerodha charges, margin estimate) · summary
+├── paper/            PaperTrader (open on alerts, exits) · exitConditions (live trailing rules) · simulate (both backtests; records each trade's path) · charges (Zerodha charges, margin estimate) · summary
 │                     · backtest (Compare's alerts traded with money on 1-minute candles) · simulate (the money
 │                     side shared by both backtests) · optionsBacktest (expired contracts re-picked per candle)
 ├── upstox/           UpstoxHistory (expired + live contracts, coverage, candle pieces, 10 min / 1 h built here)

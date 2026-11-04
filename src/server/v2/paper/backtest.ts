@@ -1,7 +1,7 @@
 /**
  * Backtest a strategy on products: the alerts it would have sent over past candles (the same evaluation as
  * Compare, with the plan's watch window), each traded exactly like a paper trade (simulate.ts), the exits found on
- * the traded contract's 1-minute Kite candles and the stop / target conditions on the unit's candles.
+ * the traded contract's 1-minute Kite candles and the trailing rules on the unit's candles.
  *
  * Any number of products and any period: candles come product by product through Kite's request queue (the
  * cost is only waiting), through the candle cache so a re-run is quick; a job reports progress and can cancel.

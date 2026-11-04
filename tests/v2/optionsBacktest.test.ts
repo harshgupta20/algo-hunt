@@ -210,7 +210,7 @@ describe('options backtest', () => {
     expect(s.id).not.toBe(gt.id);
   });
 
-  it('stop / target conditions read the legs the trade was opened with, not the ATM of later candles', async () => {
+  it('trailing rules read the legs the trade was opened with, not the ATM of later candles', async () => {
     // The spot climbs after entry (ATM moves to 25,100); the held 25,000 call falls below 99 at 11:00, the 25,100 call doesn't.
     const after = (t: string) => (t < '10:00' ? 24_990 : t < '10:14' ? 24_995 : t < '10:30' ? 25_015 : 25_110);
     history = new FixtureHistory(uSpot, contracts, { lastDay: '2026-10-15' }).add(uSpot, dayMinutes(D1, after));
@@ -221,7 +221,7 @@ describe('options backtest', () => {
     expect(r.trades).toHaveLength(1);
     expect(r.trades[0]).toMatchObject({ exitReason: 'STOP_RULE', exitAt: new Date(ist(D1, '11:15')).toISOString(), exitPrice: 98 });
     expect(r.trades[0]!.instrument.strike).toBe(25_000);
-    expect(r.notes.some((n) => /^Stop-loss condition: .*on the legs the trade was opened with/.test(n))).toBe(true);
+    expect(r.notes.some((n) => /^Trailing rules: .*on the legs the trade was opened with/.test(n))).toBe(true);
   });
 
   it('watch window: an alert candle outside it opens nothing', async () => {

@@ -9,12 +9,12 @@
  *   log           closed trades (all / winners / losers), CSV
  * Paper trading is on for every connection by default; nothing is sent to the broker.
  */
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, CloudOff, CloudUpload, Download, HardDrive, Pencil, RefreshCw, Trash2, Wallet, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronRight, CloudOff, CloudUpload, Download, HardDrive, Pencil, RefreshCw, Trash2, Wallet, X } from 'lucide-react';
 import clsx from 'clsx';
 import type { PaperBookStatus, PaperStats, PaperSummary, PaperTrade } from '@/shared/v2';
-import { pageCursor, paperGroups, planSizing, resolveRules, stopNow } from '@/shared/v2';
+import { pageCursor, paperGroups, planSizing, resolveRules, stopNow, trailing, trailsPastTarget } from '@/shared/v2';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { Badge, EmptyState, IconButton, StatCard } from '../../components/ui';
 import { InlineSpinner, SkeletonRows, SkeletonStatGrid } from '../../components/loaders';
@@ -28,6 +28,7 @@ import { PnlBars, RangeBar, Sparkline } from './charts';
 import { EquityChart } from './EquityChart';
 import { inr, pct, pnlClass, signedInr } from './money';
 import { PaperChip, PaperConnectionEditor, paperBrief } from './PaperFields';
+import { TradeStoryPanel } from './TradeStory';
 
 const symbolOf = (productId: string) => productId.split(':')[1] ?? productId;
 export const th = 'px-2.5 py-2 font-medium whitespace-nowrap';
@@ -189,8 +190,8 @@ function Headline({ o }: { o: PaperStats }) {
 function rangeNote(t: PaperTrade): string {
   const stop = stopNow(t);
   const stopText = stop === null ? 'Stop —' : stop.reason === 'TRAIL' ? `Trailing stop ${inr(stop.price)} (${t.terms.trailPct}% from the best ${inr(t.peakPrice ?? t.entryPrice)})` : `Stop ${inr(stop.price)}`;
-  const conditions = [t.conditions?.stopWhen ? 'a stop condition' : null, t.conditions?.targetWhen ? 'a target condition' : null].filter(Boolean);
-  return `${stopText} · entry ${inr(t.entryPrice)} · target ${t.targetPrice === null ? '—' : inr(t.targetPrice)}${conditions.length ? ` · plus ${conditions.join(' and ')}` : ''}`;
+  const target = t.targetPrice === null ? 'target —' : !trailsPastTarget(t) ? `target ${inr(t.targetPrice)}` : trailing(t) ? `target ${inr(t.targetPrice)} reached — trailing` : `target ${inr(t.targetPrice)} starts trailing`;
+  return `${stopText} · entry ${inr(t.entryPrice)} · ${target}${t.conditions?.stopWhen ? ' · plus trailing rules' : ''}`;
 }
 
 const REASON_ORDER = ['TARGET', 'TARGET_RULE', 'STOP', 'TRAIL', 'STOP_RULE', 'SQUARE_OFF', 'OPPOSITE', 'EXPIRY', 'MANUAL', 'END'] as const;
@@ -510,14 +511,35 @@ function Ranking({ sum, onEditStrategy, onReset, resetting }: { sum: PaperSummar
   );
 }
 
-/** Closed trades: when, product, contract, side, size, fills, why it closed, how long, charges, net P&L. `footer`: the next page (LoadMore). */
+/** The arrow that opens a trade's story. */
+export function StoryToggle({ open, onClick }: { open: boolean; onClick: () => void }) {
+  return (
+    <Tooltip content={H.paper.story}>
+      <button type="button" aria-expanded={open} aria-label="Trade story" className="rounded p-0.5 text-slate-500 hover:bg-ink-700 hover:text-slate-200" onClick={onClick}>
+        <ChevronRight className={clsx('h-3.5 w-3.5 transition-transform', open && 'rotate-90')} />
+      </button>
+    </Tooltip>
+  );
+}
+
+/** A row click that wasn't on a link or button inside it. */
+const onRow = (toggle: () => void) => (e: MouseEvent) => {
+  if (!(e.target as HTMLElement).closest('a,button,input')) toggle();
+};
+
+/** Closed trades: when, product, contract, side, size, fills, why it closed, how long, charges, net P&L; a row opens its story. `footer`: the next page (LoadMore). */
 export function TradeTable({ trades, names, opened, footer }: { trades: PaperTrade[]; names: Map<string, string>; opened?: boolean; footer?: ReactNode }) {
+  const [story, setStory] = useState<string | null>(null);
+  const toggle = (id: string) => () => setStory((cur) => (cur === id ? null : id));
   return (
     <>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="bg-ink-850 text-left text-[10px] uppercase tracking-wide text-slate-500">
             <tr>
+              <th className={clsx(th, 'w-6 pr-0')}>
+                <span className="sr-only">Story</span>
+              </th>
               {opened && <th className={th}>Opened</th>}
               <th className={th}>Closed</th>
               <th className={th}>Product · strategy</th>
@@ -533,33 +555,45 @@ export function TradeTable({ trades, names, opened, footer }: { trades: PaperTra
           </thead>
           <tbody className="divide-y divide-ink-700/50">
             {trades.map((t) => (
-              <tr key={t.id}>
-                {opened && <td className={clsx(td, 'text-slate-400')}>{istStampIso(t.entryAt)}</td>}
-                <td className={clsx(td, 'text-slate-400')}>{t.exitAt ? istStampIso(t.exitAt) : '—'}</td>
-                <td className={td}>
-                  <ProductCell t={t} strategy={names.get(t.strategyId)} />
-                </td>
-                <td className={td}>
-                  <ContractCell t={t} />
-                </td>
-                <td className={td}>
-                  <SideBadge side={t.side} />
-                </td>
-                <td className={clsx(td, 'tabular-nums')}>{qty(t)}</td>
-                <td className={clsx(td, 'tabular-nums')}>
-                  {inr(t.entryPrice)} → {t.exitPrice === null ? '—' : inr(t.exitPrice)}
-                </td>
-                <td className={td}>
-                  {t.exitReason && (
-                    <Tooltip content={H.paper.reasons[t.exitReason]}>
-                      <Badge>{H.paper.reasons[t.exitReason].title}</Badge>
-                    </Tooltip>
-                  )}
-                </td>
-                <td className={clsx(td, 'text-slate-400')}>{held(t)}</td>
-                <td className={clsx(td, 'tabular-nums text-slate-400')}>{inr(t.charges ?? 0)}</td>
-                <td className={clsx(td, 'tabular-nums font-semibold', pnlClass(t.netPnl))}>{signedInr(t.netPnl ?? 0)}</td>
-              </tr>
+              <Fragment key={t.id}>
+                <tr className={clsx('cursor-pointer hover:bg-ink-850/50', story === t.id && 'bg-ink-850/60')} onClick={onRow(toggle(t.id))}>
+                  <td className={clsx(td, 'w-6 pr-0')}>
+                    <StoryToggle open={story === t.id} onClick={toggle(t.id)} />
+                  </td>
+                  {opened && <td className={clsx(td, 'text-slate-400')}>{istStampIso(t.entryAt)}</td>}
+                  <td className={clsx(td, 'text-slate-400')}>{t.exitAt ? istStampIso(t.exitAt) : '—'}</td>
+                  <td className={td}>
+                    <ProductCell t={t} strategy={names.get(t.strategyId)} />
+                  </td>
+                  <td className={td}>
+                    <ContractCell t={t} />
+                  </td>
+                  <td className={td}>
+                    <SideBadge side={t.side} />
+                  </td>
+                  <td className={clsx(td, 'tabular-nums')}>{qty(t)}</td>
+                  <td className={clsx(td, 'tabular-nums')}>
+                    {inr(t.entryPrice)} → {t.exitPrice === null ? '—' : inr(t.exitPrice)}
+                  </td>
+                  <td className={td}>
+                    {t.exitReason && (
+                      <Tooltip content={H.paper.reasons[t.exitReason]}>
+                        <Badge>{H.paper.reasons[t.exitReason].title}</Badge>
+                      </Tooltip>
+                    )}
+                  </td>
+                  <td className={clsx(td, 'text-slate-400')}>{held(t)}</td>
+                  <td className={clsx(td, 'tabular-nums text-slate-400')}>{inr(t.charges ?? 0)}</td>
+                  <td className={clsx(td, 'tabular-nums font-semibold', pnlClass(t.netPnl))}>{signedInr(t.netPnl ?? 0)}</td>
+                </tr>
+                {story === t.id && (
+                  <tr>
+                    <td colSpan={opened ? 12 : 11} className="p-0">
+                      <TradeStoryPanel t={t} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
@@ -598,6 +632,8 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
   const qc = useQueryClient();
   const [filters, setFilters] = useFilters('paper', { strategyIds: initialStrategyId ? [initialStrategyId] : undefined });
   const [logView, setLogView] = useState<'all' | 'win' | 'loss'>('all');
+  const [openStory, setOpenStory] = useState<string | null>(null);
+  const toggleOpen = (id: string) => () => setOpenStory((cur) => (cur === id ? null : id));
   const strategies = useQuery({ queryKey: ['v2-strategies'], queryFn: v2Api.strategies });
   const { sources: _s, statuses: _st, outcomes: _o, ...q } = toQuery(filters, strategies.data ?? []);
   const { from: _from, to: _to, ...qOpen } = q; // open positions: every period
@@ -700,6 +736,9 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
             <table className="w-full text-xs">
               <thead className="bg-ink-850 text-left text-[10px] uppercase tracking-wide text-slate-500">
                 <tr>
+                  <th className={clsx(th, 'w-6 pr-0')}>
+                    <span className="sr-only">Story</span>
+                  </th>
                   <th className={th}>Opened</th>
                   <th className={th}>Product · strategy</th>
                   <th className={th}>Contract</th>
@@ -713,39 +752,51 @@ export function PaperTab({ initialStrategyId, onEditStrategy }: { initialStrateg
               </thead>
               <tbody className="divide-y divide-ink-700/50">
                 {open.data.map((t) => (
-                  <tr key={t.id}>
-                    <td className={clsx(td, 'text-slate-400')}>{istStampIso(t.entryAt)}</td>
-                    <td className={td}>
-                      <ProductCell t={t} strategy={names.get(t.strategyId)} />
-                    </td>
-                    <td className={td}>
-                      <ContractCell t={t} />
-                    </td>
-                    <td className={td}>
-                      <SideBadge side={t.side} />
-                    </td>
-                    <td className={clsx(td, 'tabular-nums')}>{qty(t)}</td>
-                    <td className={clsx(td, 'tabular-nums')}>
-                      <Tooltip content={H.paper.lastPrice}>
-                        <span>
-                          {inr(t.entryPrice)} → {t.lastPrice === null ? '—' : inr(t.lastPrice)} <span className="text-[10px] text-slate-500">{ago(t.lastPriceAt)}</span>
-                        </span>
-                      </Tooltip>
-                    </td>
-                    <td className={td}>
-                      <Tooltip content={{ ...H.paper.range, note: rangeNote(t) }}>
-                        <RangeBar t={t} />
-                      </Tooltip>
-                    </td>
-                    <td className={clsx(td, 'tabular-nums font-semibold', pnlClass(t.openPnl))}>{t.openPnl === undefined ? '—' : signedInr(t.openPnl)}</td>
-                    <td className={clsx(td, 'text-right')}>
-                      <Tooltip content={H.paper.close}>
-                        <button type="button" className="btn-ghost py-1 text-xs" disabled={close.isPending} onClick={() => close.mutate(t.id)}>
-                          {close.isPending && close.variables === t.id ? <InlineSpinner className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />} Close
-                        </button>
-                      </Tooltip>
-                    </td>
-                  </tr>
+                  <Fragment key={t.id}>
+                    <tr className={clsx('cursor-pointer hover:bg-ink-850/50', openStory === t.id && 'bg-ink-850/60')} onClick={onRow(toggleOpen(t.id))}>
+                      <td className={clsx(td, 'w-6 pr-0')}>
+                        <StoryToggle open={openStory === t.id} onClick={toggleOpen(t.id)} />
+                      </td>
+                      <td className={clsx(td, 'text-slate-400')}>{istStampIso(t.entryAt)}</td>
+                      <td className={td}>
+                        <ProductCell t={t} strategy={names.get(t.strategyId)} />
+                      </td>
+                      <td className={td}>
+                        <ContractCell t={t} />
+                      </td>
+                      <td className={td}>
+                        <SideBadge side={t.side} />
+                      </td>
+                      <td className={clsx(td, 'tabular-nums')}>{qty(t)}</td>
+                      <td className={clsx(td, 'tabular-nums')}>
+                        <Tooltip content={H.paper.lastPrice}>
+                          <span>
+                            {inr(t.entryPrice)} → {t.lastPrice === null ? '—' : inr(t.lastPrice)} <span className="text-[10px] text-slate-500">{ago(t.lastPriceAt)}</span>
+                          </span>
+                        </Tooltip>
+                      </td>
+                      <td className={td}>
+                        <Tooltip content={{ ...H.paper.range, note: rangeNote(t) }}>
+                          <RangeBar t={t} />
+                        </Tooltip>
+                      </td>
+                      <td className={clsx(td, 'tabular-nums font-semibold', pnlClass(t.openPnl))}>{t.openPnl === undefined ? '—' : signedInr(t.openPnl)}</td>
+                      <td className={clsx(td, 'text-right')}>
+                        <Tooltip content={H.paper.close}>
+                          <button type="button" className="btn-ghost py-1 text-xs" disabled={close.isPending} onClick={() => close.mutate(t.id)}>
+                            {close.isPending && close.variables === t.id ? <InlineSpinner className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />} Close
+                          </button>
+                        </Tooltip>
+                      </td>
+                    </tr>
+                    {openStory === t.id && (
+                      <tr>
+                        <td colSpan={10} className="p-0">
+                          <TradeStoryPanel t={t} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
