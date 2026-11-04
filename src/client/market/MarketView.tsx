@@ -97,10 +97,10 @@ export function MarketView() {
     <div className="space-y-4 pb-10">
       <Header session={overview.data?.status.session} label={overview.data?.status.label} source={map.data?.source} updatedAt={overview.dataUpdatedAt} onRefresh={() => qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).startsWith('market-') })} />
 
-      <nav className="sticky top-[-24px] z-30 -mx-6 flex flex-wrap items-center gap-1.5 border-b border-ink-700/50 bg-ink-950/90 px-6 py-2 backdrop-blur" aria-label="Sections">
+      <nav className="ui-jumpnav sticky top-[-24px] z-30 -mx-6 flex flex-wrap items-center gap-1.5 border-b border-ink-700/50 bg-ink-950/90 px-6 py-2 backdrop-blur" aria-label="Sections">
         {SECTIONS.map(([id, label]) => (
           <Tooltip key={id} content={{ ...M.nav, title: `Jump to ${label}` }} side="bottom">
-            <button type="button" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="rounded-full bg-ink-800 px-3 py-1 text-xs text-slate-400 hover:bg-ink-700 hover:text-slate-200">
+            <button type="button" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="ui-jump rounded-full bg-ink-800 px-3 py-1 text-xs text-slate-400 hover:bg-ink-700 hover:text-slate-200">
               {label}
             </button>
           </Tooltip>
@@ -192,8 +192,9 @@ function Header({ session, label, source, updatedAt, onRefresh }: { session?: Ma
           <div className="flex cursor-help items-center gap-2 rounded-lg border border-ink-700 bg-ink-900 px-3 py-1.5">
             <span className={clsx('h-2 w-2 rounded-full', session === 'open' ? 'animate-pulse bg-bull' : session === 'pre-open' ? 'animate-pulse bg-warn' : 'bg-slate-500')} />
             <span className="text-xs font-medium text-slate-200">{session === 'open' ? 'Market open' : session === 'pre-open' ? 'Pre-open' : session === 'closed' ? 'Market closed' : '…'}</span>
-            <span className="text-xs tabular-nums text-slate-400">{istTime(now, true)} IST</span>
-            <span className="hidden text-[11px] text-slate-500 md:inline">{sessionHint(session, now)}</span>
+            {/* A ticking clock: the server and the browser render different seconds. */}
+            <span suppressHydrationWarning className="text-xs tabular-nums text-slate-400">{istTime(now, true)} IST</span>
+            <span suppressHydrationWarning className="hidden text-[11px] text-slate-500 md:inline">{sessionHint(session, now)}</span>
           </div>
         </Tooltip>
         {source && (

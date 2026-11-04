@@ -191,7 +191,7 @@ function ChannelsCard() {
 
   return (
     <Card className="flex flex-col gap-4">
-      <h2 className="text-sm font-semibold text-slate-300">Alert destinations &amp; limits</h2>
+      <h2 className="ui-section-title text-sm font-semibold text-slate-300">Alert destinations &amp; limits</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <TelegramChatsEditor
           chats={form.telegramChats}
@@ -263,7 +263,7 @@ function CalendarCard() {
   return (
     <Card className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <h2 className="text-sm font-semibold text-slate-300">Market calendar</h2>
+        <h2 className="ui-section-title text-sm font-semibold text-slate-300">Market calendar</h2>
         <InfoTip content={H.settings.calendar} />
         <div className="ml-auto flex gap-2">
           <Tooltip content={H.settings.addHoliday}>
@@ -346,7 +346,7 @@ function DatabaseCard() {
     <Card className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <Database className="w-4 h-4 text-slate-500" />
-        <h2 className="text-sm font-semibold text-slate-300">Database</h2>
+        <h2 className="ui-section-title text-sm font-semibold text-slate-300">Database</h2>
         <InfoTip content={H.settings.database} />
         {d && <span className="text-xs text-slate-500">· {where}</span>}
       </div>

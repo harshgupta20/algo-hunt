@@ -36,12 +36,12 @@ const REASON: Record<EqExitReason, { label: string; tone: 'bull' | 'bear' | 'war
 function Panel({ title, help, aside, children, flush }: { title: string; help: TooltipContent; aside?: React.ReactNode; children: React.ReactNode; flush?: boolean }) {
   return (
     <section className="card overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 px-4 pt-3 pb-2">
-        <h3 className="text-sm font-semibold text-slate-200">{title}</h3>
+      <div className="ui-panel-head flex flex-wrap items-center gap-2 px-4 pt-3 pb-2">
+        <h3 className="ui-section-title text-sm font-semibold text-slate-200">{title}</h3>
         <InfoTip content={help} />
         {aside && <div className="ml-auto flex flex-wrap items-center gap-2">{aside}</div>}
       </div>
-      <div className={flush ? '' : 'px-4 pb-4'}>{children}</div>
+      <div className={flush ? 'ui-panel-body-flush' : 'ui-panel-body px-4 pb-4'}>{children}</div>
     </section>
   );
 }

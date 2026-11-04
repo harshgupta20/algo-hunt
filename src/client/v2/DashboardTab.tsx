@@ -94,7 +94,7 @@ export function DashboardTab() {
       )}
       <Card className="p-0 overflow-hidden">
         <div className="px-4 py-3 border-b border-ink-700/60 flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-slate-300">Active alerts</h2>
+          <h2 className="ui-section-title text-sm font-semibold text-slate-300">Active alerts</h2>
           <span className="text-xs text-slate-500">{active.data?.length ?? 0}</span>
         </div>
         {active.isLoading ? (

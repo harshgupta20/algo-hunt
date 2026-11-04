@@ -55,7 +55,7 @@ export function KiteConnectionCard() {
   if (!data.enabled) {
     return (
       <Card className="mb-6">
-        <h2 className="text-sm font-semibold text-slate-300 mb-2">Broker Connection · Zerodha Kite</h2>
+        <h2 className="ui-section-title text-sm font-semibold text-slate-300 mb-2">Broker Connection · Zerodha Kite</h2>
         <div className="flex items-start gap-2 text-sm text-slate-400">
           <AlertTriangle className="w-4 h-4 text-bear shrink-0 mt-0.5" />
           <span>
@@ -73,7 +73,7 @@ export function KiteConnectionCard() {
 
   return (
     <Card className="mb-6">
-      <h2 className="text-sm font-semibold text-slate-300 mb-3">Broker Connection · Zerodha Kite</h2>
+      <h2 className="ui-section-title text-sm font-semibold text-slate-300 mb-3">Broker Connection · Zerodha Kite</h2>
 
       {notice && (
         <div

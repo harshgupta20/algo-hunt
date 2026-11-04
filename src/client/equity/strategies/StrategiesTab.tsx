@@ -130,7 +130,7 @@ export function StrategiesTab({ editId, onGo }: { editId?: string; onGo: GoTo })
       )}
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-slate-200">Your strategies</h2>
+          <h2 className="ui-section-title text-sm font-semibold text-slate-200">Your strategies</h2>
           <Tooltip content={AI.create} className="ml-auto">
             <button type="button" className="btn-ghost py-1.5 text-sm" onClick={() => setCreating(true)}>
               <Sparkles className="w-4 h-4 text-accent-soft" /> Create with AI
@@ -154,7 +154,7 @@ export function StrategiesTab({ editId, onGo }: { editId?: string; onGo: GoTo })
 
       {(['Trader', 'Classic'] as const).map((group) => (
         <div key={group} className="flex flex-col gap-3">
-          <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-200">
+          <h2 className="ui-section-title flex items-center gap-1.5 text-sm font-semibold text-slate-200">
             <Sparkles className="w-4 h-4 text-accent-soft" /> {group === 'Trader' ? 'Templates — your trader’s strategies' : 'Templates — classic setups'}
           </h2>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">

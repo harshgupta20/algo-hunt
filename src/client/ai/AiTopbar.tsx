@@ -33,7 +33,8 @@ function allowance(s: AiStatus, now: number) {
   return { reqUsed, tokLeft, tokensBack };
 }
 
-export function AiTopbar() {
+/** `plain`: on the fresh look's white header (classic sits on the brand-blue bar). */
+export function AiTopbar({ variant = 'brand' }: { variant?: 'brand' | 'plain' }) {
   const { open } = useAi();
   const status = useQuery({ queryKey: ['ai-status'], queryFn: aiApi.status, refetchInterval: (q) => (q.state.data?.busy ? 3000 : 30_000), retry: false });
   const [now, setNow] = useState(() => Date.now());
@@ -49,7 +50,12 @@ export function AiTopbar() {
   return (
     <div className="flex items-center gap-2">
       <Tooltip content={s && !s.configured ? { ...AI.button, note: s.note ?? AI.button.note } : AI.button} side="bottom">
-        <button type="button" aria-pressed={open} className={clsx('btn-glass text-xs', open && 'bg-white/25')} onClick={ai.toggle}>
+        <button
+          type="button"
+          aria-pressed={open}
+          className={clsx(variant === 'plain' ? 'btn-ghost py-1.5 text-xs' : 'btn-glass text-xs', open && (variant === 'plain' ? 'border-accent text-accent' : 'bg-white/25'))}
+          onClick={ai.toggle}
+        >
           <Sparkles className="w-4 h-4" /> AI
         </button>
       </Tooltip>
@@ -76,9 +82,16 @@ export function AiTopbar() {
             ),
           }}
         >
-          <span className={clsx('hidden md:flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium text-white cursor-help', low ? 'border-white/40 bg-warn/80' : 'border-white/25 bg-white/15')} tabIndex={0}>
+          <span
+            className={clsx(
+              'hidden items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium cursor-help',
+              variant === 'plain' ? 'xl:flex' : 'md:flex',
+              variant === 'plain' ? (low ? 'border-warn/40 bg-warn/10 text-warn' : 'border-ink-700 bg-ink-850 text-slate-300') : low ? 'border-white/40 bg-warn/80 text-white' : 'border-white/25 bg-white/15 text-white',
+            )}
+            tabIndex={0}
+          >
             {a?.reqUsed !== null && a?.reqUsed !== undefined ? `${n(a.reqUsed)} / ${n(l.requestsPerDay!)} today` : 'AI ready'}
-            {l.tokensPerMinute !== null && a?.tokLeft !== null && a?.tokLeft !== undefined && <span className="text-white/75">· {Math.round(((l.tokensPerMinute - a.tokLeft) / l.tokensPerMinute) * 100)}% of the minute</span>}
+            {l.tokensPerMinute !== null && a?.tokLeft !== null && a?.tokLeft !== undefined && <span className={variant === 'plain' ? 'text-slate-500' : 'text-white/75'}>· {Math.round(((l.tokensPerMinute - a.tokLeft) / l.tokensPerMinute) * 100)}% of the minute</span>}
           </span>
         </Tooltip>
       )}

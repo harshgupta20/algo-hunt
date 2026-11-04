@@ -119,7 +119,7 @@ export function WatchlistsTab() {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <h2 className="text-sm font-semibold text-slate-200">Watchlists</h2>
+        <h2 className="ui-section-title text-sm font-semibold text-slate-200">Watchlists</h2>
         <Tooltip content={E.watchlists.new} className="ml-auto">
           <button type="button" className="btn-primary py-1.5 text-sm" onClick={() => setEditing('new')}>
             <Plus className="w-4 h-4" /> New watchlist

@@ -299,12 +299,12 @@ export function download(name: string, text: string) {
 export function Panel({ title, help, aside, children, className, flush }: { title: string; help: TooltipContent; aside?: ReactNode; children: ReactNode; className?: string; flush?: boolean }) {
   return (
     <section className={clsx('card overflow-hidden', className)}>
-      <div className="flex flex-wrap items-center gap-2 px-4 pt-3 pb-2">
-        <h3 className="text-sm font-semibold text-slate-200">{title}</h3>
+      <div className="ui-panel-head flex flex-wrap items-center gap-2 px-4 pt-3 pb-2">
+        <h3 className="ui-section-title text-sm font-semibold text-slate-200">{title}</h3>
         <InfoTip content={help} />
         {aside && <div className="ml-auto flex flex-wrap items-center gap-2">{aside}</div>}
       </div>
-      <div className={flush ? '' : 'px-4 pb-4'}>{children}</div>
+      <div className={flush ? 'ui-panel-body-flush' : 'ui-panel-body px-4 pb-4'}>{children}</div>
     </section>
   );
 }

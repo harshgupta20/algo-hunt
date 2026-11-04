@@ -9,10 +9,10 @@ export function Card({ children, className }: { children: ReactNode; className?:
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-4 mb-6">
+    <div className="ui-page-header flex items-start justify-between gap-4 mb-6">
       <div>
-        <h1 className="text-xl font-semibold text-fg">{title}</h1>
-        {subtitle && <p className="text-sm text-slate-400 mt-1">{subtitle}</p>}
+        <h1 className="ui-page-title text-xl font-semibold text-fg">{title}</h1>
+        {subtitle && <p className="ui-page-sub text-sm text-slate-400 mt-1">{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </div>
@@ -35,12 +35,12 @@ export function StatCard({
 }) {
   const toneClass = tone === 'bull' ? 'text-bull' : tone === 'bear' ? 'text-bear' : tone === 'accent' ? 'text-accent-soft' : 'text-fg';
   return (
-    <Card className="flex flex-col gap-1">
-      <span className="flex items-center gap-1 text-xs uppercase tracking-wide text-slate-400">
+    <Card className="ui-stat flex flex-col gap-1">
+      <span className="ui-stat-label flex items-center gap-1 text-xs uppercase tracking-wide text-slate-400">
         {label}
         {help && <InfoTip content={help} />}
       </span>
-      <span className={clsx('text-2xl font-semibold tabular-nums', toneClass)}>{value}</span>
+      <span className={clsx('ui-stat-value text-2xl font-semibold tabular-nums', toneClass)}>{value}</span>
       {hint && <span className="text-xs text-slate-500">{hint}</span>}
     </Card>
   );
@@ -74,7 +74,7 @@ export function Tabs<T extends string>({
   items: Array<{ value: T; label: string; icon?: React.ComponentType<{ className?: string }>; help?: TooltipContent }>;
 }) {
   return (
-    <div role="tablist" className="inline-flex rounded-lg border border-ink-700 bg-ink-850 p-1 gap-1">
+    <div role="tablist" className="ui-tabs inline-flex rounded-lg border border-ink-700 bg-ink-850 p-1 gap-1">
       {items.map(({ value: v, label, icon: Icon, help }) => (
         <Tooltip key={v} content={help ?? { title: label }} side="bottom">
         <button
@@ -82,7 +82,7 @@ export function Tabs<T extends string>({
           aria-selected={v === value}
           onClick={() => onChange(v)}
           className={clsx(
-            'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+            'ui-tab inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
             v === value ? 'bg-accent text-white shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-ink-800',
           )}
         >
@@ -157,10 +157,10 @@ export function EmptyState({ title, hint }: { title: string; hint?: string }) {
 
 export function Section({ step, title, help, children, actions }: { step?: string; title: string; help: TooltipContent; children: ReactNode; actions?: ReactNode }) {
   return (
-    <section className="card p-4">
-      <div className="flex items-center gap-2 mb-3">
+    <section className="ui-section card p-4">
+      <div className="ui-section-head flex items-center gap-2 mb-3">
         {step && <span className="text-[10px] font-semibold uppercase tracking-widest text-accent-soft">{step}</span>}
-        <h3 className="text-sm font-semibold text-slate-200">{title}</h3>
+        <h3 className="ui-section-title text-sm font-semibold text-slate-200">{title}</h3>
         <InfoTip content={help} />
         {actions && <div className="ml-auto flex items-center gap-2">{actions}</div>}
       </div>
@@ -171,7 +171,7 @@ export function Section({ step, title, help, children, actions }: { step?: strin
 
 export function Segmented<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: Array<{ value: T; label: ReactNode; help: TooltipContent }>; label: string }) {
   return (
-    <div role="radiogroup" aria-label={label} className="flex rounded-lg overflow-hidden border border-ink-700 text-xs">
+    <div role="radiogroup" aria-label={label} className="ui-seg flex rounded-lg overflow-hidden border border-ink-700 text-xs">
       {options.map((o) => (
         <Tooltip key={o.value} content={o.help} side="bottom">
           <button

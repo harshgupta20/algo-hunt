@@ -252,7 +252,7 @@ export function InfoTip({ content, side = 'top', className }: { content: Tooltip
 export function FieldLabel({ children, help, htmlFor }: { children: ReactNode; help?: TooltipContent; htmlFor?: string }) {
   return (
     <div className="flex items-center gap-1 mb-1.5">
-      <label htmlFor={htmlFor} className="text-xs font-medium uppercase tracking-wide text-slate-400">
+      <label htmlFor={htmlFor} className="ui-label text-xs font-medium uppercase tracking-wide text-slate-400">
         {children}
       </label>
       {help && <InfoTip content={help} />}

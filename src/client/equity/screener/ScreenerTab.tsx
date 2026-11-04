@@ -147,7 +147,7 @@ export function ScreenerTab({ initialStrategyId, draft }: { initialStrategyId?: 
       {result && (
         <section className="card overflow-hidden">
           <div className="flex flex-wrap items-center gap-3 px-4 pt-3 pb-2">
-            <h3 className="text-sm font-semibold text-slate-200">{result.strategyName}</h3>
+            <h3 className="ui-section-title text-sm font-semibold text-slate-200">{result.strategyName}</h3>
             <Segmented
               label="Show"
               value={show}

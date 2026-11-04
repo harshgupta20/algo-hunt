@@ -7,7 +7,7 @@ import { HELP } from '../../lib/help';
 import clsx from 'clsx';
 import { CandlestickChart, History, Layers, Radar, Settings } from 'lucide-react';
 
-const NAV = [
+export const NAV = [
   // The whole market at a glance (indices, sectors, stocks, F&O, flows, world, news).
   { to: '/market', label: 'Market', icon: Radar, help: HELP.nav.market },
   // Equity: NSE cash-stock strategies, backtests and screens (independent of V2).
@@ -24,7 +24,7 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   const pathname = usePathname();
   const isActive = (to: string) => pathname === to || pathname.startsWith(`${to}/`);
   return (
-    <aside className={clsx('shrink-0 border-r border-ink-700/60 bg-ink-900 flex flex-col transition-[width] duration-200', collapsed ? 'w-16' : 'w-60')}>
+    <aside className={clsx('look-classic shrink-0 border-r border-ink-700/60 bg-ink-900 flex flex-col transition-[width] duration-200', collapsed ? 'w-16' : 'w-60')}>
       <nav className={clsx('flex-1 space-y-1', collapsed ? 'p-2' : 'p-3')}>
         {NAV.map(({ to, label, icon: Icon, help }) => (
           <Tooltip key={to} content={help} side="right" className="flex">

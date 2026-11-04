@@ -11,6 +11,7 @@ import { Card, PageHeader, Help } from '../components/ui';
 import { KiteConnectionCard } from '../components/KiteConnectionCard';
 import { raiseAlarm, requestNotificationPermission, showNotification, unlockAudio } from '../lib/notify';
 import { useThemePreference } from '../theme/useThemePreference';
+import { useLook } from '../theme/LookSync';
 import { InfoTip, Tooltip, type TooltipContent } from '../components/Tooltip';
 import { HELP } from '../lib/help';
 import { SkeletonCards } from '../components/loaders';
@@ -56,6 +57,7 @@ export function Settings() {
   const qc = useQueryClient();
   const prefsQuery = useQuery({ queryKey: ['preferences'], queryFn: api.getPreferences });
   const { theme, setTheme } = useThemePreference();
+  const [look, setLook] = useLook();
   const [prefs, setPrefs] = useState<UserPreferences>(DEFAULT_USER_PREFERENCES);
 
   useEffect(() => {
@@ -88,7 +90,27 @@ export function Settings() {
       <KiteConnectionCard />
 
       <Card className="mb-6">
-        <h2 className="text-sm font-semibold text-slate-300 mb-2">Notifications</h2>
+        <h2 className="ui-section-title text-sm font-semibold text-slate-300 mb-2">Appearance</h2>
+        <div className="divide-y divide-ink-700/50">
+          <Toggle
+            label="Dark theme"
+            hint="Light is the default. Also available from the sun/moon button in the top bar."
+            checked={theme === 'dark'}
+            onChange={(v) => setTheme(v ? 'dark' : 'light')}
+            help={HELP.settings.darkTheme}
+          />
+          <Toggle
+            label="Classic look"
+            hint="The earlier blue header with a sidebar. Off = the new look with the sections across the top."
+            checked={look === 'classic'}
+            onChange={(v) => setLook(v ? 'classic' : 'fresh')}
+            help={HELP.settings.classicLook}
+          />
+        </div>
+      </Card>
+
+      <Card className="mb-6">
+        <h2 className="ui-section-title text-sm font-semibold text-slate-300 mb-2">Notifications</h2>
         <div className="divide-y divide-ink-700/50">
           <Toggle
             label="Browser notifications"
@@ -110,13 +132,6 @@ export function Settings() {
             checked={prefs.soundRepeat}
             onChange={(v) => update({ soundRepeat: v })}
             help={HELP.settings.soundRepeat}
-          />
-          <Toggle
-            label="Dark theme"
-            hint="Light is the default. Also available from the sun/moon button in the top bar."
-            checked={theme === 'dark'}
-            onChange={(v) => setTheme(v ? 'dark' : 'light')}
-            help={HELP.settings.darkTheme}
           />
         </div>
         <div className="flex gap-2 mt-4">
@@ -140,7 +155,7 @@ export function Settings() {
       </Card>
 
       <Card className="mb-6">
-        <h2 className="text-sm font-semibold text-slate-300 mb-1">Telegram &amp; email alerts</h2>
+        <h2 className="ui-section-title text-sm font-semibold text-slate-300 mb-1">Telegram &amp; email alerts</h2>
         <p className="text-xs text-slate-500 mb-3">Delivered by the server, so they reach you even when no browser is open.</p>
         <Help content={HELP.settings.alertChannels}>
           <Link href="/v2?tab=settings" className="btn-ghost text-xs inline-flex">

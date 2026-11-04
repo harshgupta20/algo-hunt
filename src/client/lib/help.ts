@@ -61,6 +61,11 @@ export const HELP = {
     toDark: { title: 'Dark theme', body: 'Switch to the dark theme. Your choice is saved and follows you to other devices.' },
     toLight: { title: 'Light theme', body: 'Switch to the light theme. Your choice is saved and follows you to other devices.' },
     signOut: { title: 'Sign out', body: 'End this browser session. Scanning and the live worker keep running.' },
+    lookFresh: {
+      title: 'New look',
+      body: 'Switch to the new look: navigation across the top (more room for tables), white bordered panels, gridded tables with plain-case headings. Same screens, same data.',
+      note: 'Settings → Appearance switches between the two. Remembered in this browser; light / dark works in both.',
+    },
   },
 
   alarm: {
@@ -134,6 +139,11 @@ export const HELP = {
       body: 'Keep ringing every 6 seconds until you press Stop, open the alerts or acknowledge — at most 90 seconds. Off = ring once.',
     },
     darkTheme: { title: 'Dark theme', body: 'Light is the default. The choice is saved to your account.' },
+    classicLook: {
+      title: 'Classic look',
+      body: 'The earlier look: a blue header with the sections in a sidebar on the left. Off = the new look, with the sections across the top and more room for tables.',
+      note: 'Remembered in this browser. Light / dark works with both.',
+    },
     testNotification: { title: 'Test notification', body: 'Send a sample desktop notification to check permissions.' },
     testSound: { title: 'Test alert', body: 'Ring the alarm exactly as a real alert would (tune, alert card, tab title) so you can check the volume. Press Stop to end it.', note: 'Browsers only allow sound after you have clicked on the page once.' },
     alertChannels: { title: 'Telegram & email', body: 'Where V2 alerts are delivered (chat id, recipients, test messages) — set in V2 → Settings.' },

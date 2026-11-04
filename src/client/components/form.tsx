@@ -8,7 +8,7 @@ import { InfoTip, type TooltipContent } from './Tooltip';
 export function Cell({ label, help, children, className }: { label: string; help: TooltipContent; children: ReactNode; className?: string }) {
   return (
     <div className={clsx('flex flex-col gap-1', className)}>
-      <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+      <span className="ui-label flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
         {label}
         <InfoTip content={help} />
       </span>

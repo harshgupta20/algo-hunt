@@ -83,7 +83,7 @@ export function StoryCard({ lines, loading }: { lines: StoryLine[]; loading: boo
     <section className="card relative overflow-hidden p-4">
       <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-accent/10 blur-3xl" />
       <div className="mb-3 flex items-center gap-2">
-        <h3 className="text-sm font-semibold text-slate-200">The market in 30 seconds</h3>
+        <h3 className="ui-section-title text-sm font-semibold text-slate-200">The market in 30 seconds</h3>
         <InfoTip content={M.story} />
       </div>
       {loading ? (
@@ -122,7 +122,7 @@ export function BreadthCard({ data }: { data: MarketOverview | undefined }) {
   return (
     <section className="card p-4">
       <div className="mb-3 flex items-center gap-2">
-        <h3 className="text-sm font-semibold text-slate-200">Breadth</h3>
+        <h3 className="ui-section-title text-sm font-semibold text-slate-200">Breadth</h3>
         <InfoTip content={M.breadth} />
       </div>
       {!data ? (
