@@ -7,3 +7,4 @@ export * from './text';
 export * from './templates';
 export * from './normalize';
 export * from './indices';
+export * from './returns';

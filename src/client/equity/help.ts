@@ -9,12 +9,13 @@ type Help = TooltipContent;
 export const E = {
   page: {
     title: 'Equity — stock strategies',
-    body: 'Strategies for NSE cash stocks, separate from F&O: build one (or start from a template), backtest it over years on any stocks, and screen today’s signals.',
+    body: 'Strategies for NSE cash stocks, separate from F&O: build one (or start from a template), backtest it over years on any stocks, screen today’s signals, and see how much each stock moved (1D to 3Y).',
   },
   tabs: {
     strategies: { title: 'Strategies', body: 'Your saved equity strategies and ready-made templates (including your trader’s three). Open one to edit it in the builder.' },
     backtest: { title: 'Backtest', body: 'Run a strategy over past years on the stocks you choose, with your money: every buy, add and sell, CAGR, drawdown and a NIFTY 50 comparison.' },
     screener: { title: 'Screener', body: 'Which stocks meet a strategy’s entry right now — fresh signals first, with every condition’s values.' },
+    returns: { title: 'Returns', body: 'How much each stock or index moved over 1D · 1W · 1M · 3M · 6M · 1Y · 2Y · 3Y — on any stock list, indices, a watchlist or picked stocks. Sort and filter by any of them.' },
     watchlists: { title: 'Watchlists', body: 'Your own stock lists (e.g. “Swing candidates”) to backtest and screen. Start from an index list or pick stocks one by one.' },
   },
 
@@ -150,7 +151,7 @@ export const E = {
     section: { title: 'Backtest', body: 'Every check of the strategy over the period, on every stock, sharing one account: buys, pyramid adds, stops, targets and exits.', note: 'Runs in the background — switch tabs freely; the result waits here for an hour.' },
     strategy: { title: 'Strategy', body: 'A saved strategy, or the builder’s unsaved one.' },
     period: { title: 'Period', body: 'Trading days to test (IST, inclusive). Extra history before it is fetched automatically so every indicator has settled on day one.' },
-    quick: { title: 'Quick period', body: 'Fill in the most recent years.' },
+    quick: { title: 'Quick period', body: 'Fills the period with the last day, week, months or years, ending on the latest finished trading day — the same lookbacks as Returns.', note: 'A weekly strategy checks completed weeks only — 1D / 1W test little or nothing.' },
     capital: { title: 'Starting capital', body: 'The account’s money on day one. A buy that the free cash can’t cover is skipped and listed.' },
     noLimit: { title: 'No limit', body: 'Take every signal whatever it costs — shows P&L only (no return %, CAGR or drawdown %).' },
     maxPositions: { title: 'Max stocks held', body: 'Hold at most this many stocks at once; further buy signals are skipped and listed.' },
@@ -195,6 +196,23 @@ export const E = {
     asOf: { title: 'As of', body: 'The close the stock was checked at.' },
     change: { title: 'Change', body: 'Close vs the previous check’s close (a day, or a week).' },
     values: { title: 'Conditions', body: 'Each condition with its two values at the last check (✓ true, ✗ false, ? not enough history).' },
+  },
+
+  returns: {
+    section: {
+      title: 'Returns',
+      body: 'How much each stock or index moved over 1 day, 1 week, 1 / 3 / 6 months and 1 / 2 / 3 years, to its last finished close. Sort or filter any column — e.g. 3M above 20% and 1W below 0%.',
+      note: 'Price moves, not total returns: Kite’s daily closes are adjusted for splits and bonuses (and large dividends), but most dividends aren’t added back.',
+    },
+    run: { title: 'Measure the moves', body: 'Fetch each one’s daily closes from Kite — one request each; ones already in memory (from a screen or an earlier run today) are instant — and work out every move.', note: 'Needs Kite logged in. Runs in the background: switch tabs freely.' },
+    period: { title: 'Move', body: 'Last close vs the close that long before: the trading day on or before that calendar date (a holiday → the day before it). Months keep the day, clamped to the month’s end (3M on 31 May → 28 / 29 Feb).', note: '— = Kite has no close that far back (listed later).' },
+    day: { title: '1D move', body: 'Last close vs the previous trading day’s close.', note: 'During market hours this is the last finished session — today’s move counts once the market has closed.' },
+    breadth: { title: 'Up / down and median', body: 'For each lookback: how many of the rows below rose (▲) and fell (▼), and the median move — half moved more, half less. Follows the column filters.' },
+    asOf: { title: 'As of', body: 'Date of the last close every move runs to. Amber: older than the run’s date — no trades since (suspended, or not traded).' },
+    close: { title: 'Close', body: 'The last finished close (₹; points for an index).' },
+    stock: { title: 'Stock', body: 'Symbol and name. The chart icon opens it on TradingView (daily).' },
+    showAll: { title: 'Show every row', body: 'Long lists show their first rows to stay fast — this shows the rest. Sorting and filters always use every row.' },
+    csv: { title: 'Download CSV', body: 'Every stock with its close and every move (%), as a spreadsheet.' },
   },
 
   watchlists: {

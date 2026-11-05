@@ -167,7 +167,7 @@ database. Shapes: `src/shared/market/types.ts`. Details: [market.md](market.md).
 ### 4.6 Equity — NSE cash-stock strategies
 
 Independent of V2. Shapes: `src/shared/equity/types.ts`. Details: [equity.md](equity.md). Service errors return
-`{ error, issues? }` (`issues` = validation messages with paths). Backtests and screens run as background jobs:
+`{ error, issues? }` (`issues` = validation messages with paths). Backtests, screens and returns run as background jobs:
 `POST` returns the job (`status: RUNNING`); poll `GET …/:id` until `DONE` (then `result`), `FAILED` or `CANCELLED`.
 
 | Method | Path | Body / query | Response |
@@ -189,3 +189,6 @@ Independent of V2. Shapes: `src/shared/equity/types.ts`. Details: [equity.md](eq
 | POST | `/api/equity/screens` | `EqScreenRequest` (`strategyId` or `definition`, `symbols`) | `EqScreenJob` |
 | GET | `/api/equity/screens/latest` | — | latest screen job or `null` |
 | GET / DELETE | `/api/equity/screens/:id` | — | `EqScreenJob` (DELETE cancels) |
+| POST | `/api/equity/returns` | `EqReturnsRequest` (`symbols`, optional `stocksLabel`) | `EqReturnsJob` — each row's close and % move over 1D · 1W · 1M · 3M · 6M · 1Y · 2Y · 3Y (`moves[period] = { pct, from, base }`, `pct` null when listed later); `409` without a Kite login |
+| GET | `/api/equity/returns/latest` | — | latest returns job or `null` |
+| GET / DELETE | `/api/equity/returns/:id` | — | `EqReturnsJob` (DELETE cancels) |

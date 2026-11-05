@@ -1,6 +1,6 @@
 'use client';
 
-/** A backtest / screen running on the server: stocks done, the stock being fetched, time left, Kite requests, cancel. */
+/** A backtest / screen / returns run on the server: stocks done, the stock being fetched, time left, Kite requests, cancel. */
 import { X } from 'lucide-react';
 import type { EqJob } from '@/shared/equity';
 import { Tooltip } from '../components/Tooltip';
@@ -10,7 +10,7 @@ import { E } from './help';
 
 export function JobProgress({ job, onCancel, cancelling }: { job: EqJob<unknown, unknown>; onCancel: () => void; cancelling: boolean }) {
   const pct = job.total ? (job.done / job.total) * 100 : 0;
-  const what = job.kind === 'BACKTEST' ? 'Simulating every day…' : 'Checking every stock…';
+  const what = job.kind === 'BACKTEST' ? 'Simulating every day…' : job.kind === 'RETURNS' ? 'Measuring every move…' : 'Checking every stock…';
   return (
     <div role="status" aria-live="polite" className="rounded-lg border border-accent/30 bg-accent/5 p-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">

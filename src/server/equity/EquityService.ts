@@ -10,6 +10,10 @@ import type {
   EqBacktestResult,
   EqBacktestRun,
   EqPreset,
+  EqReturnsJob,
+  EqReturnsRequest,
+  EqReturnsResult,
+  EqReturnsRow,
   EqScreenJob,
   EqScreenRequest,
   EqScreenResult,
@@ -22,6 +26,7 @@ import type {
 import { EQ_TEMPLATES, hasErrors, normalizeDefinition, settleBars, validateDefinition } from '@/shared/equity';
 import { addDays, onDates, type Bars } from './engine/bars';
 import { runBacktest, usesVolume, type StockCandles } from './engine/backtest';
+import { stockReturns } from './engine/returns';
 import { screenStock } from './engine/screen';
 import type { CandleCache } from './data/candles';
 import type { Universe } from './data/universe';
@@ -76,15 +81,24 @@ export function historyFrom(d: EqStrategyDefinition, from: string, to: string): 
   return start < HISTORY_START ? HISTORY_START : start;
 }
 
+/**
+ * First date of daily candles for the Returns tab, data ending `to`: one full Kite request (~5.2 years — 3 years
+ * back plus the holidays before it, at no extra cost) — the same window the screener fetches, so either one leaves
+ * the candles in memory for the other.
+ */
+export const returnsFrom = (to: string) => addDays(to, -(KITE_DAYS_PER_REQUEST - 1));
+
 export class EquityService {
   private readonly now: () => number;
   private readonly backtests: Jobs<EqBacktestRequest, EqBacktestResult>;
   private readonly screens: Jobs<EqScreenRequest, EqScreenResult>;
+  private readonly returnRuns: Jobs<EqReturnsRequest, EqReturnsResult>;
 
   constructor(private readonly deps: EquityDeps) {
     this.now = deps.now ?? Date.now;
     this.backtests = new Jobs('BACKTEST', this.now);
     this.screens = new Jobs('SCREEN', this.now);
+    this.returnRuns = new Jobs('RETURNS', this.now);
   }
 
   // ---- universe --------------------------------------------------------------------------------------
@@ -381,6 +395,47 @@ export class EquityService {
   cancelScreen(id: string): EqScreenJob {
     const j = this.screens.cancel(id);
     if (!j) throw new EquityError(404, 'This screen is no longer in memory');
+    return j;
+  }
+
+  // ---- returns ---------------------------------------------------------------------------------------
+
+  /** How much each stock / index moved over 1D · 1W · 1M · 3M · 6M · 1Y · 2Y · 3Y, to the last finished close. */
+  async startReturns(req: EqReturnsRequest): Promise<EqReturnsJob> {
+    await this.requireKite('measure the moves from');
+    const { found, unknown } = await this.deps.universe.resolve(req.symbols);
+    if (!found.length) throw new EquityError(400, `None of these are NSE stocks or indices: ${unknown.slice(0, 10).join(', ')}`);
+    const end = this.deps.candles.endDate('9999-12-31');
+    const from = returnsFrom(end);
+    const label = req.stocksLabel?.trim() || `${found.length} stock${found.length === 1 ? '' : 's'}`;
+    return this.returnRuns.start({ strategyName: `Returns · ${label}`, request: req, total: found.length }, async (run) => {
+      const rows: EqReturnsRow[] = [];
+      const indices = found.some((s) => s.index);
+      await this.fetchAll(found, from, end, run, indices ? await this.marketDays(from, end, run) : null, (c) => rows.push(stockReturns(c)));
+      const notes = [
+        `Price moves to the close of ${end} (finished sessions only — today’s move counts once the market has closed).`,
+        'Price moves, not total returns: Kite’s daily closes are adjusted for splits and bonuses (and large dividends), but most dividends aren’t added back.',
+      ];
+      const stale = rows.filter((r) => r.asOf && r.asOf < end).length;
+      if (stale) notes.push(`${stale} with no close on ${end} (suspended, or not traded) — measured to their own last close (see As of).`);
+      if (unknown.length) notes.push(`Not NSE stocks or indices (skipped): ${unknown.join(', ')}`);
+      return { label, asOf: end, historyFrom: from, rows, requests: run.stats.fetched, notes };
+    });
+  }
+
+  returnsJob(id: string): EqReturnsJob {
+    const j = this.returnRuns.get(id);
+    if (!j) throw new EquityError(404, 'These returns are no longer in memory — run them again');
+    return j;
+  }
+
+  latestReturns(): EqReturnsJob | null {
+    return this.returnRuns.latest();
+  }
+
+  cancelReturns(id: string): EqReturnsJob {
+    const j = this.returnRuns.cancel(id);
+    if (!j) throw new EquityError(404, 'These returns are no longer in memory');
     return j;
   }
 }

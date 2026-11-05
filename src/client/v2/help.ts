@@ -297,7 +297,7 @@ export const H = {
       body: 'Trading days to test (IST, inclusive) — as far back as you like.',
       note: 'Futures and options use the contracts listed today, and Kite has no candles for expired contracts — so their data starts when today’s contract began trading. Each product notes where its data starts.',
     },
-    quick: { title: 'Quick period', body: 'Fill in the most recent days.' },
+    quick: { title: 'Quick period', body: 'Fills the period with the last day, week, months or years, ending today (Friday at a weekend).', note: 'Futures and options have data only from when today’s contract began trading — each product notes where its data starts.' },
     advanced: { title: 'Alert settings', body: 'Which expiry and strike the legs use, and when an alert counts — as on a connection.' },
     run: {
       title: 'Run backtest',
@@ -351,7 +351,7 @@ export const H = {
       body: 'Past trading days (IST, inclusive). Upstox keeps about six months of expired contracts and serves complete days only, so the test ends yesterday at the latest.',
       note: 'Days before Upstox’s first known expiry, or around an expiry missing from its list, aren’t tested — the product row says which.',
     },
-    quick: { title: 'Quick period', body: 'The most recent complete days (up to yesterday).' },
+    quick: { title: 'Quick period', body: 'Fills the period with the last day, week, months or years of complete days, ending yesterday (Friday at a weekend).', note: 'Upstox keeps about six months of expired contracts — days before its first known expiry aren’t tested (the product row says which).' },
     run: {
       title: 'Run options backtest',
       body: 'Fetch the contract lists and candles from Upstox, find every alert and trade it. Runs in the background — switch tabs freely and come back.',

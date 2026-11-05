@@ -1,5 +1,5 @@
 import type { EqPreset } from '@/shared/equity';
-import { EQ_PRESETS, eqBacktestRequestSchema, eqDefinitionSchema, eqScreenRequestSchema, eqWatchlistInputSchema } from '@/shared/equity';
+import { EQ_PRESETS, eqBacktestRequestSchema, eqDefinitionSchema, eqReturnsRequestSchema, eqScreenRequestSchema, eqWatchlistInputSchema } from '@/shared/equity';
 import { EquityError } from '../../equity';
 import type { AppContext } from '../context';
 import type { Handler } from '../http';
@@ -19,7 +19,7 @@ function wrap(h: Handler): Handler {
 
 const PRESETS = new Set<string>(EQ_PRESETS.map((p) => p.value));
 
-/** Equity (NSE cash stocks): universe, strategies, watchlists, backtests and screens. */
+/** Equity (NSE cash stocks): universe, strategies, watchlists, backtests, screens and returns. */
 export function equityController(ctx: AppContext) {
   const svc = () => ctx.equity.service;
   const handlers = {
@@ -72,6 +72,11 @@ export function equityController(ctx: AppContext) {
     latestScreen: async () => svc().latestScreen(),
     screenJob: async (req) => svc().screenJob(req.params.id!),
     cancelScreen: async (req) => svc().cancelScreen(req.params.id!),
+
+    startReturns: (req) => svc().startReturns(parse(eqReturnsRequestSchema, req.body)),
+    latestReturns: async () => svc().latestReturns(),
+    returnsJob: async (req) => svc().returnsJob(req.params.id!),
+    cancelReturns: async (req) => svc().cancelReturns(req.params.id!),
   } satisfies Record<string, Handler>;
   return Object.fromEntries(Object.entries(handlers).map(([k, h]) => [k, wrap(h as Handler)])) as Record<keyof typeof handlers, Handler>;
 }

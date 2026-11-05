@@ -14,9 +14,11 @@ import { EQ_DEFAULT_CAPITAL, EQ_PRESETS, EQ_TIMEFRAME, strategySummary } from '@
 import { Tooltip } from '../../components/Tooltip';
 import { EmptyState, Section, Toggle } from '../../components/ui';
 import { Cell, NumberInput } from '../../components/form';
+import { QuickPeriods, quickRange } from '../../components/QuickPeriods';
+import { QUICK_PERIODS, latestTradingDay, type QuickPeriodKey } from '../../components/periods';
 import { InlineSpinner } from '../../components/loaders';
 import { eqApi } from '../api';
-import { countLabel, duration, istDateTime, istToday, shortDate, yearsAgo } from '../format';
+import { countLabel, duration, istDateTime, istToday, shortDate } from '../format';
 import { E } from '../help';
 import { JobProgress } from '../JobProgress';
 import { StockPicker, useSymbols, type StockSource } from '../StockPicker';
@@ -42,14 +44,17 @@ function stocksLabel(source: StockSource, label: string, symbols: string[]): str
   return `${countLabel(symbols)} picked`;
 }
 
-const QUICK = [1, 3, 5, 10];
+/** The platform's lookbacks, plus the long ones a stock backtest wants. */
+const QUICK: readonly QuickPeriodKey[] = [...QUICK_PERIODS, '5Y', '10Y'];
+/** A daily candle is final after 15:30 + Kite's settle margin (data/candles.ts) — quick periods end on that day. */
+const sessionEnd = () => latestTradingDay(15 * 60 + 40);
 const SECONDS_PER_REQUEST = 0.36;
 
 export function BacktestTab({ initialStrategyId, initialHistory, draft }: { initialStrategyId?: string; initialHistory?: string; draft: EqStrategyDefinition | null }) {
   const qc = useQueryClient();
   const strategies = useQuery({ queryKey: ['eq-strategies'], queryFn: eqApi.strategies });
   const [form, setForm] = useState<Form>(() => {
-    const base: Form = remembered?.form ?? { strategy: '', source: { kind: 'PRESET', preset: 'NIFTY50' }, range: { from: yearsAgo(5), to: istToday() }, capital: EQ_DEFAULT_CAPITAL, maxPositions: null };
+    const base: Form = remembered?.form ?? { strategy: '', source: { kind: 'PRESET', preset: 'NIFTY50' }, range: quickRange('5Y', sessionEnd(), istToday()), capital: EQ_DEFAULT_CAPITAL, maxPositions: null };
     if (draft) return { ...base, strategy: 'draft' };
     if (initialStrategyId) return { ...base, strategy: initialStrategyId };
     return base;
@@ -173,13 +178,7 @@ export function BacktestTab({ initialStrategyId, initialHistory, draft }: { init
               <input type="date" aria-label="To" className="input py-1 text-xs" value={form.range.to} min={form.range.from} max={istToday()} onChange={(e) => set({ range: { ...form.range, to: e.target.value } })} />
             </Cell>
             <Cell label="Quick" help={E.backtest.quick}>
-              {QUICK.map((n) => (
-                <Tooltip key={n} content={{ ...E.backtest.quick, title: `Last ${n} year${n === 1 ? '' : 's'}` }}>
-                  <button type="button" className="btn-ghost py-1 text-xs" onClick={() => set({ range: { from: yearsAgo(n), to: istToday() } })}>
-                    {n} yr
-                  </button>
-                </Tooltip>
-              ))}
+              <QuickPeriods keys={QUICK} end={sessionEnd()} to={istToday()} value={form.range} onPick={(range) => set({ range })} help={E.backtest.quick} />
             </Cell>
             <Cell label="Starting capital" help={E.backtest.capital}>
               <span className="text-xs text-slate-400">₹</span>

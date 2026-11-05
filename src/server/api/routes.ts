@@ -20,7 +20,7 @@ export function createRouter(ctx: AppContext): Router {
     return { status: 'ok', store: 'postgres', kite: kite.state };
   });
 
-  // Equity — NSE cash stocks: its own strategies, watchlists, backtests and screens (independent of V2)
+  // Equity — NSE cash stocks: its own strategies, watchlists, backtests, screens and returns (independent of V2)
   const eq = equityController(ctx);
   r.get('/equity/stocks', eq.stocks);
   r.get('/equity/presets', eq.presets);
@@ -47,6 +47,10 @@ export function createRouter(ctx: AppContext): Router {
   r.get('/equity/screens/latest', eq.latestScreen); // before /equity/screens/:id
   r.get('/equity/screens/:id', eq.screenJob);
   r.delete('/equity/screens/:id', eq.cancelScreen);
+  r.post('/equity/returns', eq.startReturns);
+  r.get('/equity/returns/latest', eq.latestReturns); // before /equity/returns/:id
+  r.get('/equity/returns/:id', eq.returnsJob);
+  r.delete('/equity/returns/:id', eq.cancelReturns);
 
   // The trading AI assistant (Groq) — works through the Equity service's tools
   const ai = aiController(ctx);

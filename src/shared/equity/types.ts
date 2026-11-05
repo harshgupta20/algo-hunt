@@ -422,13 +422,59 @@ export interface EqScreenResult {
   notes: string[];
 }
 
+// ---- returns (how much each stock moved) -----------------------------------------------------------------
+
+/** The lookbacks of the Returns tab: the previous close, a week, months and years back. */
+export type EqReturnPeriod = '1D' | '1W' | '1M' | '3M' | '6M' | '1Y' | '2Y' | '3Y';
+
+export interface EqReturnsRequest {
+  symbols: string[];
+  /** How the stocks were chosen, in words ("NIFTY 500", "Swing (watchlist)"). */
+  stocksLabel?: string;
+}
+
+/** One lookback's move: last close vs the close it's measured from. */
+export interface EqMove {
+  /** % change; null when Kite has no candle that far back (listed later). */
+  pct: number | null;
+  /** IST date of the close it's measured from. */
+  from: string | null;
+  /** That close. */
+  base: number | null;
+}
+
+export interface EqReturnsRow {
+  symbol: string;
+  name: string;
+  /** IST date of the last finished daily close (older than the run's date: no trades since — e.g. suspended). */
+  asOf: string | null;
+  close: number | null;
+  /** The first daily candle in the fetched history (a later one than the history's start: listed then). */
+  firstDate: string | null;
+  moves: Record<EqReturnPeriod, EqMove>;
+  index?: boolean;
+  error?: string;
+}
+
+export interface EqReturnsResult {
+  /** What was looked at, in words. */
+  label: string;
+  /** The last finished session the moves run to. */
+  asOf: string;
+  /** The history fetched starts here (a stock whose candles start later was listed after it). */
+  historyFrom: string;
+  rows: EqReturnsRow[];
+  requests: number;
+  notes: string[];
+}
+
 // ---- jobs ------------------------------------------------------------------------------------------------
 
-/** A backtest or screen running in the background (memory only): stocks are fetched one by one through
+/** A backtest, screen or returns run in the background (memory only): stocks are fetched one by one through
  *  Kite's request queue, then evaluated. */
 export interface EqJob<Req, Res> {
   id: string;
-  kind: 'BACKTEST' | 'SCREEN';
+  kind: 'BACKTEST' | 'SCREEN' | 'RETURNS';
   strategyName: string;
   status: 'RUNNING' | 'DONE' | 'FAILED' | 'CANCELLED';
   startedAt: number;
@@ -448,3 +494,4 @@ export interface EqJob<Req, Res> {
 
 export type EqBacktestJob = EqJob<EqBacktestRequest, EqBacktestResult>;
 export type EqScreenJob = EqJob<EqScreenRequest, EqScreenResult>;
+export type EqReturnsJob = EqJob<EqReturnsRequest, EqReturnsResult>;

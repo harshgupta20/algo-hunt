@@ -1,6 +1,6 @@
 /** zod schemas for equity payloads (shape only — meaning is checked by validate.ts). */
 import { z } from 'zod';
-import type { EqBacktestRequest, EqGroup, EqNode, EqScreenRequest, EqStrategyDefinition } from './types';
+import type { EqBacktestRequest, EqGroup, EqNode, EqReturnsRequest, EqScreenRequest, EqStrategyDefinition } from './types';
 
 const timeframe = z.enum(['1d', '1w']);
 const priceField = z.enum(['open', 'high', 'low', 'close', 'volume']);
@@ -89,3 +89,5 @@ export const eqBacktestRequestSchema = z
 export const eqScreenRequestSchema = z
   .object({ strategyId: z.string().min(1).optional(), definition: eqDefinitionSchema.optional(), symbols })
   .refine((r) => r.strategyId || r.definition, 'strategyId or definition is required') as z.ZodType<EqScreenRequest>;
+
+export const eqReturnsRequestSchema = z.object({ symbols, stocksLabel: z.string().trim().max(120).optional() }) as z.ZodType<EqReturnsRequest>;

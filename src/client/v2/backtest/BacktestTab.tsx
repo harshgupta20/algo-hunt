@@ -34,21 +34,11 @@ import { PaperTermsFields } from '../paper/PaperFields';
 import { ByHour, HowClosed, Panel, PnlPanel, StatCells, StatHeads, Th, TradeTable, download, pf, statColumns, td, th, toCsv } from '../paper/PaperTab';
 import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../../components/table/ColumnFilters';
 import { LoadMore } from '../LoadMore';
+import { QuickPeriods, quickRange } from '../../components/QuickPeriods';
+import { QUICK_PERIODS, lastWeekday, latestTradingDay, type QuickPeriodKey } from '../../components/periods';
 
-/** Quick periods (days back from today). */
-const QUICK = [
-  { days: 5, label: '5 days' },
-  { days: 10, label: '10 days' },
-  { days: 30, label: '1 month' },
-  { days: 90, label: '3 months' },
-];
-/** Options backtest: complete days up to yesterday — Upstox keeps about six months of expired contracts. */
-const QUICK_OPTIONS = [
-  { days: 7, label: '1 week' },
-  { days: 30, label: '1 month' },
-  { days: 90, label: '3 months' },
-  { days: 180, label: '6 months' },
-];
+/** Quick periods: the platform's lookbacks, plus 5 and 10 days for intraday tests. */
+const QUICK: readonly QuickPeriodKey[] = ['1D', '5D', '1W', '10D', '1M', '3M', '6M', '1Y', '2Y', '3Y'];
 
 export type BacktestSource = 'kite' | 'upstox';
 
@@ -458,7 +448,9 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
   const [products, setProducts] = useState<string[]>([]);
   // Upstox serves complete past days: the period ends yesterday at the latest.
   const lastDay = upstox ? daysAgo(1) : istToday();
-  const [range, setRange] = useState(upstox ? { from: daysAgo(30), to: daysAgo(1) } : { from: daysAgo(4), to: istToday() });
+  // Quick periods end on the latest trading day: today on a weekday (Kite's intraday candles so far), yesterday's for Upstox.
+  const quickEnd = upstox ? lastWeekday(lastDay) : latestTradingDay(null);
+  const [range, setRange] = useState(() => quickRange(upstox ? '1M' : '5D', quickEnd, lastDay));
   const [plan, setPlan] = useState<PaperPlan | null>(null);
   const [expiry, setExpiry] = useState<ConnectionConfig['expiry']>({ mode: 'CURRENT' });
   const [shift, setShift] = useState(0);
@@ -589,18 +581,7 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
                   <input type="date" aria-label="To" className="input py-1 text-xs" value={range.to} min={range.from} max={lastDay} onChange={(e) => setRange({ ...range, to: e.target.value })} />
                 </Cell>
                 <Cell label="Quick" help={upstox ? H.options.quick : H.backtest.quick}>
-                  {(upstox ? QUICK_OPTIONS : QUICK).map((q) => {
-                    const quick = upstox ? { from: daysAgo(q.days), to: lastDay } : { from: daysAgo(q.days - 1), to: istToday() };
-                    // Selected while the period is exactly this one (editing a date unselects it).
-                    const on = range.from === quick.from && range.to === quick.to;
-                    return (
-                      <Tooltip key={q.days} content={{ ...(upstox ? H.options.quick : H.backtest.quick), title: `Last ${q.days} days`, note: on ? 'Selected — the period above is exactly this.' : undefined }}>
-                        <button type="button" aria-pressed={on} className={clsx('py-1 text-xs', on ? 'btn-primary' : 'btn-ghost')} onClick={() => setRange(quick)}>
-                          {q.label}
-                        </button>
-                      </Tooltip>
-                    );
-                  })}
+                  <QuickPeriods keys={upstox ? QUICK_PERIODS : QUICK} end={quickEnd} to={lastDay} value={range} onPick={setRange} help={upstox ? H.options.quick : H.backtest.quick} />
                 </Cell>
               </div>
               {reversed && <p className="-mt-2 text-xs text-warn">“From” must be on or before “to”.</p>}

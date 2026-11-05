@@ -12,8 +12,9 @@ strategy's daily / weekly candles; TradingView has no date link, so the tooltip 
 | Tab | What it does |
 | --- | --- |
 | **Strategies** | Saved strategies (edit, backtest, screen, duplicate, delete) and the template gallery — the trader's three strategies first, then classic setups (52-week breakout, golden cross, Supertrend, uptrend pullback, volume breakout). Opens the builder |
-| **Backtest** | A strategy (saved, or the builder's unsaved one) on a stock list / indices / watchlist / picked stocks and indices, over any period, with a starting capital (or none) and an optional maximum of stocks held. Runs in the background (progress, time left, cancel; survives tab switches). Results: final capital, return, CAGR, max drawdown, win rate, profit factor, trades, NIFTY 50 bought-and-held comparison, account value + drawdown chart, monthly returns, each trade with **every order and why** (indicator values at the signal), by stock with data notes, signals not taken, CSVs. **Backtest history**: every finished backtest is kept — when it ran, which strategy (and version), stocks, period, money and its figures; filter by strategy, open one exactly as it was, run it again, delete it |
+| **Backtest** | A strategy (saved, or the builder's unsaved one) on a stock list / indices / watchlist / picked stocks and indices, over any period (quick: **1D · 1W · 1M · 3M · 6M · 1Y · 2Y · 3Y · 5Y · 10Y**, ending on the latest finished trading day — the platform-wide lookbacks, `client/components/periods.ts`), with a starting capital (or none) and an optional maximum of stocks held. Runs in the background (progress, time left, cancel; survives tab switches). Results: final capital, return, CAGR, max drawdown, win rate, profit factor, trades, NIFTY 50 bought-and-held comparison, account value + drawdown chart, monthly returns, each trade with **every order and why** (indicator values at the signal), by stock with data notes, signals not taken, CSVs. **Backtest history**: every finished backtest is kept — when it ran, which strategy (and version), stocks, period, money and its figures; filter by strategy, open one exactly as it was, run it again, delete it |
 | **Screener** | Each stock at its last completed check: entry true / **fresh signal** (true now, not at the check before) / exit true, with every condition's two values |
+| **Returns** | How much each stock / index moved over **1D · 1W · 1M · 3M · 6M · 1Y · 2Y · 3Y** to its last finished close, on any stock list, indices, watchlist or picked stocks. Every lookback is a sortable, filterable column (e.g. 3M > 20 % and 1W < 0 %); above the table, per lookback, how many rose / fell and the median move (following the filters); each number's tooltip shows the two closes; CSV. Rules: 1D = vs the previous trading day's close; 1W = vs the close on or before the date 7 days earlier (a holiday falls back); months / years = calendar months, the day clamped to the month's end (3M on 31 May → 28 / 29 Feb). No close that far back (listed later) → no number, never a guess. Price moves, not total returns. Runs in the background like the screener, over the same ~1,900-day Kite window — one request per stock, and either run leaves the candles in memory for the other that day |
 | **Watchlists** | Your own stock lists; start from an index list (NIFTY 50 / Next 50 / 100 / Midcap 150 / Smallcap 250 / 500, F&O) or pick stocks |
 
 ## 2. The strategy
@@ -137,9 +138,9 @@ strategy's daily / weekly candles; TradingView has no date link, so the tooltip 
 | Where | What |
 | --- | --- |
 | `src/shared/equity/` | Types, catalog, zod schemas, validation (units, bounds, history), plain-language text, templates |
-| `src/server/equity/engine/` | `bars` (daily → weekly), `indicators` (whole columns), `evaluate` (conditions per check, audit text), `simulate` (the portfolio day by day), `charges`, `stats`, `backtest`, `screen` — pure, no I/O |
+| `src/server/equity/engine/` | `bars` (daily → weekly), `indicators` (whole columns), `evaluate` (conditions per check, audit text), `simulate` (the portfolio day by day), `charges`, `stats`, `backtest`, `screen`, `returns` (lookback dates in `shared/equity/returns.ts`) — pure, no I/O |
 | `src/server/equity/` | `data/universe` (stock list, presets), `data/candles` (Kite + cache), `store/` (Pg / memory), `jobs` (background runs), `EquityService` |
-| `src/client/equity/` | `EquityHub`, the builder (`strategies/`), `backtest/` (form, results, charts), `screener/`, `watchlists/`, `StockPicker`, `help.ts` |
+| `src/client/equity/` | `EquityHub`, the builder (`strategies/`), `backtest/` (form, results, charts), `screener/`, `returns/`, `watchlists/`, `StockPicker`, `help.ts` |
 | API | `src/server/api/controllers/equityController.ts`, routes under `/api/equity` (see [api.md](api.md)) |
 | Database | `eq_strategies`, `eq_watchlists` (migration 012) and the backtest history `eq_backtests` (014) — strategies, watchlists and history lines read once per process, then served from memory; a history entry's packed result is read only when it's opened |
 
@@ -153,7 +154,8 @@ logger, database pool and config.
 (crossings, fills at close / next open, the app's order rules with slippage in the order text, stop / target / gaps /
 same-day, trailing stop, the pyramiding example with exact prices, max adds, any-exit-closes-all, weekly candles,
 shared cash, max stocks held, charges, slippage, time exit, END, figures); the service (stock list filter, presets,
-checks before saving, upgrading old strategies, watchlists, jobs, cache, cancel, finished sessions, screener);
+checks before saving, upgrading old strategies, watchlists, jobs, cache, cancel, finished sessions, screener, returns);
+returns' lookback dates and base closes (`returns.test.ts`);
 TradingView links (`format.test.ts`).
 
 **`npm run verify:equity`** (`scripts/equity-verify/`, see its README) proves the engine against an independent

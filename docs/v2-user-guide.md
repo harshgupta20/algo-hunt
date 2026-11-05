@@ -98,8 +98,9 @@ The first time, run `npm run live -- --check`. It connects to Kite, prints a few
 trading trades — the strategy's **paper plan** (section 5). Nothing is saved or sent unless you press **Save to
 strategy**.
 
-1. Pick a strategy (or press **Backtest** on its card), up to 20 products and a period (**5 days / 10 days / Max** —
-   as far back as the trigger timeframe allows, e.g. 20 days of 15-minute candles).
+1. Pick a strategy (or press **Backtest** on its card), products and a period — type the dates or press a quick period
+   (**1D · 5D · 1W · 10D · 1M · 3M · 6M · 1Y · 2Y · 3Y**, the last N days ending today, Friday at a weekend; the Options
+   backtest has 1D … 3Y ending yesterday). Futures and options have data only from when today's contract began trading.
 2. **Trades — the strategy's plan**: lots per trade (₹ per trade for stocks), target, stop-loss, trailing stop, watch
    window, square-off, charges, slippage, what each group trades and its trailing rules — exactly what
    paper trading uses. Change anything to try it out: changed values are highlighted (↺ goes back), and **Save to

@@ -6,6 +6,8 @@ import type {
   EqBacktestRun,
   EqPreset,
   EqPresetInfo,
+  EqReturnsJob,
+  EqReturnsRequest,
   EqScreenJob,
   EqScreenRequest,
   EqStock,
@@ -87,4 +89,8 @@ export const eqApi = {
   latestScreen: () => request<EqScreenJob | null>('/screens/latest'),
   screenJob: (id: string) => request<EqScreenJob>(`/screens/${id}`),
   cancelScreen: (id: string) => send<EqScreenJob>('DELETE', `/screens/${id}`),
+  startReturns: (r: EqReturnsRequest) => send<EqReturnsJob>('POST', '/returns', r),
+  latestReturns: () => request<EqReturnsJob | null>('/returns/latest'),
+  returnsJob: (id: string) => request<EqReturnsJob>(`/returns/${id}`),
+  cancelReturns: (id: string) => send<EqReturnsJob>('DELETE', `/returns/${id}`),
 };

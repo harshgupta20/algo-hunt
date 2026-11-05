@@ -7,11 +7,11 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { EqBacktestJob, EqOperand, EqScreenJob, EqStrategyDefinition } from '../../src/shared/equity';
+import type { EqBacktestJob, EqOperand, EqReturnsJob, EqScreenJob, EqStrategyDefinition } from '../../src/shared/equity';
 import { EQ_TEMPLATES, all, any, cond, defaultDefinition, ind, normalizeDefinition, num, price } from '../../src/shared/equity';
 import { CandleCache, lastFinishedSession, type DailySource } from '../../src/server/equity/data/candles';
 import { Universe, stocksFromKite } from '../../src/server/equity/data/universe';
-import { EquityService, historyFrom } from '../../src/server/equity/EquityService';
+import { EquityService, historyFrom, returnsFrom } from '../../src/server/equity/EquityService';
 import { MemoryEquityStore } from '../../src/server/equity/store/MemoryEquityStore';
 
 const ist = (date: string, hhmm = '09:00') => Date.parse(`${date}T${hhmm}:00+05:30`);
@@ -298,5 +298,51 @@ describe('equity service', () => {
     expect(a).toMatchObject({ symbol: 'AAA', asOf: '2025-02-04', close: 107, changePct: 2.88, entry: true, fresh: true });
     expect(a!.leaves[0]).toEqual({ text: 'Close > 105', value: true, left: 107, right: 105 });
     expect(b).toMatchObject({ symbol: 'BBB', entry: true, fresh: false });
+  });
+
+  it('returns: every lookback to the last finished close, listed-later stocks blank, one Kite request each, shared with the screener', async () => {
+    clock.now = ist('2025-04-01', '18:00'); // Tuesday after the close → data to 2025-04-01
+    const weekdays = (from: string, to: string) => {
+      let n = 0;
+      for (let d = Date.parse(`${from}T00:00:00Z`); d <= Date.parse(`${to}T00:00:00Z`); d += 86_400_000) if (![0, 6].includes(new Date(d).getUTCDay())) n++;
+      return n;
+    };
+    const series = (from: string, to: string, last: number) => {
+      const n = weekdays(from, to);
+      return candles(from, [...Array(n - 1).fill(100), last]);
+    };
+    kite.data.set(1, series('2021-01-01', '2025-04-01', 150)); // AAA: years of history
+    kite.data.set(2, series('2024-10-01', '2025-04-01', 110)); // BBB: listed 1 Oct 2024
+    kite.data.set(3, series('2024-01-01', '2025-03-20', 120)); // BAJAJ-AUTO: no trades since 20 Mar
+    const job = await svc.startReturns({ symbols: ['AAA', 'BBB', 'BAJAJ-AUTO', 'ZZZ'], stocksLabel: 'Test list' });
+    expect(job).toMatchObject({ kind: 'RETURNS', strategyName: 'Returns · Test list', total: 3 });
+    const done = (await settle(() => svc.returnsJob(job.id))) as EqReturnsJob;
+    expect(done.status).toBe('DONE');
+    const r = done.result!;
+    expect(r).toMatchObject({ label: 'Test list', asOf: '2025-04-01', historyFrom: returnsFrom('2025-04-01'), requests: 3 });
+    expect(kite.calls.every((c) => c.from === returnsFrom('2025-04-01') && c.to === '2025-04-01')).toBe(true);
+    const [a, b, c] = r.rows;
+    expect(a!.symbol).toBe('AAA');
+    expect(Object.values(a!.moves).map((m) => m.pct)).toEqual([50, 50, 50, 50, 50, 50, 50, 50]);
+    expect(a!.moves['3Y'].from).toBe('2022-04-01');
+    expect(b).toMatchObject({ symbol: 'BBB', firstDate: '2024-10-01', close: 110 });
+    expect(Object.values(b!.moves).map((m) => m.pct)).toEqual([10, 10, 10, 10, 10, null, null, null]);
+    expect(c).toMatchObject({ symbol: 'BAJAJ-AUTO', asOf: '2025-03-20', close: 120 });
+    expect(r.notes.join(' ')).toContain('1 with no close on 2025-04-01');
+    expect(r.notes.join(' ')).toContain('skipped): ZZZ');
+
+    // The screener the same day reads the same window from memory — no new Kite request.
+    const before = kite.calls.length;
+    const screen = await svc.startScreen({ definition: cross, symbols: ['AAA'] });
+    const s = (await settle(() => svc.screenJob(screen.id))) as EqScreenJob;
+    expect(s.cached).toBe(1);
+    expect(kite.calls.length).toBe(before);
+  });
+
+  it('returns need Kite and at least one known stock', async () => {
+    connected = false;
+    await expect(svc.startReturns({ symbols: ['AAA'] })).rejects.toMatchObject({ status: 409 });
+    connected = true;
+    await expect(svc.startReturns({ symbols: ['ZZZ'] })).rejects.toMatchObject({ status: 400 });
   });
 });
