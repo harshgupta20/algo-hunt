@@ -1,13 +1,14 @@
 /**
- * Backtest a strategy on products: the alerts it would have sent over past candles (the same evaluation as
+ * The Kite-only backtest — what the F&O backtest runs for MCX products, spot-only strategies, and NSE / BSE products
+ * while Upstox isn't logged in: the alerts the strategy would have sent over past candles (the same evaluation as
  * Compare, with the plan's watch window), each traded exactly like a paper trade (simulate.ts), the exits found on
  * the traded contract's 1-minute Kite candles and the trailing rules on the unit's candles.
  *
  * Any number of products and any period: candles come product by product through Kite's request queue (the
  * cost is only waiting), through the candle cache so a re-run is quick; a job reports progress and can cancel.
  * Contracts are those listed today with their strikes fixed at the start of the period, and Kite has no
- * candles for expired contracts (each product notes where its data starts) — the Options backtest
- * (optionsBacktest.ts) replays expired contracts from Upstox instead.
+ * candles for expired contracts (each product notes where its data starts) — NSE / BSE contracts as they were
+ * listed come from Upstox in the re-picking backtest (optionsBacktest.ts).
  */
 import type { BacktestJob, BacktestProduct, BacktestRequest, BacktestResult, CompareProductResult, StrategyDefinition, V2Instrument, V2Strategy } from '@/shared/v2';
 import { normalizePlan, resolveRules, trailingRules } from '@/shared/v2';
@@ -123,6 +124,7 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
     const unitContracts = r.unit ? Object.entries(r.unit.legs).map(([leg, i]) => `${leg}: ${i ? i.symbol : 'not listed'}`) : [];
     return {
       productId: r.productId,
+      data: 'KITE' as const,
       symbol: symbolOf(r.productId),
       name: r.productName,
       alerts: r.alerts.length,
@@ -148,6 +150,7 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
     trades: [...closed].sort((a, b) => b.entryAt.localeCompare(a.entryAt)),
     skipped,
     requests: stats.fetched,
+    source: 'KITE',
     notes: [
       ...planNotes(d, plan, { conditionLegs: '', markets: [...new Set([...products.values()].map((p) => p.market))] }),
       ...cmp.notes.map((x) => x.replace('Alerts only (no trade scoring). ', '')),

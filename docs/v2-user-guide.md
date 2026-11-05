@@ -1,9 +1,11 @@
-# V2 — trader guide
+# Futures & Options — trader guide
+
+(Called **V2** until 2026-11-05; the URL is still `/v2`.)
 
 **Strategy + Product = Alert.** Build a strategy once, without choosing a product. Then connect it to NIFTY,
 RELIANCE, GOLD or anything else to get alerts, and use Compare to see which products it suits.
 
-Open **V2** in the sidebar (signing in opens it too; the home page `/` is the product landing page). Every control has an ⓘ or a hover tooltip explaining it.
+Open **Futures & Options** in the sidebar (signing in opens it too; the home page `/` is the product landing page). Every control has an ⓘ or a hover tooltip explaining it.
 
 ---
 
@@ -99,32 +101,34 @@ trading trades — the strategy's **paper plan** (section 5). Nothing is saved o
 strategy**.
 
 1. Pick a strategy (or press **Backtest** on its card), products and a period — type the dates or press a quick period
-   (**1D · 5D · 1W · 10D · 1M · 3M · 6M · 1Y · 2Y · 3Y**, the last N days ending today, Friday at a weekend; the Options
-   backtest has 1D … 3Y ending yesterday). Futures and options have data only from when today's contract began trading.
+   (**1D · 5D · 1W · 10D · 1M · 3M · 6M · 1Y · 2Y · 3Y**, the last N days ending on the latest trading day: yesterday
+   when Upstox contracts are read — complete days only — else today; Friday at a weekend). Before you run, **Where the
+   data comes from** says, per product, which source it will use (section 2c).
 2. **Trades — the strategy's plan**: lots per trade (₹ per trade for stocks), target, stop-loss, trailing stop, watch
    window, square-off, charges, slippage, what each group trades and its trailing rules — exactly what
    paper trading uses. Change anything to try it out: changed values are highlighted (↺ goes back), and **Save to
    strategy** makes them the strategy's plan so paper trading uses them from the next alert. "Same as the strategy"
    means paper trading trades exactly this. There is **no starting capital**: like paper trading, every alert trades.
 3. **Backtest**: every alert the strategy would have sent is traded like a paper trade — entered at the alert
-   candle's close (± slippage), followed minute by minute on the contract's Kite 1-minute candles to the target,
+   candle's close (± slippage), followed minute by minute on the contract's 1-minute candles to the target,
    stop-loss or trailing stop (a stop and the target in the same minute → the stop counts; a gap through the stop
    fills at that minute's open; the trailing stop follows the best price of the minutes before), a trailing rule,
    the other group, the 15:20 / 23:20 square-off, expiry, or the end of the test. With **Trailing SL** on, the
    target starts trailing instead of closing the trade (section 5).
 4. Results: net P&L, **money needed** (the most in use at once) and the return on it, win rate, profit factor,
-   drawdown, the P&L charts, **by product** (open a row for the contracts used and data notes), every trade (CSV) —
-   click a trade for its **story** (section 5).
+   drawdown, the P&L charts, the **data check** (Kite vs Upstox, section 2c), **by product** (each row says *Kite +
+   Upstox* or *Kite only*; open it for the contracts used and data notes), every trade (CSV; a contract priced from
+   Upstox carries an *Upstox* tag and a *prices_from* column) — click a trade for its **story** (section 5).
    When nothing was traded, a box at the top says why — no alerts in the period, or every alert skipped (grouped by
    reason, with what to change: e.g. *After the square-off* → switch **Square off daily** off). Products whose
    candles couldn't be read are listed there too.
 
-Needs a **Kite login** (candles come from Kite) — without one it says so instead of running. **Daily / weekly
+Needs a **Kite login** (the index / stock always comes from Kite) — without one it says so instead of running. **Daily / weekly
 strategies** alert at the 15:30 close, after the square-off time: switch **Square off daily** off to trade them
 (held overnight, closed by the target / stop-loss / expiry / end of the test).
 
-Limits (as Compare): contracts are the ones listed today, with option strikes fixed around ATM at the start of the
-period; Kite has no candles for expired contracts.
+Kite only (MCX, and NSE / BSE without an Upstox login): contracts are the ones listed today, with option strikes
+fixed around ATM at the start of the period; Kite has no candles for expired contracts.
 
 Trailing rules, the trailing stop and the watch window are part of the plan — see section 5. The results' notes
 repeat them in words.
@@ -132,33 +136,49 @@ repeat them in words.
 MCX quantities are in the exchange's units: one CRUDEOIL lot is 100 barrels, Gold Mini 100 g (priced per 10 g),
 Copper 2,500 kg, … — the money a lot needs follows from that.
 
-## 2c. Backtest options on expired contracts (Options section)
+## 2c. Where a backtest's data comes from (Kite + Upstox)
 
-**Options** in the sidebar (`/options`): the Backtest on contracts **as they were listed** — expired ones included —
-from **Upstox** instead of Kite, on the strategies you build in V2 → Strategies. Use it for option (and futures)
-strategies over weeks and months: Kite only has today's contracts.
+The Backtest decides **per product** before it runs (the page shows it under **Where the data comes from**; the
+result repeats it per product and in its notes):
 
-- **Every trigger candle re-picks the legs the way the live scanner does**: the expiry of that day (current / next /
-  far among the expiries listed then — on an expiry day the expiring contract is still current) and the strike
-  nearest the index's (or stock's) close on that candle, plus the strike position. Each contract keeps **its own lot
-  size** (NIFTY was 75 a lot before 65, …). A unit met for the first time takes its previous result from that unit,
-  exactly like the scanner, so "becomes true" alerts behave the same.
-- Trades are the Backtest's (the same code, the same plan): entry at the alert candle's close ± slippage, exits on the
-  traded contract's 1-minute candles, charges. **Trailing rules** are checked on the legs the trade was opened with.
-- **Trades are sized in lots** (the plan's *Lots per trade*, 1 by default) × each contract's own lot size — the money
-  follows from the premium (or an estimated margin for futures and sold options). No starting capital.
-- **Products**: NSE and BSE indices and stocks with F&O. **No MCX** — Upstox has no expired MCX contracts.
-- **Period**: complete past days (it ends yesterday at the latest). Upstox keeps about **six months** of expired
-  contracts. Days before Upstox's first known expiry, or around an expiry missing from its list, are **not tested**
-  (the product row says which days and why) — the test never guesses which contract was current.
-- Results look like the Backtest's; a product row's **contracts** list how many contracts each leg used over how
-  many expiries (first … last).
+| Product | Strategy | Data |
+| --- | --- | --- |
+| NSE / BSE | reads an option or future leg, **Upstox logged in** | **Kite + Upstox**: the index / stock from **Kite** (the prices the live scanner decides on — ATM, spot conditions); every option and future from **Upstox**, as they were listed (expired ones included), re-picked at every candle |
+| NSE / BSE | reads contracts, Upstox **not** logged in / not set up | **Kite only**: today's contracts, strikes fixed at the start — the page warns before you run |
+| MCX | any | **Kite only** (Upstox has no MCX contracts) |
+| any | reads only the index / stock | **Kite** |
+
+One backtest can mix them (e.g. NIFTY on Kite + Upstox and CRUDEOIL on Kite): products never share a position, so
+the trades are what one run would make, and the totals are over all of them.
+
+**Kite + Upstox, precisely:**
+
+- **One source per instrument for the whole run** — index / stock → Kite; every contract → Upstox, even one still
+  listed today, so no price series switches source part-way through.
+- **No fallback**: a missing candle stays a gap and is named in the product row (e.g. no Kite candle for the trigger
+  candle → no ATM that candle); it's never filled from the other source or a neighbouring strike.
+- **ATM from the exact trigger candle** of Kite's index / stock — never an earlier one.
+- **Exact contracts**: Upstox's own listing — expiry, strike, CE / PE, and the **lot size of that expiry** (NIFTY was
+  75 a lot before 65, …).
+- **Re-picked like the live scanner**: the expiry of that day (current / next / far — on an expiry day the expiring
+  contract is still current), the strike nearest the index's close, plus the strike position; a unit met for the first
+  time takes its previous result from that unit, so "becomes true" alerts behave as live. **Trailing rules** read the
+  legs the trade was opened with.
+- **Period**: complete past days (it ends yesterday at the latest); Upstox keeps about **six months** of expired
+  contracts. Days before Upstox's first known expiry, or around an expiry missing from its list, are **not tested** —
+  the product row says which days and why.
+- **Data check — Kite vs Upstox**: for the first three products, the same candles at the exact same minute over the
+  last three days of the period — the index / stock on the trigger interval, and one contract both still list on
+  1-minute candles. **Agree** = median gap ≤ 0.25 % and ≥ 80 % of closes within one tick (at least 10 candles);
+  **Flagged** → check a few trades against the chart before trusting the result (the notes say so too). Contracts can
+  be compared only while Kite still lists them.
 
 **Setup (once)**: an Upstox account with **Upstox Plus** turned on (free; brokerage on that account becomes ₹30 an
 order), an app at https://account.upstox.com/developer/apps with Redirect URL `http://localhost:3000/redirect/upstox`,
 and in `.env`: `UPSTOX_API_KEY`, `UPSTOX_API_SECRET`, `UPSTOX_REDIRECT_URI=http://localhost:3000/redirect/upstox`
 (exactly as saved on the app). Restart the app (it adds the `upstox_session` table). **Each day**: **Connect Upstox**
-on the Options page — Upstox ends every login at 3:30 AM IST.
+on the Backtest tab (it shows when the strategy reads contracts) — Upstox ends every login at 3:30 AM IST. The old
+**Options** section (`/options`) now opens this tab.
 
 Upstox allows about 2,000 requests per 30 minutes; the app paces itself under that, so a long period on many products
 just takes longer. A re-run reuses what was already fetched while the app keeps running.

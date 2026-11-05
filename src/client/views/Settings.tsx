@@ -114,14 +114,14 @@ export function Settings() {
         <div className="divide-y divide-ink-700/50">
           <Toggle
             label="Browser notifications"
-            hint="Show a desktop notification when a V2 alert fires."
+            hint="Show a desktop notification when a Futures & Options alert fires."
             checked={prefs.browserNotifications}
             onChange={(v) => update({ browserNotifications: v })}
             help={HELP.settings.browserNotifications}
           />
           <Toggle
             label="Alert tune"
-            hint="Play a loud alarm the moment a V2 alert arrives."
+            hint="Play a loud alarm the moment a Futures & Options alert arrives."
             checked={prefs.soundEnabled}
             onChange={(v) => update({ soundEnabled: v })}
             help={HELP.settings.sound}
@@ -159,7 +159,7 @@ export function Settings() {
         <p className="text-xs text-slate-500 mb-3">Delivered by the server, so they reach you even when no browser is open.</p>
         <Help content={HELP.settings.alertChannels}>
           <Link href="/v2?tab=settings" className="btn-ghost text-xs inline-flex">
-            <Send className="w-4 h-4" /> Open V2 → Settings
+            <Send className="w-4 h-4" /> Open Futures & Options → Settings
           </Link>
         </Help>
       </Card>

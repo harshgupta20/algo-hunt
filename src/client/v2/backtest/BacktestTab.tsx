@@ -35,19 +35,29 @@ import { ByHour, HowClosed, Panel, PnlPanel, StatCells, StatHeads, Th, TradeTabl
 import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../../components/table/ColumnFilters';
 import { LoadMore } from '../LoadMore';
 import { QuickPeriods, quickRange } from '../../components/QuickPeriods';
-import { QUICK_PERIODS, lastWeekday, latestTradingDay, type QuickPeriodKey } from '../../components/periods';
+import { lastWeekday, latestTradingDay, type QuickPeriodKey } from '../../components/periods';
 
 /** Quick periods: the platform's lookbacks, plus 5 and 10 days for intraday tests. */
 const QUICK: readonly QuickPeriodKey[] = ['1D', '5D', '1W', '10D', '1M', '3M', '6M', '1Y', '2Y', '3Y'];
 
-export type BacktestSource = 'kite' | 'upstox';
+/** The backtest's job endpoints (one runs at a time; starting another cancels it). */
+const jobs = { key: 'v2-backtest-job', start: v2Api.startBacktest, get: v2Api.backtestJob, latest: v2Api.latestBacktest, cancel: v2Api.cancelBacktest };
+const symbolOfId = (id: string) => id.split(':')[1] ?? id;
+const isMcx = (id: string) => id.startsWith('MCX:');
 
-/** Where a backtest runs: its job endpoints and its own query key (one of each kind can run). */
-const JOBS = {
-  kite: { key: 'v2-backtest-job', start: v2Api.startBacktest, get: v2Api.backtestJob, latest: v2Api.latestBacktest, cancel: v2Api.cancelBacktest },
-  upstox: { key: 'v2-options-job', start: v2Api.startOptionsBacktest, get: v2Api.optionsBacktestJob, latest: v2Api.latestOptionsBacktest, cancel: v2Api.cancelOptionsBacktest },
-} satisfies Record<BacktestSource, unknown>;
-const sourceName = (r: Pick<BacktestResult, 'source'>) => (r.source === 'UPSTOX' ? 'Upstox' : 'Kite');
+/**
+ * Where each selected product's candles will come from — the same rule the server applies (V2Service.backtestRoute):
+ * NSE / BSE with a strategy that reads contracts and an Upstox login → index from Kite, contracts from Upstox; the
+ * rest Kite only.
+ */
+function dataRoute(products: string[], readsContracts: boolean, upstox: { configured: boolean; connected: boolean } | undefined) {
+  const mcx = products.filter(isMcx);
+  const nse = products.filter((id) => !isMcx(id));
+  const upstoxOn = !!upstox?.connected;
+  const split = readsContracts && upstoxOn ? nse : [];
+  const kiteNse = readsContracts && !upstoxOn ? nse : [];
+  return { split, mcx: readsContracts ? mcx : [], kiteNse, spotOnly: readsContracts ? [] : products, upstoxOn };
+}
 /** Kite answers ~3 candle requests a second. */
 const SECONDS_PER_REQUEST = 0.35;
 const duration = (seconds: number) => {
@@ -174,7 +184,7 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
         <span className="font-semibold text-slate-200">{r.strategyName}</span>
         <span>
-          · {r.products.length} product{r.products.length === 1 ? '' : 's'} · {r.from} → {r.to} · {TIMEFRAME[r.triggerTimeframe].label} candles · {r.requests} {sourceName(r)} request(s)
+          · {r.products.length} product{r.products.length === 1 ? '' : 's'} · {r.from} → {r.to} · {TIMEFRAME[r.triggerTimeframe].label} candles · {r.requests} request(s){r.source === 'SPLIT' ? ' · index from Kite, contracts from Upstox' : r.source === 'MIXED' ? ' · Kite + Upstox / Kite only per product' : ' · Kite'}
         </span>
         <Tooltip content={H.paper.csv} className="ml-auto">
           <button type="button" className="btn-ghost py-1 text-xs" disabled={!r.trades.length} onClick={() => download(`backtest-${r.strategyName.replace(/\W+/g, '-')}-${r.from}-${r.to}.csv`, toCsv(r.trades, names))}>
@@ -184,6 +194,7 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
       </div>
 
       <ResultNotice r={r} />
+      {r.checks && r.checks.length > 0 && <DataChecks checks={r.checks} symbol={symbol} />}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <StatCard label="Net P&L" value={signedInr(o.netPnl)} tone={tone(o.netPnl)} hint={`${inr(o.charges, 0)} charges · ${o.trades} trade(s)`} help={{ ...H.paper.net, note: `Gross ${signedInr(o.grossPnl)} − charges ${inr(o.charges)}.` }} />
@@ -235,7 +246,7 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
                     <tr>
                       <td className={clsx(td, 'text-slate-500 tabular-nums')}>{i + 1}</td>
                       <td className={td}>
-                        <Tooltip content={{ ...(r.source === 'UPSTOX' ? H.options.contracts : H.backtest.contracts), note: p.contracts.join(' · ') || 'No contracts resolved' }}>
+                        <Tooltip content={{ ...H.backtest.contracts, note: p.contracts.join(' · ') || 'No contracts resolved' }}>
                           <button type="button" aria-expanded={isOpen} onClick={() => setOpenRow(isOpen ? null : p.productId)} className="flex items-center gap-1.5 text-left">
                             {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
                             <span className="leading-tight">
@@ -245,6 +256,7 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
                             {p.errors.length > 0 && <span className="rounded bg-warn/15 px-1 text-[9px] font-medium uppercase tracking-wide text-warn">data</span>}
                           </button>
                         </Tooltip>
+                        <DataBadge data={p.data} />
                       </td>
                       <td className={td}>
                         <Sparkline points={p.spark} />
@@ -343,8 +355,7 @@ function Results({ r, names: known }: { r: BacktestResult; names: Map<string, st
 }
 
 /** A backtest running on the server: products done, time left, Kite / Upstox requests, cancel. */
-function JobProgress({ job, source, marketOpen, onCancel, cancelling }: { job: BacktestJob; source: BacktestSource; marketOpen: boolean; onCancel: () => void; cancelling: boolean }) {
-  const upstox = source === 'upstox';
+function JobProgress({ job, marketOpen, onCancel, cancelling }: { job: BacktestJob; marketOpen: boolean; onCancel: () => void; cancelling: boolean }) {
   const pct = job.total ? (job.done / job.total) * 100 : 0;
   return (
     <div role="status" aria-live="polite" className="rounded-lg border border-accent/30 bg-accent/5 p-3">
@@ -357,9 +368,9 @@ function JobProgress({ job, source, marketOpen, onCancel, cancelling }: { job: B
         </Tooltip>
         {job.current && <span className="text-slate-400">{job.current}</span>}
         {job.phase === 'CANDLES' && <span className="text-slate-400">· {job.etaSeconds === null ? 'estimating time left…' : `~${duration(job.etaSeconds)} left`}</span>}
-        <Tooltip content={upstox ? H.options.calls : H.backtest.calls}>
+        <Tooltip content={H.backtest.calls}>
           <span className="text-slate-500">
-            · {job.fetched.toLocaleString('en-IN')} {upstox ? 'Upstox' : 'Kite'} request{job.fetched === 1 ? '' : 's'}
+            · {job.fetched.toLocaleString('en-IN')} request{job.fetched === 1 ? '' : 's'}
             {job.cached > 0 && ` · ${job.cached.toLocaleString('en-IN')} from memory`}
           </span>
         </Tooltip>
@@ -374,7 +385,7 @@ function JobProgress({ job, source, marketOpen, onCancel, cancelling }: { job: B
       </div>
       <p className="mt-2 text-[11px] text-slate-500">
         {job.strategyName} — runs in the background: switch tabs freely, the result waits here.
-        {marketOpen && !upstox && (
+        {marketOpen && (
           <Tooltip content={H.backtest.marketOpen}>
             <span className="ml-1 text-warn">A market is open — live scans share Kite’s queue with this backtest.</span>
           </Tooltip>
@@ -384,7 +395,7 @@ function JobProgress({ job, source, marketOpen, onCancel, cancelling }: { job: B
   );
 }
 
-/** The Options backtest's Upstox login: who is connected and until when, or the way to log in (and what went wrong). */
+/** The Upstox login every NSE / BSE contract needs: who is connected and until when, or the way to log in (and what went wrong). */
 function UpstoxConnection() {
   const params = useSearchParams();
   const qc = useQueryClient();
@@ -398,17 +409,17 @@ function UpstoxConnection() {
     return (
       <div className="rounded-lg border border-warn/30 bg-warn/5 p-3 text-xs text-slate-300">
         <p className="flex items-center gap-1 font-semibold text-warn">
-          {H.options.notConfigured.title} <InfoTip content={H.options.notConfigured} />
+          {H.upstox.notConfigured.title} <InfoTip content={H.upstox.notConfigured} />
         </p>
-        <p className="mt-0.5">{H.options.notConfigured.body}</p>
-        <p className="mt-0.5 text-slate-500">{H.options.notConfigured.note}</p>
+        <p className="mt-0.5">{H.upstox.notConfigured.body}</p>
+        <p className="mt-0.5 text-slate-500">{H.upstox.notConfigured.note}</p>
       </div>
     );
   }
   const connected = s.connected;
   return (
     <div className={clsx('flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border p-2.5 text-xs', connected ? 'border-ink-700/60 bg-ink-950/30' : 'border-warn/30 bg-warn/5')}>
-      <Tooltip content={H.options.connection}>
+      <Tooltip content={H.upstox.connection}>
         <span className="font-semibold text-slate-200">Upstox</span>
       </Tooltip>
       {connected ? (
@@ -422,13 +433,13 @@ function UpstoxConnection() {
       )}
       {returned === 'error' && message && <span className="basis-full text-warn">Login failed: {message}</span>}
       {connected ? (
-        <Tooltip content={H.options.disconnect} className="ml-auto">
+        <Tooltip content={H.upstox.disconnect} className="ml-auto">
           <button type="button" className="btn-ghost py-1 text-xs" disabled={logout.isPending} onClick={() => logout.mutate()}>
             <LogOut className="w-3.5 h-3.5" /> Log out
           </button>
         </Tooltip>
       ) : (
-        <Tooltip content={H.options.connect} className="ml-auto">
+        <Tooltip content={H.upstox.connect} className="ml-auto">
           <a className="btn-primary py-1 text-xs" href={v2Api.upstoxLoginUrl}>
             <LogIn className="w-3.5 h-3.5" /> Connect Upstox
           </a>
@@ -438,19 +449,114 @@ function UpstoxConnection() {
   );
 }
 
-export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStrategyId?: string; source?: BacktestSource }) {
-  const upstox = source === 'upstox';
-  const jobs = JOBS[source];
+/** Kite + Upstox / Kite only — where a product's candles came from. */
+function DataBadge({ data }: { data?: BacktestResult['products'][number]['data'] }) {
+  const split = data === 'SPLIT';
+  return (
+    <Tooltip content={split ? H.backtest.dataSplit : H.backtest.dataKite}>
+      <span className={clsx('mt-0.5 inline-block cursor-help rounded px-1 text-[9px] font-medium uppercase tracking-wide', split ? 'bg-accent/10 text-accent-soft' : 'bg-ink-800 text-slate-500')}>{split ? 'Kite + Upstox' : 'Kite only'}</span>
+    </Tooltip>
+  );
+}
+
+type CheckRow = NonNullable<BacktestResult['checks']>[number];
+const checkVerdict = (c: CheckRow) => (c.ok === true ? 'Agree' : c.ok === false ? 'Flagged' : 'Not compared');
+
+/** Kite vs Upstox on the same candles — so a run that mixes them shows how far apart they are. */
+function DataChecks({ checks, symbol }: { checks: CheckRow[]; symbol: (id: string) => string }) {
+  const columns = useMemo<Column<CheckRow>[]>(
+    () => [
+      {
+        key: 'what',
+        label: 'Compared',
+        help: { title: 'Compared', body: 'The product and what was compared: its index / stock on the trigger interval, or one contract both list on 1-minute candles.' },
+        fields: [
+          { key: 'product', label: 'Product', type: 'enum', value: (c) => symbol(c.productId) },
+          { key: 'what', label: 'What', type: 'text', value: (c) => c.what },
+        ],
+      },
+      { key: 'days', label: 'Days', help: { title: 'Days', body: 'The IST dates compared (the last of the period).' }, type: 'date', value: (c) => c.from },
+      { key: 'matched', label: 'Candles', help: { title: 'Candles', body: 'Candles present at the exact same minute in both.' }, type: 'number', value: (c) => c.matched },
+      { key: 'median', label: 'Median gap', help: { title: 'Median gap', body: '|Kite − Upstox| ÷ Kite — half the candles differ by less.' }, type: 'number', unit: '%', value: (c) => c.medianDiffPct },
+      { key: 'max', label: 'Largest gap', help: { title: 'Largest gap', body: 'The biggest difference on one candle.' }, type: 'number', unit: '%', value: (c) => c.maxDiffPct },
+      { key: 'tick', label: 'Within a tick', help: { title: 'Within a tick', body: 'Share of closes no more than one tick apart.' }, type: 'number', unit: '%', value: (c) => c.withinTickPct },
+      { key: 'verdict', label: 'Verdict', help: H.backtest.checks, type: 'enum', order: ['Flagged', 'Agree', 'Not compared'], value: checkVerdict },
+    ],
+    [symbol],
+  );
+  const t = useTable(checks, columns);
+  const flagged = checks.filter((c) => c.ok === false).length;
+  const n = (v: number | null) => (v === null ? '—' : `${v.toFixed(v < 0.01 && v > 0 ? 4 : 2)}%`);
+  return (
+    <Panel title={`Data check — Kite vs Upstox${flagged ? ` (${flagged} flagged)` : ''}`} help={H.backtest.checks} flush>
+      <FilterSummary table={t} noun="checks" />
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-ink-850 text-left text-[10px] uppercase tracking-wide text-slate-500">
+            <tr>
+              {columns.map((c) => (
+                <ColumnHead key={c.key} table={t} k={c.key} className={th} />
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-ink-700/50">
+            <NoMatchRow table={t} colSpan={columns.length} />
+            {t.rows.map((c, i) => (
+              <tr key={`${c.productId}-${c.what}-${i}`}>
+                <td className={td}>
+                  <span className="font-medium text-slate-200">{symbol(c.productId)}</span> <span className="text-slate-400">{c.what}</span>
+                  {c.note && <span className="block whitespace-normal text-[11px] text-slate-500">{c.note}</span>}
+                </td>
+                <td className={clsx(td, 'text-slate-400')}>{c.from === c.to ? c.from : `${c.from} → ${c.to}`}</td>
+                <td className={clsx(td, 'tabular-nums')}>{c.matched}</td>
+                <td className={clsx(td, 'tabular-nums')}>{n(c.medianDiffPct)}</td>
+                <td className={clsx(td, 'tabular-nums')}>{n(c.maxDiffPct)}</td>
+                <td className={clsx(td, 'tabular-nums')}>{c.withinTickPct === null ? '—' : `${c.withinTickPct.toFixed(0)}%`}</td>
+                <td className={td}>
+                  <Tooltip content={H.backtest.checks}>
+                    <span className={clsx('cursor-help rounded px-1.5 py-0.5 text-[10px] font-medium', c.ok === true ? 'bg-ink-800 text-slate-300' : c.ok === false ? 'bg-warn/15 text-warn' : 'bg-ink-800 text-slate-500')}>{checkVerdict(c)}</span>
+                  </Tooltip>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
+/** Before running: where each selected product's candles will come from. */
+function RouteLine({ route }: { route: ReturnType<typeof dataRoute> }) {
+  const list = (ids: string[]) => ids.map(symbolOfId).join(', ');
+  const rows: Array<{ ids: string[]; text: string; warn?: boolean }> = [
+    { ids: route.split, text: 'index / stock from Kite · every contract from Upstox, as listed (expired ones included), re-picked every candle · ends yesterday at the latest' },
+    { ids: route.kiteNse, text: 'Kite only — Upstox isn’t connected, so today’s contracts with strikes fixed at the start. Connect Upstox above for expired contracts.', warn: true },
+    { ids: route.mcx, text: 'Kite only — Upstox has no MCX, so today’s contracts with strikes fixed at the start' },
+    { ids: route.spotOnly, text: 'Kite — the strategy reads no contracts' },
+  ].filter((r) => r.ids.length);
+  if (!rows.length) return null;
+  return (
+    <div className="flex flex-col gap-0.5 rounded-lg border border-ink-700/60 bg-ink-950/30 px-3 py-2 text-[11px]">
+      <span className="flex items-center gap-1 font-semibold text-slate-300">
+        Where the data comes from <InfoTip content={H.backtest.dataRoute} />
+      </span>
+      {rows.map((r) => (
+        <span key={r.text} className={r.warn ? 'text-warn' : 'text-slate-400'}>
+          <span className="font-medium text-slate-200">{list(r.ids)}</span> — {r.text}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string }) {
   const strategies = useQuery({ queryKey: ['v2-strategies'], queryFn: v2Api.strategies });
   const settings = useQuery({ queryKey: ['v2-paper-settings'], queryFn: v2Api.paperSettings, staleTime: 30_000 });
-  const upstoxStatus = useQuery({ queryKey: ['v2-options-status'], queryFn: v2Api.optionsStatus, enabled: upstox, staleTime: 30_000 });
+  const upstoxStatus = useQuery({ queryKey: ['v2-options-status'], queryFn: v2Api.optionsStatus, staleTime: 30_000 });
   const [strategyId, setStrategyId] = useState(initialStrategyId ?? '');
   const [products, setProducts] = useState<string[]>([]);
-  // Upstox serves complete past days: the period ends yesterday at the latest.
-  const lastDay = upstox ? daysAgo(1) : istToday();
-  // Quick periods end on the latest trading day: today on a weekday (Kite's intraday candles so far), yesterday's for Upstox.
-  const quickEnd = upstox ? lastWeekday(lastDay) : latestTradingDay(null);
-  const [range, setRange] = useState(() => quickRange(upstox ? '1M' : '5D', quickEnd, lastDay));
+  const [range, setRange] = useState(() => quickRange('5D', latestTradingDay(null), istToday()));
   const [plan, setPlan] = useState<PaperPlan | null>(null);
   const [expiry, setExpiry] = useState<ConnectionConfig['expiry']>({ mode: 'CURRENT' });
   const [shift, setShift] = useState(0);
@@ -503,6 +609,15 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
   const def = strategy?.definition;
   const tf = def?.evaluation.triggerTimeframe;
   const hasOptions = def?.legs.some((l) => l.kind === 'CE' || l.kind === 'PE');
+  const readsContracts = !!def?.legs.some((l) => l.kind !== 'SPOT');
+  const route = dataRoute(products, readsContracts, upstoxStatus.data);
+  // Upstox serves complete past days only: a run reading its contracts ends yesterday at the latest.
+  const viaUpstox = route.split.length > 0;
+  const lastDay = viaUpstox ? daysAgo(1) : istToday();
+  const quickEnd = viaUpstox ? lastWeekday(lastDay) : latestTradingDay(null);
+  useEffect(() => {
+    if (range.to > lastDay) setRange((r) => ({ from: r.from > lastDay ? lastDay : r.from, to: lastDay }));
+  }, [lastDay, range.to]);
   // The strategy's plan as saved (what paper trading trades); the form starts from it each time the strategy changes.
   const saved = useMemo(() => {
     if (!def) return null;
@@ -523,7 +638,9 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
   const sizing = def ? planSizing(def, rules) : { lots: true, cash: true };
   // The form differs from the strategy's plan (rules resolved to the current groups; a removed condition = none).
   const changed = !!plan && !!saved && planKey({ ...plan, rules }) !== planKey(saved);
-  const planIssue = plan ? watchWindowIssue(upstox ? { ...plan, watchMcxFrom: '00:00', watchMcxTo: '23:59' } : plan) : null;
+  // Only NSE / BSE products picked: the MCX watch window doesn't apply (hidden, and not checked).
+  const nseOnly = products.length > 0 && !products.some(isMcx);
+  const planIssue = plan ? watchWindowIssue(nseOnly ? { ...plan, watchMcxFrom: '00:00', watchMcxTo: '23:59' } : plan) : null;
   const savePlan = useMutation({
     mutationFn: () => v2Api.savePaperPlan(strategyId, { ...plan!, rules }),
     onSuccess: () => {
@@ -546,13 +663,11 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
     mutationFn: () => jobs.cancel(jobId!),
     onSuccess: (cancelled) => qc.setQueryData([jobs.key, cancelled.id], cancelled),
   });
-  const upstoxReady = !upstox || upstoxStatus.data?.connected === true;
 
   return (
     <div className="flex flex-col gap-4">
-      <Section title={upstox ? 'Backtest options on expired contracts' : 'Backtest a strategy'} help={upstox ? H.options.section : H.backtest.section}>
+      <Section title="Backtest a strategy" help={H.backtest.section}>
         <div className="flex flex-col gap-4">
-          {upstox && <UpstoxConnection />}
           <div className="flex flex-wrap items-center gap-3">
             <Tooltip content={H.backtest.strategy}>
               <select aria-label="Strategy" className="input py-1.5 text-sm min-w-[16rem]" value={strategyId} onChange={(e) => (setStrategyId(e.target.value), !running && setJobId(null), setProducts([]))}>
@@ -572,16 +687,17 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
 
           {def && plan && (
             <>
-              <ProductPicker selected={products} onChange={setProducts} definition={def} market={upstox ? 'NSE' : undefined} />
+              {readsContracts && (products.length === 0 || products.some((id) => !isMcx(id))) && <UpstoxConnection />}
+              <ProductPicker selected={products} onChange={setProducts} definition={def} />
 
               <div className="flex flex-wrap items-end gap-5">
-                <Cell label="Period" help={upstox ? H.options.period : H.backtest.period}>
+                <Cell label="Period" help={H.backtest.period}>
                   <input type="date" aria-label="From" className="input py-1 text-xs" value={range.from} max={range.to} onChange={(e) => setRange({ ...range, from: e.target.value })} />
                   <span className="text-xs text-slate-500">to</span>
                   <input type="date" aria-label="To" className="input py-1 text-xs" value={range.to} min={range.from} max={lastDay} onChange={(e) => setRange({ ...range, to: e.target.value })} />
                 </Cell>
-                <Cell label="Quick" help={upstox ? H.options.quick : H.backtest.quick}>
-                  <QuickPeriods keys={upstox ? QUICK_PERIODS : QUICK} end={quickEnd} to={lastDay} value={range} onPick={setRange} help={upstox ? H.options.quick : H.backtest.quick} />
+                <Cell label="Quick" help={H.backtest.quick}>
+                  <QuickPeriods keys={QUICK} end={quickEnd} to={lastDay} value={range} onPick={setRange} help={H.backtest.quick} />
                 </Cell>
               </div>
               {reversed && <p className="-mt-2 text-xs text-warn">“From” must be on or before “to”.</p>}
@@ -606,7 +722,7 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
                   )}
                 </div>
                 <div className="flex flex-col gap-3">
-                  <PaperTermsFields value={plan} onChange={setPlan} base={saved ?? undefined} hasGroups={paperGroups(def).length > 0} sizing={sizing} nseOnly={upstox} />
+                  <PaperTermsFields value={plan} onChange={setPlan} base={saved ?? undefined} hasGroups={paperGroups(def).length > 0} sizing={sizing} nseOnly={nseOnly} />
                   <PaperRulesEditor def={def} rules={rules} onChange={(r) => setPlan({ ...plan, rules: r })} />
                   {plan.trailing && <ConditionsEditor def={def} rules={rules} targetPct={plan.targetPct} onChange={(r) => setPlan({ ...plan, rules: r })} />}
                   {savePlan.error && <p className="text-xs text-bear">{(savePlan.error as Error).message}</p>}
@@ -645,19 +761,22 @@ export function BacktestTab({ initialStrategyId, source = 'kite' }: { initialStr
                     ]}
                   />
                 </Cell>
-                <Tooltip content={upstox ? (upstoxReady ? H.options.run : { ...H.options.run, note: 'Connect Upstox above first.' }) : H.backtest.run}>
-                  <button type="button" className="btn-primary" disabled={!products.length || run.isPending || running || reversed || !upstoxReady || !!planIssue} onClick={() => run.mutate()}>
+              </div>
+              {products.length > 0 && <RouteLine route={route} />}
+              <div className="flex flex-wrap items-center gap-5">
+                <Tooltip content={H.backtest.run}>
+                  <button type="button" className="btn-primary" disabled={!products.length || run.isPending || running || reversed || !!planIssue} onClick={() => run.mutate()}>
                     {run.isPending || running ? <InlineSpinner /> : <FlaskConical className="w-4 h-4" />} Backtest {products.length || ''} product{products.length === 1 ? '' : 's'}
                   </button>
                 </Tooltip>
-                {products.length > 0 && !running && !upstox && (
-                  <Tooltip content={{ ...H.backtest.run, title: 'Rough waiting time', note: 'An estimate before it starts: one Kite request per leg and per traded contract, per product. Candles still in memory from a run in the last hour are free.' }}>
-                    <span className="self-center text-[11px] text-slate-500">≈ {duration(estimate)} of Kite requests</span>
+                {products.length > 0 && !running && (
+                  <Tooltip content={{ ...H.backtest.run, title: 'Rough waiting time', note: 'An estimate before it starts: one request per leg and per traded contract, per product (Upstox’s contract lists add a few). Candles still in memory from an earlier run are free.' }}>
+                    <span className="self-center text-[11px] text-slate-500">≈ {duration(estimate)} of requests</span>
                   </Tooltip>
                 )}
               </div>
-              {j && running && <JobProgress job={j} source={source} marketOpen={marketOpen} onCancel={() => cancel.mutate()} cancelling={cancel.isPending} />}
-              {j?.status === 'CANCELLED' && <p className="text-xs text-slate-400">Backtest cancelled. The candles fetched so far stay in memory{upstox ? '' : ' for an hour'}, so running it again picks up quickly.</p>}
+              {j && running && <JobProgress job={j} marketOpen={marketOpen} onCancel={() => cancel.mutate()} cancelling={cancel.isPending} />}
+              {j?.status === 'CANCELLED' && <p className="text-xs text-slate-400">Backtest cancelled. The candles fetched so far stay in memory, so running it again picks up quickly.</p>}
               {j?.status === 'FAILED' && <p className="text-xs text-bear">{j.error}</p>}
               {(run.error || job.error || cancel.error) && <p className="text-xs text-bear">{((run.error ?? job.error ?? cancel.error) as Error).message}</p>}
             </>

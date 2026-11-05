@@ -1,9 +1,11 @@
 /**
- * Options backtest: the Backtest on contracts as they were listed — expired ones included (Upstox keeps about
- * six months) — instead of today's contracts with strikes fixed for the whole period. Every trigger candle is
- * decided the way the live scanner decides it:
+ * The re-picking backtest — what the F&O backtest runs for NSE / BSE products whose strategy reads contracts:
+ * contracts as they were listed — expired ones included (Upstox keeps about six months) — instead of today's
+ * contracts with strikes fixed for the whole period. The history (SplitHistory in the app) gives the index / stock
+ * from Kite and every contract from Upstox. Every trigger candle is decided the way the live scanner decides it:
  *
- *   ATM       the index / stock close on the trigger candle (the scanner reads its live price at that close)
+ *   ATM       the index / stock close of the trigger candle itself — that exact candle, never an earlier one
+ *             (the scanner reads its live price at that close)
  *   unit      the expiry the connection would pick that day (current / next / far among the expiries listed
  *             then) and the strike nearest ATM (+ strike position), resolved by the scanner's own resolveUnits —
  *             each contract with its own lot size and tick
@@ -16,7 +18,7 @@
  * Only days whose expiry schedule is fully known are tested (see OptionsHistory.coveredFrom); the rest are
  * named in the notes. Candles: the history serves past days, so the test ends on the last complete day.
  */
-import type { BacktestProduct, BacktestRequest, BacktestResult, ConnectionConfig, LegId, SeriesSpec, StrategyDefinition, TriState, UnitState, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
+import type { BacktestDataCheck, BacktestProduct, BacktestRequest, BacktestResult, ConnectionConfig, LegId, SeriesSpec, StrategyDefinition, TriState, UnitState, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
 import { TIMEFRAME, inWatchWindow, legNameById, normalizePlan, resolveRules, trailingRules, watchWindow } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { decide, initialState } from '../alerts/alertPolicy';
@@ -41,10 +43,20 @@ const NORMAL: SeriesSpec['candle'] = { type: 'NORMAL' };
 /** Span fetches in flight at once (the history's rate gate paces them). */
 const PARALLEL = 4;
 
+/** Kite vs Upstox on the same candles for one product (SplitHistory.check). */
+export type DataCheck = (p: { product: V2Product; days: string[]; interval: NativeInterval; used: V2Instrument[]; traded: V2Instrument[]; stats?: HistoryStats }) => Promise<BacktestDataCheck[]>;
+
+/** Products checked per run (each check costs a few requests). */
+const CHECKED_PRODUCTS = 3;
+/** Trading days compared per check: the last of the period. */
+const CHECKED_DAYS = 3;
+
 export interface OptionsBacktestDeps {
   store: V2Store;
   history: OptionsHistory;
   now: () => number;
+  /** Compare the history's two sources on the same candles (absent: no check). */
+  check?: DataCheck;
 }
 
 /**
@@ -128,6 +140,8 @@ interface ProductRun {
   candles: number;
   decided: number;
   contracts: Map<LegId, Map<string, V2Instrument>>;
+  /** IST dates tested. */
+  days: string[];
   notes: string[];
   errors: string[];
   store: SpanStore | null;
@@ -173,14 +187,14 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
     checkpoint();
     const product = products.get(id);
     run?.progress({ phase: 'CANDLES', done: index, total: ids.length, current: product?.symbol ?? id });
-    const r: ProductRun = { product, productId: id, alerts: [], candles: 0, decided: 0, contracts: new Map(), notes: [], errors: [], store: null };
+    const r: ProductRun = { product, productId: id, alerts: [], candles: 0, decided: 0, contracts: new Map(), days: [], notes: [], errors: [], store: null };
     runs.push(r);
     if (!product) {
       r.errors.push('Not in the product catalogue — sync products');
       continue;
     }
     if (product.market === 'MCX') {
-      r.errors.push(`${deps.history.name} has no expired MCX contracts — the Options backtest covers NSE and BSE products`);
+      r.errors.push(`${deps.history.name} has no MCX contracts — MCX products are backtested on Kite’s contracts`);
       continue;
     }
     try {
@@ -196,6 +210,7 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
       const allOpens = triggerOpens(cal, from, to, tf, until);
       const opens = allOpens.filter((o) => covered(istDate(o)));
       r.candles = opens.length;
+      r.days = [...new Set(opens.map((o) => istDate(o)))];
       const skippedDays = new Set(allOpens.filter((o) => !covered(istDate(o))).map((o) => istDate(o)));
       if (skippedDays.size) {
         const days = [...skippedDays].sort();
@@ -215,8 +230,8 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
           for (const open of opens) {
             const i = alignIndex(res.candles, 'COMPLETED_CANDLE', cal.candleClose(open, tf));
             const c = i >= 0 ? res.candles[i] : undefined;
-            // Only the trigger candle itself (or the session's last before it) — never a stale day.
-            if (c && istDate(c.time * 1000) === istDate(open)) atm.set(open, c.close);
+            // The trigger candle itself (the exact minute it opened) — never an earlier candle's price.
+            if (c && c.time * 1000 === open) atm.set(open, c.close);
           }
         }
       }
@@ -228,7 +243,8 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
         const date = istDate(open);
         const price = options ? atm.get(open) : undefined;
         if (options && price === undefined) {
-          unresolved.set(`No ${list.spot.symbol} candle at the trigger candle — ATM unknown`, (unresolved.get(`No ${list.spot.symbol} candle at the trigger candle — ATM unknown`) ?? 0) + 1);
+          const why = `No ${list.spot.symbol} candle for the trigger candle itself — ATM unknown`;
+          unresolved.set(why, (unresolved.get(why) ?? 0) + 1);
           continue;
         }
         const res = resolveUnits(d, id, all, config, price, date);
@@ -297,6 +313,21 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
       r.errors.push(msg(err));
     }
   }
+  // Kite vs Upstox on the same candles: the first products, the last days of the period.
+  const checks: BacktestDataCheck[] = [];
+  if (deps.check) {
+    for (const r of runs.filter((x) => x.product && x.store && x.days.length).slice(0, CHECKED_PRODUCTS)) {
+      checkpoint();
+      run?.progress({ phase: 'CANDLES', done: ids.length, total: ids.length, current: `checking ${r.product!.symbol}: Kite vs Upstox` });
+      const used = [...r.contracts.values()].flatMap((m) => [...m.values()]);
+      const traded = r.alerts.flatMap((a) => {
+        const leg = ruleFor(d, plan, a.trace).rule?.leg;
+        const inst = leg ? a.unit.legs[leg] : null;
+        return inst ? [inst] : [];
+      });
+      checks.push(...(await deps.check({ product: r.product!, days: r.days.slice(-CHECKED_DAYS), interval: triggerNative, used, traded, stats })));
+    }
+  }
   run?.progress({ phase: 'TRADES', done: ids.length, total: ids.length, current: null });
 
   // Exit rules per alert (its own unit), evaluated when a trade asks.
@@ -355,6 +386,7 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
     });
     return {
       productId: r.productId,
+      data: 'SPLIT' as const,
       symbol: r.product?.symbol ?? r.productId.split(':')[1] ?? r.productId,
       name: r.product?.name ?? r.productId,
       alerts: r.alerts.length,
@@ -382,14 +414,18 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
     trades: [...closed].sort((a, b) => b.entryAt.localeCompare(a.entryAt)),
     skipped,
     requests: stats.fetched,
-    source: 'UPSTOX',
+    source: 'SPLIT',
+    ...(deps.check ? { checks } : {}),
     notes: [
       ...notes,
+      ...(checks.some((c) => c.ok === false) ? [`Kite and ${deps.history.name} disagree on some candles — see the data check before trusting these trades.`] : []),
       ...(options
         ? [
-            `Contracts as they were listed, from ${deps.history.name} (expired ones included): at every trigger candle the ${expiryName} expiry of that day and the strike nearest the index’s close${shift ? ` ${shift > 0 ? '+' : '−'}${Math.abs(shift)}` : ''} — re-picked like the live scanner, each contract with its own lot size.`,
+            `${deps.history.spotName ? `The index / stock from ${deps.history.spotName}; every contract from ${deps.history.name}` : `Contracts from ${deps.history.name}`} — as they were listed (expired ones included): at every trigger candle the ${expiryName} expiry of that day and the strike nearest the index’s close${shift ? ` ${shift > 0 ? '+' : '−'}${Math.abs(shift)}` : ''}, re-picked like the live scanner, each contract with its own lot size.`,
           ]
-        : []),
+        : futures
+          ? [`${deps.history.spotName ? `The index / stock from ${deps.history.spotName}; futures from ${deps.history.name}` : `Futures from ${deps.history.name}`} — as they were listed (expired ones included), the ${expiryName} expiry of each day.`]
+          : []),
       ...planNotes(d, plan, { conditionLegs: ' on the legs the trade was opened with', markets: ['NSE'] }),
     ],
   };

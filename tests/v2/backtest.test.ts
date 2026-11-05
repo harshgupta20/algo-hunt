@@ -205,7 +205,7 @@ describe('backtest', () => {
     const intraday = await svc.backtest({ strategyId: id, products: ['NSE:NIFTY'], from: '2026-10-02', to: '2026-10-07', plan: p });
     expect(intraday.trades).toEqual([]);
     expect(intraday.skipped[0]?.reason).toMatch(/After the 15:20 square-off — switch “Square off daily” off/);
-    expect(intraday.notes[0]).toMatch(/Daily \/ weekly candles close after the day’s square-off time/);
+    expect(intraday.notes).toContainEqual(expect.stringMatching(/Daily \/ weekly candles close after the day’s square-off time/));
     const positional = await svc.backtest({ strategyId: id, products: ['NSE:NIFTY'], from: '2026-10-02', to: '2026-10-07', plan: { ...p, squareOff: false } });
     expect(positional.trades).toHaveLength(1);
     expect(positional.trades[0]).toMatchObject({ entryPrice: 25_150, exitReason: 'TARGET' }); // held overnight, the target met the next morning

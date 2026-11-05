@@ -60,15 +60,15 @@ export function V2Hub() {
   const anyOpen = status.data ? status.data.markets.NSE.open || status.data.markets.MCX.open : undefined;
   useDashboardScan(anyOpen);
   const go = (t: Tab, strategyId?: string) => router.push(t === 'dashboard' ? '/v2' : `/v2?tab=${t}${strategyId ? `&strategy=${strategyId}` : ''}`);
-  // The Options backtest moved to its own section (/options): an old /v2?tab=options link goes there.
+  // The Options backtest is part of Backtest now (index from Kite, contracts from Upstox): an old ?tab=options link goes there.
   useEffect(() => {
-    if (raw === ('options' as string)) router.replace(`/options${strategy ? `?strategy=${strategy}` : ''}`);
+    if (raw === ('options' as string)) router.replace(`/v2?tab=backtest${strategy ? `&strategy=${strategy}` : ''}`);
   }, [raw, strategy, router]);
 
   return (
     <div>
       <PageHeader
-        title="V2 · Strategy + Product = Alert"
+        title="Futures & Options · Strategy + Product = Alert"
         subtitle="Build product-agnostic strategies (1–4 legs), connect them to NSE indices, stocks or MCX commodities, and compare which products they fire on."
         actions={
           <Tooltip content={H.nav}>

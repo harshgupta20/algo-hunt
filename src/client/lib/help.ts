@@ -1,6 +1,6 @@
 /**
  * Tooltips for the app shell (sidebar, top bar, Settings) — what each control
- * and indicator is and does. V2's own tooltips live in src/client/v2/help.ts.
+ * and indicator is and does. Futures & Options' own tooltips live in src/client/v2/help.ts.
  */
 import type { TooltipContent } from '../components/Tooltip';
 
@@ -9,17 +9,12 @@ type Help = TooltipContent;
 export const HELP = {
   nav: {
     v2: {
-      title: 'V2 — Strategy + Product = Alert',
-      body: 'Build a strategy once without choosing a product, then connect it to any NSE index, NSE stock or MCX commodity to get alerts. Compare shows which products the strategy fires on.',
+      title: 'Futures & Options — Strategy + Product = Alert',
+      body: 'Build a strategy once without choosing a product, then connect it to any NSE / BSE index, stock or MCX commodity to get alerts, paper trades and backtests. Backtests read NSE / BSE contracts as they were listed (expired ones included) from Upstox and the index / stock from Kite.',
     },
     equity: {
       title: 'Equity — stock strategies',
       body: 'Strategies for NSE cash stocks, separate from F&O: a dedicated builder (with your trader’s templates), backtests over years with your money (pyramiding, charges, CAGR, drawdown vs NIFTY 50), a screener for today’s signals, and watchlists.',
-    },
-    options: {
-      title: 'Options — expired contracts',
-      body: 'Backtest your V2 strategies on option and futures contracts as they were listed, expired ones included (from Upstox): at every candle the expiry of that day and the strike nearest the index are re-picked, each contract with its own lot size.',
-      note: 'Needs an Upstox login (Upstox Plus). NSE and BSE products, about six months back.',
     },
     market: {
       title: 'Market — eagle view',
@@ -44,7 +39,7 @@ export const HELP = {
     scanner: {
       title: 'Scanner',
       body: 'The live worker isn’t running, so switched-on connections are checked by the per-minute scanner (alerts can be a few minutes late).',
-      note: 'It starts with the app (`npm start`) for instant, verified alerts — see V2 → Dashboard → Live feed.',
+      note: 'It starts with the app (`npm start`) for instant, verified alerts — see Futures & Options → Dashboard → Live feed.',
     },
     connecting: { title: 'Connecting', body: 'Loading market and Kite status…' },
     savesWaiting: {
@@ -56,8 +51,8 @@ export const HELP = {
       body: 'Log in to Zerodha Kite. You’ll return here automatically and live data resumes.',
       note: 'Kite resets access tokens every morning (~6:00 AM IST), so this is needed once per trading day.',
     },
-    notificationsOn: { title: 'Browser notifications on', body: 'A desktop notification pops up whenever a V2 alert fires (while this app is open).' },
-    notificationsOff: { title: 'Enable notifications', body: 'Ask the browser for permission to show a desktop notification for every new V2 alert.' },
+    notificationsOn: { title: 'Browser notifications on', body: 'A desktop notification pops up whenever a Futures & Options alert fires (while this app is open).' },
+    notificationsOff: { title: 'Enable notifications', body: 'Ask the browser for permission to show a desktop notification for every new Futures & Options alert.' },
     toDark: { title: 'Dark theme', body: 'Switch to the dark theme. Your choice is saved and follows you to other devices.' },
     toLight: { title: 'Light theme', body: 'Switch to the light theme. Your choice is saved and follows you to other devices.' },
     signOut: { title: 'Sign out', body: 'End this browser session. Scanning and the live worker keep running.' },
@@ -69,8 +64,8 @@ export const HELP = {
   },
 
   alarm: {
-    view: { title: 'View alerts', body: 'Stop the alarm and open V2 → Alerts.' },
-    stop: { title: 'Stop', body: 'Silence the alarm and close this card. The alerts stay in V2 → Alerts.' },
+    view: { title: 'View alerts', body: 'Stop the alarm and open Futures & Options → Alerts.' },
+    stop: { title: 'Stop', body: 'Silence the alarm and close this card. The alerts stay in Futures & Options → Alerts.' },
     play: { title: 'Play sound', body: 'Your browser blocked the sound because the page hasn’t been clicked yet — press to hear the alarm (sound works from now on).' },
   },
 
@@ -141,9 +136,9 @@ export const HELP = {
     },
     browserNotifications: {
       title: 'Browser notifications',
-      body: 'Show a desktop notification for each new V2 alert while the app is open. It stays on screen until you dismiss it; clicking it opens the app and stops the alarm.',
+      body: 'Show a desktop notification for each new Futures & Options alert while the app is open. It stays on screen until you dismiss it; clicking it opens the app and stops the alarm.',
     },
-    sound: { title: 'Alert tune', body: 'Play a loud alarm tune the moment a V2 alert arrives, with a flashing alert card and tab title.' },
+    sound: { title: 'Alert tune', body: 'Play a loud alarm tune the moment a Futures & Options alert arrives, with a flashing alert card and tab title.' },
     soundRepeat: {
       title: 'Repeat until I stop it',
       body: 'Keep ringing every 6 seconds until you press Stop, open the alerts or acknowledge — at most 90 seconds. Off = ring once.',
@@ -156,6 +151,6 @@ export const HELP = {
     },
     testNotification: { title: 'Test notification', body: 'Send a sample desktop notification to check permissions.' },
     testSound: { title: 'Test alert', body: 'Ring the alarm exactly as a real alert would (tune, alert card, tab title) so you can check the volume. Press Stop to end it.', note: 'Browsers only allow sound after you have clicked on the page once.' },
-    alertChannels: { title: 'Telegram & email', body: 'Where V2 alerts are delivered (chat id, recipients, test messages) — set in V2 → Settings.' },
+    alertChannels: { title: 'Telegram & email', body: 'Where Futures & Options alerts are delivered (chat id, recipients, test messages) — set in Futures & Options → Settings.' },
   },
 } as const satisfies Record<string, Record<string, Help | Record<string, Help>>>;

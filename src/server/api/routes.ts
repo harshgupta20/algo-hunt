@@ -97,12 +97,9 @@ export function createRouter(ctx: AppContext): Router {
   r.get('/v2/backtest/jobs/latest', v2.latestBacktestJob); // before /v2/backtest/jobs/:id
   r.get('/v2/backtest/jobs/:id', v2.backtestJob);
   r.delete('/v2/backtest/jobs/:id', v2.cancelBacktest);
-  r.get('/v2/options-backtest/status', v2.optionsStatus);
-  r.post('/v2/options-backtest/logout', v2.optionsLogout);
-  r.post('/v2/options-backtest/jobs', v2.startOptionsBacktest);
-  r.get('/v2/options-backtest/jobs/latest', v2.latestOptionsBacktestJob); // before /v2/options-backtest/jobs/:id
-  r.get('/v2/options-backtest/jobs/:id', v2.optionsBacktestJob);
-  r.delete('/v2/options-backtest/jobs/:id', v2.cancelOptionsBacktest);
+  // Upstox: the login every NSE / BSE contract a backtest reads needs
+  r.get('/v2/upstox/status', v2.optionsStatus);
+  r.post('/v2/upstox/logout', v2.optionsLogout);
   r.get('/v2/alerts', v2.alerts);
   r.get('/v2/alerts/feed', v2.alertFeed); // before /v2/alerts/:id
   r.get('/v2/alerts/counts', v2.alertCounts);

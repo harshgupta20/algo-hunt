@@ -1,5 +1,7 @@
 # V2 — Strategy + Product = Alert
 
+> The section is called **Futures & Options** in the app since 2026-11-05 (code, folders and the `/v2` URL keep the V2 name).
+
 Status: **the app** — `/v2` (sidebar "V2"; `/` redirects there). The earlier V1 pages (Dashboard, Alerts, Strategies,
 Configuration, MCX) and MCX V2 were removed on 2026-09-27. Trader guide: [v2-user-guide.md](v2-user-guide.md).
 
@@ -171,7 +173,8 @@ src/shared/v2/        types · catalog (products, legs, timeframes, indicators, 
 src/server/v2/
 ├── calendar/         MarketCalendar (NSE + MCX sessions, per-market holidays)
 ├── data/             DataProvider (interface) · KiteDataProvider (NSE, BSE, NFO, BFO, MCX dumps; shared rate gate)
-│                     · OptionsHistory (interface: the Options backtest's contracts + candles)
+│                     · OptionsHistory (interface: the re-picking backtest's contracts + candles)
+│                     · SplitHistory (index / stock from Kite, every contract from Upstox; check() Kite vs Upstox)
 │                     · ProductService (sync + product catalogue + per-product contracts) · CandleService
 ├── universe/         resolve (legs → contracts, ATM, strike positions)
 ├── engine/           candles · indicators · series · evaluator
@@ -196,8 +199,8 @@ src/server/db/                 pool (Postgres) · appStore (Kite and Upstox sess
 src/server/services/upstox/    upstoxClient (REST, rate gate 20/s · 450/min · 1,900/30 min, typed errors) · upstoxAuth
                                (login with a checked state, token encrypted, ends 03:30 IST)
 src/client/v2/        V2Hub (tabs) · strategies/ (editor, legs, conditions) · connections/ · compare/ · alerts, products,
-                      paper/ (Paper tab, charts, paper settings fields + connection editor) · backtest/ (Backtest tab, also the Options
-                      page's) · options/ (OptionsHub — the /options section)
+                      paper/ (Paper tab, charts, paper settings fields + connection editor) · backtest/ (Backtest tab: per product
+                      Kite + Upstox or Kite only; /options redirects here)
                       · FilterBar · scanner, settings, dashboard · ProductPicker · ExplainView · help.ts (tooltips)
 ```
 

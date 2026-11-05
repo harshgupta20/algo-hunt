@@ -79,7 +79,7 @@ if (args.has('--check')) {
     await closeDatabase();
     process.exit(1);
   }
-  console.log(`V2 live worker ${worker.id.slice(0, 8)} started on the ${databaseLabel()} — Ctrl+C to stop.`);
+  console.log(`Futures & Options live worker ${worker.id.slice(0, 8)} started on the ${databaseLabel()} — Ctrl+C to stop.`);
 
   // One status line a minute (and on every state change).
   let last = '';

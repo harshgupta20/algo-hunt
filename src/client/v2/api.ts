@@ -207,14 +207,10 @@ export const v2Api = {
   backtestJob: (id: string) => request<BacktestJob>(`/backtest/jobs/${id}`).then(normalizeJob),
   cancelBacktest: (id: string) => request<BacktestJob>(`/backtest/jobs/${id}`, { method: 'DELETE' }).then(normalizeJob),
   // Options backtest (Upstox: expired contracts)
-  optionsStatus: () => request<OptionsSourceStatus>('/options-backtest/status'),
-  optionsLogout: () => post<{ ok: true }>('/options-backtest/logout'),
+  optionsStatus: () => request<OptionsSourceStatus>('/upstox/status'),
+  optionsLogout: () => post<{ ok: true }>('/upstox/logout'),
   /** Full-page redirect into Upstox's login; it returns to /redirect/upstox, then to this tab. */
   upstoxLoginUrl: '/api/upstox/login',
-  startOptionsBacktest: (body: BacktestRequest) => post<BacktestJob>('/options-backtest/jobs', body).then(normalizeJob),
-  latestOptionsBacktest: () => request<BacktestJob | null>('/options-backtest/jobs/latest').then((j) => (j ? normalizeJob(j) : null)),
-  optionsBacktestJob: (id: string) => request<BacktestJob>(`/options-backtest/jobs/${id}`).then(normalizeJob),
-  cancelOptionsBacktest: (id: string) => request<BacktestJob>(`/options-backtest/jobs/${id}`, { method: 'DELETE' }).then(normalizeJob),
 
   alerts: (q: AlertQuery = {}) => request<V2AlertItem[]>(`/alerts?${filterParams(q)}`),
   /** Per strategy, how many alerts match the other filters. */

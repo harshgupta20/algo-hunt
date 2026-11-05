@@ -86,6 +86,7 @@ function tradeColumns(names: Map<string, string>): Column<PaperTrade>[] {
         { key: 'strike', label: 'Strike', type: 'number', value: (t) => t.instrument.strike },
         { key: 'expiry', label: 'Expiry', type: 'date', value: (t) => t.instrument.expiry },
         { key: 'flags', label: 'Flags', type: 'enum', noSort: true, value: flags },
+        { key: 'pricesFrom', label: 'Prices from', type: 'enum', noSort: true, value: pricesFrom },
       ],
     },
     { key: 'side', label: 'Side', help: { title: 'Side', body: 'Bought or sold (the strategy’s groups decide).' }, type: 'enum', value: (t) => t.side, display: sideText },
@@ -260,10 +261,20 @@ function ProductCell({ t, strategy }: { t: PaperTrade; strategy?: string }) {
   );
 }
 
+/** Where a trade's contract prices came from: Upstox ids are `U:…` (a backtest's NSE / BSE contracts), the rest Kite. */
+const pricesFrom = (t: PaperTrade) => (t.instrument.id.startsWith('U:') ? 'Upstox' : 'Kite');
+
 function ContractCell({ t }: { t: PaperTrade }) {
   return (
     <div className="flex flex-col items-start gap-0.5 leading-tight">
-      <InstrumentChip i={t.instrument} />
+      <span className="flex items-center gap-1">
+        <InstrumentChip i={t.instrument} />
+        {pricesFrom(t) === 'Upstox' && (
+          <Tooltip content={H.backtest.upstoxPrices}>
+            <span className="cursor-help rounded bg-ink-800 px-1 text-[9px] font-medium uppercase tracking-wide text-slate-500">Upstox</span>
+          </Tooltip>
+        )}
+      </span>
       {(t.overBudget || t.marginEstimated) && (
         <div className="flex items-center gap-1.5">
           <TradeFlags t={t} />
@@ -274,13 +285,13 @@ function ContractCell({ t }: { t: PaperTrade }) {
 }
 
 export function toCsv(trades: PaperTrade[], names: Map<string, string>): string {
-  const head = ['entry_at', 'exit_at', 'strategy', 'product', 'group', 'contract', 'side', 'lots', 'quantity', 'entry_price', 'exit_price', 'exit_reason', 'money_used', 'gross_pnl', 'charges', 'net_pnl', 'status'];
+  const head = ['entry_at', 'exit_at', 'strategy', 'product', 'group', 'contract', 'prices_from', 'side', 'lots', 'quantity', 'entry_price', 'exit_price', 'exit_reason', 'money_used', 'gross_pnl', 'charges', 'net_pnl', 'status'];
   const cell = (v: unknown) => {
     const s = v === null || v === undefined ? '' : String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const rows = trades.map((t) =>
-    [t.entryAt, t.exitAt, names.get(t.strategyId) ?? t.strategyId, t.productId, t.groupLabel ?? '', t.instrument.symbol, t.side, t.lots, t.quantity, t.entryPrice, t.exitPrice, t.exitReason, t.capitalUsed, t.grossPnl, t.charges, t.status === 'OPEN' ? t.openPnl : t.netPnl, t.status]
+    [t.entryAt, t.exitAt, names.get(t.strategyId) ?? t.strategyId, t.productId, t.groupLabel ?? '', t.instrument.symbol, pricesFrom(t), t.side, t.lots, t.quantity, t.entryPrice, t.exitPrice, t.exitReason, t.capitalUsed, t.grossPnl, t.charges, t.status === 'OPEN' ? t.openPnl : t.netPnl, t.status]
       .map(cell)
       .join(','),
   );

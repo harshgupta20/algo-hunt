@@ -70,8 +70,8 @@ export function ConfigEditor({
         </Cell>
       )}
       <Cell label="Channels" help={H.connection.channels}>
-        <Toggle checked={a.channels.telegram} onChange={(v) => setAlert({ channels: { ...a.channels, telegram: v } })} label="Telegram" help={{ title: 'Telegram', body: 'Send to the Telegram chat set in V2 → Settings.' }} />
-        <Toggle checked={a.channels.email} onChange={(v) => setAlert({ channels: { ...a.channels, email: v } })} label="Email" help={{ title: 'Email', body: 'Send to the email recipients set in V2 → Settings.' }} />
+        <Toggle checked={a.channels.telegram} onChange={(v) => setAlert({ channels: { ...a.channels, telegram: v } })} label="Telegram" help={{ title: 'Telegram', body: 'Send to the Telegram chat set in Futures & Options → Settings.' }} />
+        <Toggle checked={a.channels.email} onChange={(v) => setAlert({ channels: { ...a.channels, email: v } })} label="Email" help={{ title: 'Email', body: 'Send to the email recipients set in Futures & Options → Settings.' }} />
       </Cell>
       <Cell label="Alert when" help={H.connection.trigger}>
         <Segmented

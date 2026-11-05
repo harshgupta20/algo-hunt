@@ -821,18 +821,18 @@ export class LiveWorker {
 
   private async notify(text: string): Promise<void> {
     const settings = this.ctx?.settings ?? (await this.deps.store.settings.get());
-    const m: Message = { subject: 'V2 live alerts', text, html: `<p>${text.replace(/\n/g, '<br/>')}</p>` };
+    const m: Message = { subject: 'Futures & Options live alerts', text, html: `<p>${text.replace(/\n/g, '<br/>')}</p>` };
     await deliver(this.deps.channels, settings, { telegram: true, email: false }, m, this.now).catch(() => undefined);
   }
 
   private async watchStream(now: number): Promise<void> {
     if (this.downSince !== null && !this.downNotified && now - this.downSince >= DOWN_WARN_MS && this.marketOpenForAny(now)) {
       this.downNotified = true;
-      await this.notify(`⚠️ V2 live feed disconnected since ${istClock(this.downSince)} IST — reconnecting.\nThe backup scanner covers your connections meanwhile (alerts may be a few minutes late).`);
+      await this.notify(`⚠️ Futures & Options live feed disconnected since ${istClock(this.downSince)} IST — reconnecting.\nThe backup scanner covers your connections meanwhile (alerts may be a few minutes late).`);
     }
     if (this.downSince === null && this.downNotified) {
       this.downNotified = false;
-      await this.notify('✅ V2 live feed reconnected — live alerts are back.');
+      await this.notify('✅ Futures & Options live feed reconnected — live alerts are back.');
     }
   }
 
@@ -850,7 +850,7 @@ export class LiveWorker {
     const first = Math.min(...opens);
     if (now >= first - 15 * MINUTE && now < first + 60 * MINUTE) {
       this.loginNotifiedFor = date;
-      await this.notify('🔑 Log in to Kite (Algo Hunt → Settings → Broker Connection) — V2 live alerts start as soon as you do.');
+      await this.notify('🔑 Log in to Kite (Algo Hunt → Settings → Broker Connection) — Futures & Options live alerts start as soon as you do.');
     }
   }
 

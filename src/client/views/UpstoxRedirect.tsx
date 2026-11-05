@@ -10,7 +10,7 @@ const handledCodes = new Set<string>();
 
 /**
  * Upstox login redirect landing (/redirect/upstox): sends the code + state to the server, which exchanges them
- * for an access token, then returns to the Options section.
+ * for an access token, then returns to Futures & Options → Backtest.
  */
 export function UpstoxRedirect() {
   const params = useSearchParams();
@@ -18,7 +18,7 @@ export function UpstoxRedirect() {
   const [message, setMessage] = useState('Connecting to Upstox…');
 
   useEffect(() => {
-    const back = (q: string) => router.replace(`/options?${q}`);
+    const back = (q: string) => router.replace(`/v2?tab=backtest&${q}`);
     const code = params.get('code');
     const state = params.get('state');
     const error = params.get('error') ?? params.get('error_description');

@@ -358,7 +358,7 @@ export class MarketService {
   }
 
   private async optionChains(): Promise<OptionSnapshot[]> {
-    if (!this.deps.v2) throw new Error('V2 isn’t available');
+    if (!this.deps.v2) throw new Error('Futures & Options isn’t available');
     const today = istToday();
     const spots = await this.deps.kite((kc) => kc.getQuote(CHAINS.map((c) => c.spot)));
     const plans: Array<{ c: (typeof CHAINS)[number]; spot: number; expiry: string; rows: Map<number, { ce?: Contract; pe?: Contract }> }> = [];
@@ -375,7 +375,7 @@ export class MarketService {
       for (const i of options) if (i.expiry === expiry && chosen.has(i.strike!)) rows.set(i.strike!, { ...rows.get(i.strike!), [i.kind === 'CE' ? 'ce' : 'pe']: i });
       plans.push({ c, spot, expiry, rows });
     }
-    if (!plans.length) throw new Error('No option contracts — sync products in V2 → Products');
+    if (!plans.length) throw new Error('No option contracts — sync products in Futures & Options → Products');
     const keys = plans.flatMap((p) => [...p.rows.values()].flatMap((r) => [r.ce, r.pe].filter((i): i is Contract => !!i).map((i) => `${i.exchange}:${i.symbol}`)));
     const quotes: Record<string, KiteQuote> = {};
     for (let i = 0; i < keys.length; i += 500) Object.assign(quotes, await this.deps.kite((kc) => kc.getQuote(keys.slice(i, i + 500))));

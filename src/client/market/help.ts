@@ -88,7 +88,7 @@ export const M = {
   },
   sectorFilter: { title: 'Sector filter', body: 'Showing one sector only. Click × to show all sectors again.' } satisfies Help,
   colourKey: { title: 'Colour key', body: 'Grey = flat (under ±0.25%). Then deeper green / red at ±1%, ±2%, ±3% and ±5%.' } satisfies Help,
-  alertBadge: { title: 'Your alerts today', body: 'Your V2 strategies alerted on this stock today.' } satisfies Help,
+  alertBadge: { title: 'Your alerts today', body: 'Your Futures & Options strategies alerted on this stock today.' } satisfies Help,
 
   movers: {
     title: 'Movers',
@@ -194,7 +194,7 @@ export const M = {
     title: 'Company panel',
     body: 'One stock in depth: today’s move and range, 52-week range, today’s line, news (Google News), filings and upcoming events.',
   } satisfies Help,
-  openV2: { title: 'Use in a strategy', body: 'Open V2 Products to connect your strategies to this stock (it must be synced from Kite).' } satisfies Help,
+  openV2: { title: 'Use in a strategy', body: 'Open Futures & Options → Products to connect your strategies to this stock (it must be synced from Kite).' } satisfies Help,
   external: {
     nse: { title: 'Open on NSE', body: 'The stock’s page on nseindia.com (opens in your browser).' } satisfies Help,
     chart: { title: 'Open chart', body: 'A full TradingView chart of the stock (opens in your browser).' } satisfies Help,

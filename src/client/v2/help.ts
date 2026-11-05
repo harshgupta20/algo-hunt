@@ -5,7 +5,7 @@ import type { TooltipContent } from '../components/Tooltip';
 
 export const H = {
   nav: {
-    title: 'V2 — Strategy + Product = Alert',
+    title: 'Futures & Options — Strategy + Product = Alert',
     body: 'Build a strategy once without choosing a product, then connect it to any NSE index, NSE stock or MCX commodity to get alerts. Compare shows which products the strategy fires on.',
   },
   tabs: {
@@ -287,29 +287,42 @@ export const H = {
   backtest: {
     section: {
       title: 'Backtest a strategy',
-      body: 'Pick a strategy, products and a period. Every alert the strategy would have sent is traded exactly like a paper trade — the strategy’s plan — and followed minute by minute on the contract’s Kite candles to its exit.',
+      body: 'Pick a strategy, products and a period. Every alert the strategy would have sent is traded exactly like a paper trade — the strategy’s plan — and followed minute by minute on the contract’s candles to its exit. NSE / BSE contracts are as they were listed (expired ones included, from Upstox), re-picked at every candle like the live scanner; the index / stock always from Kite.',
       note: 'Starts from the strategy’s paper plan — change anything to try it, then “Save to strategy” if paper trading should use it too. No starting capital: like paper trading, every alert trades; the return is on the money the trades needed.',
     },
     strategy: { title: 'Strategy', body: 'The saved strategy to test (its current version).' },
     products: { title: 'Products', body: 'Any number of products to trade it on — select them all if you like. Only products offering every leg the strategy uses are listed.' },
     period: {
       title: 'Period',
-      body: 'Trading days to test (IST, inclusive) — as far back as you like.',
-      note: 'Futures and options use the contracts listed today, and Kite has no candles for expired contracts — so their data starts when today’s contract began trading. Each product notes where its data starts.',
+      body: 'Trading days to test (IST, inclusive). With Upstox, NSE / BSE contracts go back about six months and end yesterday (complete days only); spot-only strategies go back as far as Kite’s history.',
+      note: 'Kite has no candles for expired contracts, so MCX — and NSE / BSE without an Upstox login — use today’s contracts: their data starts when those began trading. Each product notes where its data starts.',
     },
-    quick: { title: 'Quick period', body: 'Fills the period with the last day, week, months or years, ending today (Friday at a weekend).', note: 'Futures and options have data only from when today’s contract began trading — each product notes where its data starts.' },
+    quick: { title: 'Quick period', body: 'Fills the period with the last day, week, months or years — ending yesterday when Upstox contracts are read (complete days only), else today (Friday at a weekend).', note: 'Upstox keeps about six months of expired contracts — days before its first known expiry aren’t tested (the product row says which).' },
+    dataRoute: {
+      title: 'Where the data comes from',
+      body: 'Decided per product before the run. NSE / BSE with an Upstox login: the index / stock from Kite (the prices the live scanner decides on), every option and future from Upstox — as listed, expired ones included, re-picked at every candle. MCX, and NSE / BSE without Upstox: Kite only — today’s contracts, strikes fixed at the start.',
+      note: 'One source per instrument for the whole run, never switched part-way, never filled from the other source: a missing candle stays a gap and is named.',
+    },
+    dataSplit: { title: 'Kite + Upstox', body: 'Index / stock from Kite; every contract from Upstox, as listed (expired ones included), re-picked at every candle like the live scanner — each with its own lot size.' },
+    dataKite: { title: 'Kite only', body: 'Today’s contracts, strikes fixed around ATM at the start of the period — Kite has no candles for expired contracts, so data starts when today’s contract began trading.' },
+    checks: {
+      title: 'Data check — Kite vs Upstox',
+      body: 'For the first products, the same candles from both sources at the exact same minute: the index / stock on the trigger interval, and one contract both still list on 1-minute candles, over the last days of the period.',
+      note: 'Agree = median gap ≤ 0.25 % and ≥ 80 % of closes within one tick (at least 10 candles). Flagged → check a few trades against the chart before trusting the result. Contracts can be compared only while Kite still lists them (not expired).',
+    },
+    upstoxPrices: { title: 'Prices from Upstox', body: 'This contract’s prices came from Upstox (as listed, expired ones included); the alert and the ATM strike were decided on Kite’s index / stock.' },
     advanced: { title: 'Alert settings', body: 'Which expiry and strike the legs use, and when an alert counts — as on a connection.' },
     run: {
       title: 'Run backtest',
-      body: 'Fetch the candles, find every alert and trade it. Runs in the background: requests queue up for Kite (~3 a second), so many products only mean waiting — you can switch tabs and come back.',
-      note: 'Re-running within the hour (e.g. another target or stop) reuses the candles already fetched.',
+      body: 'Fetch the candles, find every alert and trade it. Runs in the background: requests queue up for Kite (~3 a second) and Upstox (~2,000 per 30 minutes), so many products only mean waiting — you can switch tabs and come back.',
+      note: 'Re-running (e.g. another target or stop) reuses the candles already fetched.',
     },
     progress: {
       title: 'Backtest running',
       body: 'Products whose candles are fetched and alerts found, out of all of them. Time left is estimated from the pace so far.',
       note: 'It runs on the app server — switch tabs freely and come back; the result waits here for an hour.',
     },
-    calls: { title: 'Kite requests', body: 'Candle sets fetched from Kite so far, and those answered from memory (fetched by a run in the last hour).' },
+    calls: { title: 'Requests', body: 'Contract lists and candle sets fetched from Kite and Upstox so far, and those answered from memory (fetched by an earlier run).' },
     cancel: { title: 'Cancel backtest', body: 'Stop fetching. Candles fetched so far stay in memory, so running it again picks up quickly.' },
     marketOpen: {
       title: 'A market is open',
@@ -330,45 +343,21 @@ export const H = {
     skipped: { title: 'Skipped', body: 'Alerts that didn’t become trades: after the square-off, a trade already open, a group that doesn’t trade, no price.' },
     skippedList: { title: 'Alerts not traded', body: 'Every alert that didn’t become a trade, and why.' },
     trades: { title: 'Trades', body: 'Every simulated trade: entry, exit, why it closed, charges and net P&L.' },
-    contracts: { title: 'Contracts', body: 'The contract each leg used — fixed at the strikes around ATM at the start of the period (contracts listed today).' },
+    contracts: { title: 'Contracts', body: 'Kite + Upstox: every contract the legs read — re-picked at each candle, so a leg shows how many it used over how many expiries (first … last). Kite only: the contract each leg used, fixed around ATM at the start of the period.' },
     notes: { title: 'How it was tested', body: 'Assumptions and data limits of this backtest.' },
   } satisfies Record<string, TooltipContent>,
 
-  options: {
-    page: {
-      title: 'Options — beta',
-      body: 'The Backtest on contracts as they were listed — expired ones included, from Upstox. At every candle the legs are re-picked like the live scanner does (that day’s expiry, the strike nearest the index), so option strategies can be tested weeks and months back instead of only on today’s contracts. Strategies are the ones you build in V2 → Strategies.',
-      note: 'Needs an Upstox login (Upstox Plus on the account). NSE and BSE products; Upstox keeps about six months of expired contracts. Nothing is saved or sent.',
-    },
-    section: {
-      title: 'Options backtest — expired contracts',
-      body: 'The Backtest on contracts as they were listed. At every trigger candle the legs are re-picked the way the live scanner picks them: the expiry of that day (current / next / far) and the strike nearest the index’s close — each contract with its own lot size. Trades are simulated exactly like the Backtest and paper trading.',
-      note: 'Only days whose expiry list is complete are tested; each product row names the days left out. Nothing is saved or sent.',
-    },
-    products: { title: 'Products', body: 'NSE and BSE indices and stocks with futures & options. MCX isn’t offered — Upstox has no expired MCX contracts.' },
-    period: {
-      title: 'Period',
-      body: 'Past trading days (IST, inclusive). Upstox keeps about six months of expired contracts and serves complete days only, so the test ends yesterday at the latest.',
-      note: 'Days before Upstox’s first known expiry, or around an expiry missing from its list, aren’t tested — the product row says which.',
-    },
-    quick: { title: 'Quick period', body: 'Fills the period with the last day, week, months or years of complete days, ending yesterday (Friday at a weekend).', note: 'Upstox keeps about six months of expired contracts — days before its first known expiry aren’t tested (the product row says which).' },
-    run: {
-      title: 'Run options backtest',
-      body: 'Fetch the contract lists and candles from Upstox, find every alert and trade it. Runs in the background — switch tabs freely and come back.',
-      note: 'Upstox allows about 2,000 requests per 30 minutes: long periods on many products wait for that. A re-run reuses what was already fetched.',
-    },
-    calls: { title: 'Upstox requests', body: 'Contract lists and candle sets fetched from Upstox so far, and those answered from memory (fetched earlier while the app was running).' },
-    contracts: { title: 'Contracts used', body: 'Every contract the legs read — re-picked at each candle, so a leg shows how many contracts it used over how many expiries (first … last).' },
+  upstox: {
     connection: {
       title: 'Upstox',
-      body: 'Expired contracts come from your Upstox account. Log in once a day — Upstox ends every login at 3:30 AM IST.',
-      note: 'Expired contracts need Upstox Plus on the account (free to turn on).',
+      body: 'Every option and future of an NSE / BSE product comes from your Upstox account — as listed, expired ones included. Log in once a day: Upstox ends every login at 3:30 AM IST.',
+      note: 'Expired contracts need Upstox Plus on the account (free to turn on). Without a login those products run on Kite alone (today’s contracts, strikes fixed) — the page says so before you run.',
     },
     connect: { title: 'Connect Upstox', body: 'Open Upstox’s login page. When you’ve logged in you come straight back here.' },
-    disconnect: { title: 'Log out of Upstox', body: 'End the Upstox session here and at Upstox. The next options backtest needs a new login.' },
+    disconnect: { title: 'Log out of Upstox', body: 'End the Upstox session here and at Upstox. NSE / BSE contracts then run on Kite alone until you log in again.' },
     notConfigured: {
       title: 'Upstox isn’t set up',
-      body: 'Add UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI to .env, then restart the app.',
+      body: 'Add UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI to .env, then restart the app. Until then NSE / BSE contracts run on Kite alone (today’s contracts, strikes fixed).',
       note: 'UPSTOX_REDIRECT_URI must be exactly the Redirect URL saved on your Upstox app — http://localhost:3000/redirect/upstox.',
     },
   } satisfies Record<string, TooltipContent>,
@@ -566,7 +555,7 @@ export const H = {
   settings: {
     telegramChats: {
       title: 'Telegram chats',
-      body: 'Every V2 alert is sent to all of these — people, groups or channels. Each person must first open your bot in Telegram and press Start; for a group, add the bot to it.',
+      body: 'Every Futures & Options alert is sent to all of these — people, groups or channels. Each person must first open your bot in Telegram and press Start; for a group, add the bot to it.',
       note: 'Empty = TELEGRAM_CHAT_ID from the environment (comma-separated allowed). The bot token comes from TELEGRAM_BOT_TOKEN.',
     },
     chatName: { title: 'Name', body: 'Who this is (e.g. “Rahul”, “Trading desk”) — shown in delivery results. Optional.' },

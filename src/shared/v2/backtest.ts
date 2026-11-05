@@ -1,8 +1,13 @@
 /**
  * Backtest: "if I had traded this strategy on these products, what would I have made?" The strategy's alerts over
- * past candles (as Compare finds them), each traded exactly like a paper trade — the same plan: size, target /
- * stop-loss / trailing stop, stop and target conditions, watch window — with exits walked on the traded contract's
- * 1-minute candles. No account limit, like paper trading: every alert trades.
+ * past candles, each traded exactly like a paper trade — the same plan: size, target / stop-loss / trailing stop,
+ * stop and target conditions, watch window — with exits walked on the traded contract's 1-minute candles. No
+ * account limit, like paper trading: every alert trades.
+ *
+ * Where the candles come from is decided per product (`BacktestData`): NSE / BSE products whose strategy reads
+ * contracts take the index / stock from Kite and every contract from Upstox (as listed — expired ones included —
+ * re-picked at every candle like the live scanner); MCX, spot-only strategies, and NSE / BSE without an Upstox
+ * login run on Kite alone (today's contracts, strikes fixed at the start).
  */
 import { z } from 'zod';
 import type { PaperPlan, PaperStats, PaperSummary, PaperTrade } from './paper';
@@ -29,8 +34,43 @@ export interface BacktestSkip {
   reason: string;
 }
 
+/**
+ * Where a product's candles came from. KITE: Kite only — today's contracts, strikes fixed at the start of the period
+ * (Kite has no candles for expired contracts). SPLIT: the index / stock from Kite (the prices the live scanner decides
+ * on), every option and future from Upstox — as listed, expired ones included, re-picked at every candle.
+ */
+export type BacktestData = 'KITE' | 'SPLIT';
+
+/**
+ * Kite and Upstox compared on the same candles (exact minute) — a contract both still list, and the index / stock —
+ * so a run that mixes the two shows how far apart they are.
+ */
+export interface BacktestDataCheck {
+  productId: string;
+  /** "NIFTY 50 (index), 15-minute closes" · "NIFTY 25000 CE 2026-11-10, 1-minute closes". */
+  what: string;
+  /** IST dates compared, inclusive. */
+  from: string;
+  to: string;
+  /** Candles present at the same minute in both. */
+  matched: number;
+  /** |Kite − Upstox| ÷ Kite, % — median and largest. */
+  medianDiffPct: number | null;
+  maxDiffPct: number | null;
+  /** Share of matched closes within one tick of each other, %. */
+  withinTickPct: number | null;
+  /** true: agree (BACKTEST_CHECK_RULE) · false: flagged · null: couldn't be compared (see `note`). */
+  ok: boolean | null;
+  note?: string;
+}
+
+/** When a check passes: the median gap at most this %, and at least this share of closes within one tick. */
+export const BACKTEST_CHECK_RULE = { maxMedianDiffPct: 0.25, minWithinTickPct: 80, minMatched: 10 } as const;
+
 export interface BacktestProduct {
   productId: string;
+  /** Where its candles came from (absent = KITE). */
+  data?: BacktestData;
   symbol: string;
   name: string;
   /** Alerts the strategy would have sent. */
@@ -39,7 +79,7 @@ export interface BacktestProduct {
   skipped: number;
   stats: PaperStats;
   spark: number[];
-  /** Contracts the legs used (Backtest: fixed at the start of the period; Options backtest: every one re-picked). */
+  /** Contracts the legs used (KITE: fixed at the start of the period; SPLIT: every one re-picked). */
   contracts: string[];
   notes: string[];
   errors: string[];
@@ -56,10 +96,12 @@ export interface BacktestResult {
   /** Simulated trades, newest first. */
   trades: PaperTrade[];
   skipped: BacktestSkip[];
-  /** Candle sets fetched from Kite (the rest came from memory — an earlier run's). */
+  /** Candle sets fetched from Kite and Upstox (the rest came from memory — an earlier run's). */
   requests: number;
-  /** Where the candles came from: Kite (today's contracts, the Backtest) or Upstox (expired contracts, the Options backtest). Absent = Kite. */
-  source?: 'KITE' | 'UPSTOX';
+  /** KITE: every product on Kite alone · SPLIT: every product index-from-Kite, contracts-from-Upstox · MIXED: some of each. Absent = KITE. */
+  source?: 'KITE' | 'SPLIT' | 'MIXED';
+  /** Kite vs Upstox on the same candles (SPLIT products). */
+  checks?: BacktestDataCheck[];
   notes: string[];
 }
 
@@ -108,7 +150,7 @@ export const backtestRequestSchema = z.object({
   cooldownMinutes: z.number().min(0).max(1440).nullable().optional(),
 }) as unknown as z.ZodType<BacktestRequest>;
 
-/** The Options backtest's history (Upstox): set up, logged in, until when. */
+/** Upstox — every contract a backtest reads on NSE / BSE (expired ones included): set up, logged in, until when. */
 export interface OptionsSourceStatus {
   source: 'UPSTOX';
   /** The server has its keys (UPSTOX_API_KEY, UPSTOX_API_SECRET, UPSTOX_REDIRECT_URI). */

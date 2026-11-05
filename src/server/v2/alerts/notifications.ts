@@ -211,7 +211,7 @@ export const envChannelFactory: ChannelFactory = {
         detail: !cfg.telegramBotToken
           ? 'TELEGRAM_BOT_TOKEN is not set'
           : !chats.length
-            ? 'No chat yet — add one in V2 → Settings (or TELEGRAM_CHAT_ID)'
+            ? 'No chat yet — add one in Futures & Options → Settings (or TELEGRAM_CHAT_ID)'
             : `${chats.length} chat${chats.length === 1 ? '' : 's'}${source === 'env' ? ' from TELEGRAM_CHAT_ID' : ''}: ${chats.map((c) => c.name ?? c.id).join(', ')}`,
       },
       email: {
@@ -219,7 +219,7 @@ export const envChannelFactory: ChannelFactory = {
         detail: !cfg.resendApiKey
           ? 'RESEND_API_KEY is not set'
           : !settings.emailRecipients.length
-            ? 'No recipients (add them in V2 → Settings)'
+            ? 'No recipients (add them in Futures & Options → Settings)'
             : `To ${settings.emailRecipients.join(', ')}`,
       },
     };

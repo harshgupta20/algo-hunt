@@ -61,10 +61,12 @@ import { liveHealth } from './live/health';
 import { PaperTrader, unrealizedPnl } from './paper/PaperTrader';
 import { paperSummary } from './paper/summary';
 import { lastPaperSyncPoint, nextPaperSyncPoint } from './paper/paperSync';
-import { runBacktest } from './paper/backtest';
+import { runBacktest, type BacktestRun } from './paper/backtest';
+import { mergeBacktests } from './paper/mergeBacktests';
 import { BacktestJobs } from './paper/BacktestJobs';
 import { runOptionsBacktest } from './paper/optionsBacktest';
 import type { OptionsHistory } from './data/OptionsHistory';
+import { SplitHistory } from './data/SplitHistory';
 import { V2Scanner, type ScanOptions } from './scanner/V2Scanner';
 import { atmReference, resolveUnits, unitInstruments } from './universe/resolve';
 
@@ -89,7 +91,7 @@ export interface V2ServiceDeps {
   products: ProductService;
   channels?: ChannelFactory;
   clock?: () => number;
-  /** The Options backtest's history (Upstox): expired contracts, its login's status, and a logout. */
+  /** Upstox — every NSE / BSE contract a backtest reads (expired ones included): its history, its login's status, and a logout. */
   options?: { history: OptionsHistory; status: () => Promise<OptionsSourceStatus>; logout: () => Promise<void> };
 }
 
@@ -143,8 +145,6 @@ export class V2Service {
   /** Backtests: candles kept between runs, and the background jobs (memory only). */
   private readonly candleCache = new CandleCache();
   private readonly backtestJobs = new BacktestJobs(() => this.now());
-  /** Options backtests (Upstox, expired contracts): their own jobs, so one of each kind can run. */
-  private readonly optionsJobs = new BacktestJobs(() => this.now());
 
   constructor(private readonly deps: V2ServiceDeps) {
     this.channels = deps.channels ?? envChannelFactory;
@@ -566,11 +566,79 @@ export class V2Service {
     return { store: this.deps.store, provider: this.deps.provider, tools: this.tools, now: () => this.now(), cache: this.candleCache };
   }
 
+  /**
+   * Where each product's candles come from (BacktestData). A strategy that reads contracts (an option or future
+   * leg) on NSE / BSE products: the index / stock from Kite, every contract from Upstox, re-picked every candle —
+   * when Upstox is set up and logged in. MCX (Upstox has none), spot-only strategies, and NSE / BSE without an
+   * Upstox login: Kite only (today's contracts, strikes fixed). The page shows the same before running; the result
+   * says it per product — never a silent switch.
+   */
+  async backtestRoute(s: V2Strategy, productIds: string[]): Promise<{ split: string[]; kite: string[]; notes: string[]; upstox: OptionsHistory | null }> {
+    const ids = [...new Set(productIds)];
+    const readsContracts = s.definition.legs.some((l) => l.kind !== 'SPOT');
+    if (!readsContracts) return { split: [], kite: ids, notes: [], upstox: null };
+    const products = new Map((await this.deps.store.products.list({ ids })).map((p) => [p.id, p]));
+    const symbol = (id: string) => products.get(id)?.symbol ?? id.split(':')[1] ?? id;
+    const mcx = ids.filter((id) => (products.get(id)?.market ?? (id.startsWith('MCX:') ? 'MCX' : 'NSE')) === 'MCX');
+    const nse = ids.filter((id) => !mcx.includes(id));
+    const notes: string[] = [];
+    if (mcx.length) notes.push(`${mcx.map(symbol).join(', ')}: Kite only — Upstox has no MCX contracts, so today’s contracts with their strikes fixed at the start (Kite has no candles for expired ones).`);
+    const up = await this.upstoxReady();
+    if ('why' in up) {
+      if (nse.length) notes.push(`${nse.map(symbol).join(', ')}: Kite only — ${up.why} So today’s contracts with their strikes fixed at the start; connect Upstox for contracts as they were listed (expired ones included), re-picked every candle.`);
+      return { split: [], kite: ids, notes, upstox: null };
+    }
+    return { split: nse, kite: mcx, notes, upstox: up.history };
+  }
+
+  /** Upstox's history when it is set up and logged in, else why not (a sentence). */
+  private async upstoxReady(): Promise<{ history: OptionsHistory } | { why: string }> {
+    const o = this.deps.options;
+    if (!o) return { why: 'Upstox isn’t set up on this server.' };
+    const c = await o.status();
+    if (!c.connected) return { why: `Upstox isn’t logged in${c.lastError ? ` (${c.lastError.replace(/\.$/, '')})` : ''}.` };
+    return { history: o.history };
+  }
+
+  /** The history of a run's NSE / BSE products: the index / stock from Kite (through the candle cache), every contract from Upstox. */
+  private async splitHistory(upstox: OptionsHistory, stats: BacktestRun['stats']): Promise<SplitHistory> {
+    const cals = calendars(await this.deps.store.calendar.list());
+    const kite = this.candleCache.wrap(this.deps.provider, cals, () => this.now(), stats);
+    return new SplitHistory(upstox, { instruments: (productId) => this.deps.store.instruments.forProduct(productId), candles: (q) => kite.getHistoricalCandles(q) });
+  }
+
+  /** Run a backtest on its route: the NSE / BSE part re-picked on Kite + Upstox, the rest on Kite — one result. */
+  private async runRouted(s: V2Strategy, req: BacktestRequest, route: Awaited<ReturnType<V2Service['backtestRoute']>>, run?: BacktestRun): Promise<BacktestResult> {
+    const total = route.split.length + route.kite.length;
+    const stats = run?.stats ?? { fetched: 0, cached: 0 };
+    let offset = 0;
+    // One progress bar over both parts: products done across them; trading only once every product is fetched.
+    const part = (): BacktestRun => ({
+      stats,
+      checkpoint: () => run?.checkpoint(),
+      progress: (p) => {
+        const done = offset + p.done;
+        run?.progress({ ...p, done, total, phase: p.phase === 'TRADES' && done < total ? 'CANDLES' : p.phase });
+      },
+    });
+    const parts: BacktestResult[] = [];
+    if (route.split.length && route.upstox) {
+      const history = await this.splitHistory(route.upstox, stats);
+      parts.push(await runOptionsBacktest({ store: this.deps.store, history, now: () => this.now(), check: (p) => history.check(p) }, s, { ...req, products: route.split }, part()));
+      offset += route.split.length;
+    }
+    if (route.kite.length) parts.push(await runBacktest(this.backtestDeps(), s, { ...req, products: route.kite }, part()));
+    const end = Math.min(this.now(), dateStartMs(req.to) + 86_400_000);
+    const r = mergeBacktests(parts, end);
+    return { ...r, notes: [...route.notes, ...r.notes] };
+  }
+
   /** What the strategy would have made on these products with this money over past candles (nothing saved). */
   async backtest(req: BacktestRequest): Promise<BacktestResult> {
     const s = await this.backtestStrategy(req);
+    const route = await this.backtestRoute(s, req.products);
     try {
-      return await runBacktest(this.backtestDeps(), s, req);
+      return await this.runRouted(s, req, route);
     } catch (err) {
       throw new V2ServiceError(400, msg(err));
     }
@@ -579,8 +647,9 @@ export class V2Service {
   /** Start a backtest in the background (cancelling one still running); follow it with backtestJob. */
   async startBacktest(req: BacktestRequest): Promise<BacktestJob> {
     const s = await this.backtestStrategy(req);
+    const route = await this.backtestRoute(s, req.products);
     const meta = { strategyId: s.id, strategyName: s.name, request: req, total: new Set(req.products).size };
-    return this.backtestJobs.start(meta, (run) => runBacktest(this.backtestDeps(), s, req, run));
+    return this.backtestJobs.start(meta, (run) => this.runRouted(s, req, route, run));
   }
 
   backtestJob(id: string): BacktestJob {
@@ -600,18 +669,9 @@ export class V2Service {
     return job;
   }
 
-  // ---- options backtest (Upstox: expired contracts) ----------------------------------------------
+  // ---- Upstox (every NSE / BSE contract a backtest reads) -----------------------------------------
 
-  /** The Options backtest's history, after checking it is set up and logged in. */
-  private async optionsHistory(): Promise<OptionsHistory> {
-    const o = this.deps.options;
-    if (!o) throw new V2ServiceError(503, 'Upstox isn’t set up: add UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI to the environment and restart the app.');
-    const c = await o.status();
-    if (!c.connected) throw new V2ServiceError(409, `Upstox isn’t logged in, so there are no expired contracts to test on. ${c.lastError ? `${c.lastError.replace(/\.$/, '')}. ` : ''}Use “Connect Upstox”, then run it again.`);
-    return o.history;
-  }
-
-  /** The Options backtest's Upstox login, for the page (not set up = configured false). */
+  /** The Upstox login, for the Backtest page (not set up = configured false). */
   async optionsStatus(): Promise<OptionsSourceStatus> {
     if (!this.deps.options) return { source: 'UPSTOX', configured: false, connected: false, lastError: 'UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI are not all set on the server.' };
     return this.deps.options.status();
@@ -620,33 +680,6 @@ export class V2Service {
   async optionsLogout(): Promise<{ ok: true }> {
     await this.deps.options?.logout();
     return { ok: true };
-  }
-
-  /** Start an Options backtest in the background (cancelling one still running); follow it with optionsBacktestJob. */
-  async startOptionsBacktest(req: BacktestRequest): Promise<BacktestJob> {
-    const s = await this.checkedBacktest(req);
-    const products = await this.deps.store.products.list({ ids: [...new Set(req.products)] });
-    const mcx = products.filter((p) => p.market === 'MCX');
-    if (mcx.length) throw new V2ServiceError(400, `Upstox has no expired MCX contracts — remove ${mcx.map((p) => p.symbol).join(', ')} (the Options backtest covers NSE and BSE products)`);
-    const history = await this.optionsHistory();
-    const meta = { strategyId: s.id, strategyName: s.name, request: req, total: new Set(req.products).size };
-    return this.optionsJobs.start(meta, (run) => runOptionsBacktest({ store: this.deps.store, history, now: () => this.now() }, s, req, run));
-  }
-
-  optionsBacktestJob(id: string): BacktestJob {
-    const job = this.optionsJobs.get(id);
-    if (!job) throw new V2ServiceError(404, 'This Options backtest is no longer in memory (the app restarted, or it finished over an hour ago) — run it again');
-    return job;
-  }
-
-  latestOptionsBacktestJob(): BacktestJob | null {
-    return this.optionsJobs.latest();
-  }
-
-  cancelOptionsBacktest(id: string): BacktestJob {
-    const job = this.optionsJobs.cancel(id);
-    if (!job) throw new V2ServiceError(404, 'This Options backtest is no longer in memory');
-    return job;
   }
 
   // ---- paper trading -----------------------------------------------------------------------

@@ -1,7 +1,8 @@
 /**
- * Market-data boundary of the Options backtest: past option / futures contracts as they were listed (lot
- * sizes of the day, every strike, expired contracts included) and their candles. Upstox implements it in the
- * app (upstox/UpstoxHistory.ts); tests inject fixed data.
+ * Market-data boundary of the re-picking backtest (paper/optionsBacktest.ts): past option / futures contracts as they
+ * were listed (lot sizes of the day, every strike, expired contracts included) and their candles. In the app it is
+ * SplitHistory — the index / stock from Kite, every contract from Upstox (upstox/UpstoxHistory.ts); tests inject
+ * fixed data.
  */
 import type { V2Instrument, V2Product } from '@/shared/v2';
 import type { RawCandle } from '../engine/candles';
@@ -32,6 +33,8 @@ export interface HistoryStats {
 export interface OptionsHistory {
   /** Shown in results ("Upstox"). */
   readonly name: string;
+  /** Where the index / stock comes from when it isn't `name` (the split history: "Kite"). */
+  readonly spotName?: string;
   /** `options` / `futures`: which contracts the strategy reads (neither = just the spot, no contract lists asked). */
   contracts(product: V2Product, range: { from: string; to: string }, opts: { options: boolean; futures: boolean }, stats?: HistoryStats): Promise<ContractList>;
   /** Candles of one contract (or the spot), oldest first, inclusive IST dates — clamped to its expiry and the last complete day. */

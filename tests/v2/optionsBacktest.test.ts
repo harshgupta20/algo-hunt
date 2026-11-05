@@ -1,7 +1,9 @@
 /**
- * Options backtest: contracts as they were listed (expired ones included), re-picked at every trigger candle the
- * way the live scanner picks them — the expiry of that day, the strike nearest the index's close, each contract's
- * own lot size — then traded by the same simulator as the Backtest.
+ * The re-picking backtest (what Futures & Options → Backtest runs for NSE / BSE contracts): contracts as they were
+ * listed (expired ones included), re-picked at every trigger candle the way the live scanner picks them — the expiry
+ * of that day, the strike nearest the index's close, each contract's own lot size — then traded by the same
+ * simulator as the Kite-only backtest. Routed through the service: the index from Kite, every contract from Upstox,
+ * MCX and no-Upstox on Kite alone, Kite vs Upstox checked.
  *
  * Fixture week (NIFTY, weekly expiries on Tuesdays): E0 6 Oct, E1 13 Oct, E2 20 Oct, E3 27 Oct; lots 75 (E0, E1)
  * and 65 (E2, E3). The strategy: spot's 15-minute close crosses above 25,000 → buy the ATM call. Each test day the
@@ -97,8 +99,8 @@ describe('options backtest', () => {
   it('re-picks each alert’s contract like the live scanner: that day’s expiry, the strike nearest the close, its own lot', async () => {
     const { run } = await setup({ date: '2026-10-16', time: '09:00' }, history);
     const r = await run({});
-    expect(r.source).toBe('UPSTOX');
-    expect(r.products[0]).toMatchObject({ productId: P, alerts: 3, trades: 3, skipped: 0, errors: [] });
+    expect(r.source).toBe('SPLIT');
+    expect(r.products[0]).toMatchObject({ productId: P, data: 'SPLIT', alerts: 3, trades: 3, skipped: 0, errors: [] });
     const trades = [...r.trades].sort((a, b) => a.entryAt.localeCompare(b.entryAt));
     // D1 25,015 → ATM 25,000 of E1 · D2 (E1's expiry day: still current) 25,110 → 25,100 of E1 · D3 25,060 → 25,050 of E2.
     expect(trades.map((t) => [t.instrument.expiry, t.instrument.strike, t.instrument.kind, t.lotSize])).toEqual([
@@ -122,7 +124,9 @@ describe('options backtest', () => {
 
   it('gives the same trades as the Backtest when the contract it picks is the one the Backtest fixes', async () => {
     // Today 13 Oct: the Backtest's contracts are today's (E1 still listed); the Options backtest's last day is 12 Oct.
-    const { run, svc, s, kite, kSpot } = await setup({ date: D2, time: '09:00' }, history);
+    const { run, s, kite, kSpot, store, clock } = await setup({ date: D2, time: '09:00' }, history);
+    // Kite alone: a service without Upstox runs every product on Kite's contracts.
+    const svc = new V2Service({ store, provider: kite, products: new ProductService(store, kite), clock: () => clock.now });
     const kCall = kite.instruments.find((i) => i.kind === 'CE' && i.expiry === E1 && i.strike === 25_000)!;
     kite.set(kSpot, '15m', aggregate(spotDay(D1, 24_990, 25_015), '15m', calendars([]).NSE));
     kite.set(kCall, '1m', risingAfterEntry(D1));
@@ -254,39 +258,87 @@ describe('options backtest', () => {
     await expect(run({ from: '2026-10-16', to: '2026-10-16' })).rejects.toThrow(/no complete day between 2026-10-16 and 2026-10-16/);
   });
 
-  it('runs as a job through the service; refuses MCX, a missing setup and a missing login', async () => {
-    const { svc, s, connection, logouts, store, kite, clock } = await setup({ date: '2026-10-16', time: '09:00' }, history);
-    expect(await svc.optionsStatus()).toMatchObject({ source: 'UPSTOX', configured: true, connected: true, userName: 'Trader' });
+  /** The Kite side of a routed run: Kite's index candles (minutes + the 15-minute trigger) for the test days. */
+  const kiteSpotDays = (kite: FixtureV2Provider, kSpot: V2Instrument, days: Array<ReturnType<typeof spotDay>>) => {
+    const minutes = days.flat();
+    kite.set(kSpot, '1m', minutes).set(kSpot, '15m', aggregate(minutes, '15m', calendars([]).NSE));
+  };
+
+  it('routed: the index from Kite, every contract from Upstox — the same trades, labelled per product, checked', async () => {
+    const { svc, s, kite, kSpot, run } = await setup({ date: '2026-10-16', time: '09:00' }, history);
+    kiteSpotDays(kite, kSpot, [spotDay(D1, 24_990, 25_015), spotDay(D2, 24_980, 25_110), spotDay(D3, 24_980, 25_060)]);
+    // A contract both list (E2 25,050 CE, traded on D3): Kite's minutes equal Upstox's.
+    const kCall = kite.instruments.find((i) => i.kind === 'CE' && i.expiry === E2 && i.strike === 25_050)!;
+    kite.set(kCall, '1m', risingAfterEntry(D3));
     const req: BacktestRequest = { strategyId: s.id, products: [P], from: D1, to: D3, plan: plan() };
-    const job = await svc.startOptionsBacktest(req);
-    for (let i = 0; i < 100 && svc.optionsBacktestJob(job.id).status === 'RUNNING'; i++) await new Promise((r) => setTimeout(r, 5));
-    const done = svc.optionsBacktestJob(job.id);
-    expect(done.status).toBe('DONE');
-    expect(done.result?.trades).toHaveLength(3);
-    expect(svc.latestOptionsBacktestJob()?.id).toBe(job.id);
-    expect(svc.latestBacktestJob()).toBeNull(); // the Kite backtest's jobs are separate
-
-    connection.connected = false;
-    connection.lastError = 'Upstox session expired (Upstox ends every login at 3:30 AM IST).';
-    await expect(svc.startOptionsBacktest(req)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/Upstox isn’t logged in.*3:30 AM IST\)\. Use “Connect Upstox”/) });
-
-    await svc.optionsLogout();
-    expect(logouts).toHaveLength(1);
-
-    const bare = new V2Service({ store, provider: kite, products: new ProductService(store, kite), clock: () => clock.now });
-    await expect(bare.startOptionsBacktest(req)).rejects.toMatchObject({ status: 503, message: expect.stringMatching(/UPSTOX_API_KEY/) });
-    expect(await bare.optionsStatus()).toMatchObject({ configured: false, connected: false });
-    await expect(bare.optionsLogout()).resolves.toEqual({ ok: true });
+    const job = await svc.startBacktest(req);
+    for (let i = 0; i < 200 && svc.backtestJob(job.id).status === 'RUNNING'; i++) await new Promise((r) => setTimeout(r, 5));
+    const r = svc.backtestJob(job.id).result!;
+    expect(r.source).toBe('SPLIT');
+    expect(r.products[0]).toMatchObject({ productId: P, data: 'SPLIT', trades: 3 });
+    expect(r.trades.map(money)).toEqual((await run({})).trades.map(money));
+    expect(r.notes.join(' ')).toContain('The index / stock from Kite; every contract from Upstox');
+    // ATM and the spot leg read Kite's candles; Upstox's index is read only to check it against Kite's.
+    expect(r.products[0]!.contracts).toContain('A · SPOT: NIFTY 50');
+    expect(r.checks).toEqual([
+      expect.objectContaining({ productId: P, what: 'NIFTY 50 (index / stock), 15-minute closes', from: D1, to: D3, matched: 75, medianDiffPct: 0, withinTickPct: 100, ok: true }),
+      expect.objectContaining({ productId: P, what: `${kCall.symbol} (contract), 1-minute closes`, matched: 375, ok: true }),
+    ]);
   });
 
-  it('refuses MCX products (Upstox has no expired MCX contracts)', async () => {
+  it('routed: the strike is decided on Kite’s index price, and a gap between the sources is flagged', async () => {
+    const { svc, s, kite, kSpot } = await setup({ date: '2026-10-16', time: '09:00' }, history);
+    // D1: Kite’s index closes the 10:00 candle at 25,060 (Upstox’s at 25,015) → ATM 25,050, not 25,000.
+    kiteSpotDays(kite, kSpot, [spotDay(D1, 24_990, 25_060), spotDay(D2, 24_980, 25_110), spotDay(D3, 24_980, 25_060)]);
+    history.add(call(E1, 25_050), risingAfterEntry(D1));
+    const r = await svc.backtest({ strategyId: s.id, products: [P], from: D1, to: D3, plan: plan() });
+    const first = [...r.trades].sort((a, b) => a.entryAt.localeCompare(b.entryAt))[0]!;
+    expect([first.instrument.expiry, first.instrument.strike, first.instrument.id.startsWith('U:')]).toEqual([E1, 25_050, true]);
+    expect(r.checks![0]).toMatchObject({ what: 'NIFTY 50 (index / stock), 15-minute closes', ok: false });
+    expect(r.notes.join(' ')).toContain('Kite and Upstox disagree on some candles');
+  });
+
+  it('routed: a missing Kite candle stays a gap — never filled from Upstox', async () => {
+    const { svc, s, kite, kSpot } = await setup({ date: '2026-10-16', time: '09:00' }, history);
+    // Kite has only D2 and D3: D1's trigger candle has no Kite price → no ATM that day (Upstox's index isn't used).
+    kiteSpotDays(kite, kSpot, [spotDay(D2, 24_980, 25_110), spotDay(D3, 24_980, 25_060)]);
+    const r = await svc.backtest({ strategyId: s.id, products: [P], from: D1, to: D3, plan: plan() });
+    expect(r.trades.map((t) => t.entryAt.slice(0, 10)).sort()).toEqual([D2, D3]);
+    expect(r.products[0]!.notes.join(' ')).toMatch(/candle\(s\) not evaluated: No NIFTY 50 candle for the trigger candle itself — ATM unknown/);
+  });
+
+  it('routed: MCX runs on Kite in the same backtest; without an Upstox login NSE does too — and both say so', async () => {
     const clock = { now: ist('2026-10-16', '09:00') };
     const store = new MemoryV2Store(() => clock.now);
+    const kSpot = spot(P, 'NIFTY 50');
     const gold = fut('MCX:GOLD', '2026-12-04', 'MCX');
-    const kite = new FixtureV2Provider([spot(P, 'NIFTY 50'), gold]);
-    const svc = new V2Service({ store, provider: kite, products: new ProductService(store, kite), clock: () => clock.now, options: { history, status: async () => ({ source: 'UPSTOX' as const, configured: true, connected: true }), logout: async () => undefined } });
+    const kite = new FixtureV2Provider([kSpot, gold, ...ladder(P, E2, 24_800, 25_300, 50).map((i) => ({ ...i, lotSize: 65 }))]);
+    const connection: OptionsSourceStatus = { source: 'UPSTOX', configured: true, connected: true };
+    const svc = new V2Service({ store, provider: kite, products: new ProductService(store, kite), clock: () => clock.now, options: { history, status: async () => ({ ...connection }), logout: async () => undefined } });
     await svc.syncProducts();
-    const s = await svc.createStrategy(S);
-    await expect(svc.startOptionsBacktest({ strategyId: s.id, products: ['MCX:GOLD'], from: D1, to: D3, plan: plan() })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/no expired MCX contracts — remove GOLD/) });
+    const sGold = await svc.createStrategy({ ...strategy([{ id: 'A', kind: 'SPOT' }, { id: 'B', kind: 'FUT' }], cond(field(legSeries('A')), 'CROSSED_ABOVE', num(25_000))), name: 'Futures' });
+    kiteSpotDays(kite, kSpot, [spotDay(D1, 24_990, 25_015)]);
+
+    const route = await svc.backtestRoute(sGold, [P, 'MCX:GOLD']);
+    expect(route).toMatchObject({ split: [P], kite: ['MCX:GOLD'] });
+    expect(route.notes[0]).toMatch(/^GOLD: Kite only — Upstox has no MCX contracts/);
+    const r = await svc.backtest({ strategyId: sGold.id, products: [P, 'MCX:GOLD'], from: D1, to: D1, plan: plan({ rules: [{ group: null, leg: 'B', side: 'BUY' }] }) });
+    expect(r.source).toBe('MIXED');
+    expect(Object.fromEntries(r.products.map((p) => [p.productId, p.data]))).toEqual({ [P]: 'SPLIT', 'MCX:GOLD': 'KITE' });
+
+    connection.connected = false;
+    connection.lastError = 'Upstox session expired';
+    const off = await svc.backtestRoute(sGold, [P]);
+    expect(off).toMatchObject({ split: [], kite: [P] });
+    expect(off.notes[0]).toMatch(/^NIFTY: Kite only — Upstox isn’t logged in \(Upstox session expired\)\. So today’s contracts/);
+
+    const bare = new V2Service({ store, provider: kite, products: new ProductService(store, kite), clock: () => clock.now });
+    expect((await bare.backtestRoute(sGold, [P])).notes[0]).toMatch(/Upstox isn’t set up on this server/);
+    expect(await bare.optionsStatus()).toMatchObject({ configured: false, connected: false });
+    await expect(bare.optionsLogout()).resolves.toEqual({ ok: true });
+
+    // A strategy reading no contracts never asks Upstox.
+    const spotOnly = await svc.createStrategy({ ...strategy([{ id: 'A', kind: 'SPOT' }], cond(field(legSeries('A')), 'GT', num(1))), name: 'Spot only' });
+    expect(await svc.backtestRoute(spotOnly, [P, 'MCX:GOLD'])).toMatchObject({ split: [], kite: [P, 'MCX:GOLD'], notes: [] });
   });
 });
