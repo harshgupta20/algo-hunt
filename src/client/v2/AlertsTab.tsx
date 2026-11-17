@@ -5,7 +5,7 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClie
 import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import type { LegDef, LegId, SignalOutcome, TriState, V2AlertItem, V2SignalItem, V2Unit } from '@/shared/v2';
-import { SIGNAL_OUTCOMES, TIMEFRAME, pageCursor } from '@/shared/v2';
+import { SIGNAL_OUTCOMES, TIMEFRAME, legName, pageCursor } from '@/shared/v2';
 import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../components/table/ColumnFilters';
 import { Tooltip } from '../components/Tooltip';
 import { Badge, Card, EmptyState, IconButton, Tabs } from '../components/ui';
@@ -75,7 +75,7 @@ export function AlertRow({ alert: a }: { alert: V2AlertItem }) {
               const i = a.unit.legs[l.id];
               return (
                 <span key={l.id} className="text-xs text-slate-500">
-                  {l.id}: {i ? <InstrumentChip i={i} /> : 'not listed'}
+                  {legName(l)}: {i ? <InstrumentChip i={i} /> : 'not listed'}
                 </span>
               );
             })}

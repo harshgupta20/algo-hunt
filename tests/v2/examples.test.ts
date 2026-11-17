@@ -18,12 +18,13 @@ describe('V2 example strategies', () => {
   it('the trader’s RSI + Bollinger sheet reads as two groups joined by OR', () => {
     const ex = exampleStrategies().find((e) => e.key === 'rsi-bb-bull-bear')!;
     const text = strategySummary(ex.definition);
-    expect(text).toMatch(/Legs: A · FUT · B · CE ATM · C · PE ATM/);
-    expect(text).toMatch(/Group 1 · Bullish \(CE\): \(\[A · FUT\] \[5 min\] \[Normal\] RSI\(14\) crossed above 60/);
-    expect(text).toMatch(/\[B · CE ATM\] \[5 min\] \[Normal\] Close > Bollinger Bands\(20,2\) Upper/);
-    expect(text).toMatch(/OR Group 2 · Bearish \(PE\): \(\[A · FUT\] \[5 min\] \[Normal\] RSI\(14\) crossed below 40/);
-    expect(text).toMatch(/\[A · FUT\] \[5 min\] \[Normal\] Close < Bollinger Bands\(20,2\) Lower/);
-    expect(text).toMatch(/\[C · PE ATM\] \[5 min\] \[Normal\] Close > Bollinger Bands\(20,2\) Upper/);
+    expect(text).toMatch(/Watches: FUT · CE ATM · PE ATM/);
+    expect(text).toMatch(/Group 1 · Bullish \(CE\): \(\[FUT\] \[5 min\] \[Normal\] RSI\(14\) crossed above 60/);
+    expect(text).toMatch(/\[CE ATM\] \[5 min\] \[Normal\] Close > Bollinger Bands\(20,2\) Upper/);
+    expect(text).toMatch(/OR Group 2 · Bearish \(PE\): \(\[FUT\] \[5 min\] \[Normal\] RSI\(14\) crossed below 40/);
+    expect(text).toMatch(/\[FUT\] \[5 min\] \[Normal\] Close < Bollinger Bands\(20,2\) Lower/);
+    expect(text).toMatch(/\[PE ATM\] \[5 min\] \[Normal\] Close > Bollinger Bands\(20,2\) Upper/);
+    expect(text).toMatch(/Checked: at every 5 min candle close/);
   });
 });
 

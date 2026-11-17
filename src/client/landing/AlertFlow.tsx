@@ -111,11 +111,11 @@ const TG_LINES = [
   ['NIFTY 50 · NIFTY 25400 · exp 2026-10-27', ''],
   ['15 min candle 2026-10-26 10:00 IST', ''],
   ['✓ Verified on Kite candles', 'text-white'],
-  ['A · FUT: NIFTY26OCTFUT @ 25,431.5', ''],
-  ['B · CE ATM: NIFTY26OCT25400CE @ 186.4', ''],
+  ['FUT: NIFTY26OCTFUT @ 25,431.5', ''],
+  ['CE ATM: NIFTY26OCT25400CE @ 186.4', ''],
   ['', ''],
-  ['✅ A · FUT RSI(14) > B · CE ATM RSI(14)  (63.8 vs 61.2)', ''],
-  ['✅ B · CE ATM RSI(14) crossed above 60  (58.4 → 61.2)', ''],
+  ['✅ FUT RSI(14) > CE ATM RSI(14)  (63.8 vs 61.2)', ''],
+  ['✅ CE ATM RSI(14) crossed above 60  (58.4 → 61.2)', ''],
 ] as const;
 
 function Phone({ show }: { show: boolean }) {
@@ -210,7 +210,7 @@ export function AlertFlow() {
                 title="Conditions checked"
                 detail={
                   <>
-                    {t >= CHECK[0] ? '✅' : '◻'} A · FUT RSI &gt; B · CE RSI &nbsp; {t >= CHECK[1] ? '✅' : '◻'} B · CE RSI ↗ 60
+                    {t >= CHECK[0] ? '✅' : '◻'} FUT RSI &gt; CE RSI &nbsp; {t >= CHECK[1] ? '✅' : '◻'} CE RSI ↗ 60
                   </>
                 }
               />

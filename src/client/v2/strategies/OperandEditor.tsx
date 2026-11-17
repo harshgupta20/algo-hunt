@@ -2,26 +2,41 @@
 
 /**
  * Operand + series pickers. Every value in a condition carries its full data
- * context — leg, timeframe, candle type — so a condition reads unambiguously:
- * [B · CE ATM] [15 min] [Normal] RSI(14). Any leg can be compared with any other.
+ * context — instrument, timeframe, candle type — so a condition reads unambiguously:
+ * [CE ATM] [15 min] [Normal] RSI(14). Any instrument can be compared with any other.
  *
  * Laid out as a panel with a label column, the same for every value:
- *   What       Indicator / Price, volume, OI / OI change / Number
- *   Indicator  SMA, RSI …              (or Field, Lookback, Number)
- *   Settings   Period · Source · Output · × Mult.
+ *   What        Indicator / Price, volume, OI / OI change / Number
+ *   Indicator   SMA, RSI, RSI-based MA …   (or Field, Lookback, Number)
+ *   Settings    Period · Source · Output · × Mult.
+ *   MA of it    None / SMA / EMA / WMA · length   (RSI, ADX)
  *   ─────────
- *   Leg        A · FUT, B · CE ATM …
- *   Candles    timeframe · candle type
+ *   Instrument  SPOT · FUT · CE · PE (+ strike from ATM)
+ *   Candles     timeframe · candle type
  * Each control explains itself on hover (no ⓘ next to every label).
  */
+import { useState } from 'react';
 import clsx from 'clsx';
-import type { CandleSpec, LegDef, LegId, LegKind, Operand, SeriesSpec, SourceField } from '@/shared/v2';
-import { CANDLE_TYPES, INDICATOR, INDICATORS, MAX_LEGS, TIMEFRAMES, legName } from '@/shared/v2';
+import type { CandleSpec, LegDef, MaType, Operand, SeriesSpec, SourceField } from '@/shared/v2';
+import { CANDLE_TYPES, INDICATOR, INDICATORS, MA_PERIOD, MA_TYPES, RSI_MA_DEFAULT, TIMEFRAMES, legName } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { Mini, Panel, Row } from '../../components/condition';
+import { NumberInput } from '../../components/form';
 import { LEG_KIND_TEXT } from '../format';
 import { H } from '../help';
 import { indicatorOperand } from './defaults';
+import { FULL_NOTE, InstrumentPicker, type PickInstrument } from './InstrumentPicker';
+
+type IndicatorOperand = Extract<Operand, { kind: 'INDICATOR' }>;
+
+/** The indicator list's entry for TradingView's RSI-based MA (RSI with a moving average of itself). */
+const RSI_MA = 'RSI_MA';
+
+/** RSI-based MA on a series, keeping an RSI's own settings when it already is one. */
+export function rsiMaOperand(series: SeriesSpec, from?: Operand): IndicatorOperand {
+  const rsi = from?.kind === 'INDICATOR' && from.indicator === 'RSI' ? from : indicatorOperand(series, 'RSI');
+  return { ...rsi, series, ma: rsi.ma ?? RSI_MA_DEFAULT };
+}
 
 const FIELDS: Array<{ value: SourceField; label: string }> = [
   { value: 'close', label: 'Close' },
@@ -30,14 +45,6 @@ const FIELDS: Array<{ value: SourceField; label: string }> = [
   { value: 'low', label: 'Low' },
   { value: 'volume', label: 'Volume' },
   { value: 'oi', label: 'OI' },
-];
-
-/** Quick-add choices offered at the bottom of every Leg list. */
-const QUICK_LEGS: Array<{ kind: LegKind; label: string }> = [
-  { kind: 'FUT', label: '+ Add FUT leg' },
-  { kind: 'CE', label: '+ Add CE ATM leg' },
-  { kind: 'PE', label: '+ Add PE ATM leg' },
-  { kind: 'SPOT', label: '+ Add SPOT leg' },
 ];
 
 const sel = 'input py-1 text-xs';
@@ -49,56 +56,54 @@ export function SeriesPicker({
   value,
   onChange,
   legs,
-  onAddLeg,
+  onPickInstrument,
   label = 'Series',
 }: {
   value: SeriesSpec;
   onChange: (s: SeriesSpec) => void;
-  /** The strategy's legs. */
+  /** The strategy's legs (the instruments it reads). */
   legs: LegDef[];
-  /** Adds a leg to the strategy and returns its id (quick add from this list). */
-  onAddLeg?: (kind: LegKind) => LegId | undefined;
+  /** Picks any instrument (adding it to the strategy). Without it, only the strategy's instruments are offered (trailing rules). */
+  onPickInstrument?: PickInstrument;
   /** For screen readers: whose series this is ("Left", "Right", "Pattern"). */
   label?: string;
 }) {
+  const [full, setFull] = useState(false);
   const setCandle = (type: CandleSpec['type']) => onChange({ ...value, candle: type === 'VOLUME' ? { type, volumePerCandle: 10_000 } : { type } });
   const current = legs.find((l) => l.id === value.leg);
   return (
     <>
-      <Row label="Leg">
-        <Help content={H.editor.leg}>
-          <select
-            aria-label={`${label} leg`}
-            className={clsx(sel, 'font-semibold', current ? LEG_KIND_TEXT[current.kind] : 'text-warn')}
-            value={value.leg}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v.startsWith('add:')) {
-                const id = onAddLeg?.(v.slice(4) as LegKind);
-                if (id) onChange({ ...value, leg: id });
-                return;
-              }
-              onChange({ ...value, leg: v as LegId });
+      <Row label="Instrument">
+        {onPickInstrument ? (
+          <InstrumentPicker
+            label={`${label} instrument`}
+            value={current ?? null}
+            onChange={(i) => {
+              if (!i) return;
+              const id = onPickInstrument(i, value.leg);
+              setFull(!id);
+              if (id && id !== value.leg) onChange({ ...value, leg: id });
             }}
-          >
-            {!current && <option value={value.leg}>{value.leg} · (removed leg)</option>}
-            {legs.map((l) => (
-              <option key={l.id} value={l.id}>
-                {legName(l)}
-              </option>
-            ))}
-            {onAddLeg && legs.length < MAX_LEGS && (
-              <optgroup label={`Add a leg (${legs.length}/${MAX_LEGS})`}>
-                {QUICK_LEGS.map((q) => (
-                  <option key={q.kind} value={`add:${q.kind}`}>
-                    {q.label}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-        </Help>
+          />
+        ) : (
+          <Help content={H.editor.instrumentOfStrategy}>
+            <select
+              aria-label={`${label} instrument`}
+              className={clsx(sel, 'font-semibold', current ? LEG_KIND_TEXT[current.kind] : 'text-warn')}
+              value={value.leg}
+              onChange={(e) => onChange({ ...value, leg: e.target.value as SeriesSpec['leg'] })}
+            >
+              {!current && <option value={value.leg}>(removed instrument)</option>}
+              {legs.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {legName(l)}
+                </option>
+              ))}
+            </select>
+          </Help>
+        )}
       </Row>
+      {full && <p className="text-[11px] text-warn">{FULL_NOTE}</p>}
       <Row label="Candles">
         <Help content={H.editor.timeframe}>
           <select aria-label={`${label} timeframe`} className={sel} value={value.timeframe} onChange={(e) => onChange({ ...value, timeframe: e.target.value as SeriesSpec['timeframe'] })}>
@@ -143,16 +148,19 @@ export function OperandEditor({
   side,
   defaultSeries,
   legs,
-  onAddLeg,
+  onPickInstrument,
   allowConstant = true,
+  defaultIndicator,
 }: {
   value: Operand;
   onChange: (o: Operand) => void;
   side: 'Left' | 'Right';
   defaultSeries: SeriesSpec;
   legs: LegDef[];
-  onAddLeg?: (kind: LegKind) => LegId | undefined;
+  onPickInstrument?: PickInstrument;
   allowConstant?: boolean;
+  /** The indicator "What → Indicator" starts with (default SMA) — e.g. the RSI-based MA against an RSI. */
+  defaultIndicator?: (series: SeriesSpec) => IndicatorOperand;
 }) {
   const series = value.kind === 'CONSTANT' ? defaultSeries : value.series;
   const setKind = (k: Kind) => {
@@ -160,8 +168,16 @@ export function OperandEditor({
     if (k === 'CONSTANT') onChange({ kind: 'CONSTANT', value: 60 });
     else if (k === 'FIELD') onChange({ kind: 'FIELD', series, field: 'close' });
     else if (k === 'OI_CHANGE') onChange({ kind: 'OI_CHANGE', series, lookback: 1 });
-    else onChange(indicatorOperand(series, 'SMA'));
+    else onChange(defaultIndicator ? defaultIndicator(series) : indicatorOperand(series, 'SMA'));
   };
+  const pickIndicator = (id: string) => {
+    if (value.kind !== 'INDICATOR') return;
+    if (id === RSI_MA) return onChange({ ...rsiMaOperand(value.series, value), multiplier: value.multiplier });
+    // Plain RSI from the RSI-based MA keeps its settings; any other indicator starts from its defaults.
+    if (id === 'RSI' && value.indicator === 'RSI') return onChange({ ...value, ma: undefined });
+    onChange({ ...indicatorOperand(value.series, id), multiplier: value.multiplier });
+  };
+  const setMa = (ma: IndicatorOperand['ma']) => value.kind === 'INDICATOR' && onChange({ ...value, ma });
   const spec = value.kind === 'INDICATOR' ? INDICATOR[value.indicator] : undefined;
   const left = side === 'Left';
 
@@ -169,7 +185,7 @@ export function OperandEditor({
     <Panel
       title={left ? 'Value' : 'Compared with'}
       help={left ? H.editor.valuePanel : H.editor.comparedPanel}
-      footer={value.kind !== 'CONSTANT' && <SeriesPicker label={side} value={value.series} onChange={(s) => onChange({ ...value, series: s } as Operand)} legs={legs} onAddLeg={onAddLeg} />}
+      footer={value.kind !== 'CONSTANT' && <SeriesPicker label={side} value={value.series} onChange={(s) => onChange({ ...value, series: s } as Operand)} legs={legs} onPickInstrument={onPickInstrument} />}
     >
       <Row label="What">
         <Help content={H.editor.operandKind}>
@@ -227,14 +243,21 @@ export function OperandEditor({
               <select
                 aria-label={`${side} indicator`}
                 className={clsx(sel, 'font-semibold')}
-                value={value.indicator}
-                onChange={(e) => onChange({ ...indicatorOperand(value.series, e.target.value), multiplier: value.multiplier })}
+                value={value.indicator === 'RSI' && value.ma ? RSI_MA : value.indicator}
+                onChange={(e) => pickIndicator(e.target.value)}
               >
-                {INDICATORS.map((i) => (
+                {INDICATORS.flatMap((i) => [
                   <option key={i.id} value={i.id}>
                     {i.label}
-                  </option>
-                ))}
+                  </option>,
+                  ...(i.id === 'RSI'
+                    ? [
+                        <option key={RSI_MA} value={RSI_MA}>
+                          RSI-based MA
+                        </option>,
+                      ]
+                    : []),
+                ])}
               </select>
             </Help>
           </Row>
@@ -295,6 +318,38 @@ export function OperandEditor({
               />
             </Mini>
           </Row>
+          {spec?.smoothable && (
+            <Row label="MA of it">
+              <Help content={H.editor.ma}>
+                <select
+                  aria-label={`${side} moving average of the indicator`}
+                  className={clsx(sel, value.ma && 'font-semibold')}
+                  value={value.ma?.type ?? ''}
+                  onChange={(e) => setMa(e.target.value ? { type: e.target.value as MaType, period: value.ma?.period ?? RSI_MA_DEFAULT.period } : undefined)}
+                >
+                  <option value="">None</option>
+                  {MA_TYPES.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </Help>
+              {value.ma && (
+                <Mini label="Length" help={{ ...H.editor.maLength, note: MA_TYPES.find((m) => m.value === value.ma!.type)?.description }}>
+                  <NumberInput
+                    label={`${side} moving average length`}
+                    className={clsx(sel, 'w-14')}
+                    min={MA_PERIOD.min}
+                    max={MA_PERIOD.max}
+                    step={1}
+                    value={value.ma.period}
+                    onChange={(n) => setMa({ ...value.ma!, period: Math.round(n) })}
+                  />
+                </Mini>
+              )}
+            </Row>
+          )}
         </>
       )}
     </Panel>

@@ -426,7 +426,7 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
         : futures
           ? [`${deps.history.spotName ? `The index / stock from ${deps.history.spotName}; futures from ${deps.history.name}` : `Futures from ${deps.history.name}`} — as they were listed (expired ones included), the ${expiryName} expiry of each day.`]
           : []),
-      ...planNotes(d, plan, { conditionLegs: ' on the legs the trade was opened with', markets: ['NSE'] }),
+      ...planNotes(d, plan, { conditionLegs: ' on the contracts the trade was opened with', markets: ['NSE'] }),
     ],
   };
 }

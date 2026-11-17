@@ -3,7 +3,7 @@
  * (timeframes, candle types, operators, indicators, patterns, legs) and the
  * known products. The UI renders from it and the server validates against it.
  */
-import type { CandleType, LegKind, Market, Operator, PatternId, ProductKind, SourceField, Timeframe } from './types';
+import type { CandleType, LegKind, MaType, Market, Operand, Operator, PatternId, ProductKind, SourceField, Timeframe } from './types';
 
 // ---- Products -----------------------------------------------------------------------------
 
@@ -198,6 +198,8 @@ export interface IndicatorSpec {
   unit: ValueUnit | 'source';
   /** Minimum candles before the first value (for "insufficient data" messages). */
   requiredHistory: (p: Record<string, number>) => number;
+  /** Can take a moving average of its own values (RSI-based MA). */
+  smoothable?: boolean;
   description: string;
 }
 
@@ -212,7 +214,8 @@ export const INDICATORS: IndicatorSpec[] = [
     sources: SOURCES,
     unit: 'oscillator',
     requiredHistory: (p) => (p.period ?? 14) + 1,
-    description: 'Relative Strength Index (Wilder), 0–100.',
+    smoothable: true,
+    description: 'Relative Strength Index (Wilder), 0–100. Add a moving average of it for TradingView’s “RSI-based MA”.',
   },
   {
     id: 'SMA',
@@ -254,6 +257,7 @@ export const INDICATORS: IndicatorSpec[] = [
     params: [PERIOD(14, 100), { name: 'smoothing', label: 'Smoothing', default: 14, min: 2, max: 100, integer: true }],
     unit: 'oscillator',
     requiredHistory: (p) => (p.period ?? 14) + (p.smoothing ?? 14),
+    smoothable: true,
     description: 'Average Directional Index (Wilder, TradingView-compatible): trend strength 0–100.',
   },
   {
@@ -313,6 +317,27 @@ export const INDICATORS: IndicatorSpec[] = [
 ];
 
 export const INDICATOR: Record<string, IndicatorSpec> = Object.fromEntries(INDICATORS.map((i) => [i.id, i]));
+
+/** Moving averages an indicator's own values can be smoothed with (as Equity offers). */
+export const MA_TYPES: Array<{ value: MaType; label: string; description: string }> = [
+  { value: 'SMA', label: 'SMA', description: 'Simple average of the last N values — TradingView’s default for the RSI-based MA.' },
+  { value: 'EMA', label: 'EMA', description: 'Exponential average (SMA-seeded): recent values weigh more.' },
+  { value: 'WMA', label: 'WMA', description: 'Weighted average: weights N, N−1 … 1, newest first.' },
+];
+export const MA_PERIOD = { min: 1, max: 500 } as const;
+/** TradingView's RSI-based MA: SMA, length 14. */
+export const RSI_MA_DEFAULT: { type: MaType; period: number } = { type: 'SMA', period: 14 };
+
+/** Candles an operand needs before its first value (its indicator's warm-up, plus its moving average's). */
+export function operandHistory(o: Operand): number {
+  if (o.kind === 'CONSTANT') return 0;
+  if (o.kind === 'FIELD') return 1;
+  if (o.kind === 'OI_CHANGE') return o.lookback + 1;
+  const spec = INDICATOR[o.indicator];
+  const base = spec ? spec.requiredHistory(o.params) : 1;
+  // The average's first value comes once it has `period` of the indicator's values.
+  return o.ma ? base + o.ma.period - 1 : base;
+}
 
 /** Unit of a source field. */
 export function sourceUnit(field: SourceField): ValueUnit {

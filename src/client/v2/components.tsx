@@ -17,14 +17,11 @@ import { LEG_KIND_TEXT, OUTCOME_LABEL, TRI_CLASS, fmtNum, istStamp, shortDate } 
 export { Section, Segmented, Toggle } from '../components/ui';
 export { Cell, NumberInput } from '../components/form';
 
-/** "B · CE ATM+1" in the leg's colour. */
+/** "CE ATM+1" in the instrument's colour. */
 export function LegBadge({ leg, className }: { leg: LegDef; className?: string }) {
   return (
-    <Tooltip content={{ title: legName(leg), body: `Leg ${leg.id}: ${legKindText(leg)}${leg.label ? ` (named “${leg.label}”)` : ''}.` }}>
-      <span className={clsx('inline-flex items-center gap-1 text-xs font-semibold whitespace-nowrap', LEG_KIND_TEXT[leg.kind], className)}>
-        <span className="rounded bg-ink-800 px-1 text-[10px] text-slate-300">{leg.id}</span>
-        {leg.label?.trim() || legKindText(leg)}
-      </span>
+    <Tooltip content={{ title: legName(leg), body: `${legKindText(leg)}${leg.label ? ` (named “${leg.label}”)` : ''} — becomes the product’s contract when connected.` }}>
+      <span className={clsx('inline-flex items-center gap-1 text-xs font-semibold whitespace-nowrap', LEG_KIND_TEXT[leg.kind], className)}>{legName(leg)}</span>
     </Tooltip>
   );
 }
@@ -41,7 +38,7 @@ export function InstrumentChip({ i }: { i: V2Instrument }) {
 export function UnitTag({ unit, symbol }: { unit: V2Unit; symbol: string }) {
   const legs = Object.entries(unit.legs) as Array<[string, V2Instrument | null]>;
   return (
-    <Tooltip content={{ title: unit.baseStrike !== null ? `${symbol} ${unit.baseStrike} · options expiring ${unit.expiry}` : symbol, body: legs.map(([id, i]) => `${id}: ${i ? i.symbol : 'not listed'}`).join(' · '), note: unit.atmStrike !== undefined ? `ATM was ${unit.atmStrike}.` : undefined }}>
+    <Tooltip content={{ title: unit.baseStrike !== null ? `${symbol} ${unit.baseStrike} · options expiring ${unit.expiry}` : symbol, body: legs.map(([, i]) => i?.symbol ?? 'a contract not listed').join(' · '), note: unit.atmStrike !== undefined ? `ATM was ${unit.atmStrike}.` : undefined }}>
       <span className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap">
         <span className="font-medium text-slate-200">{symbol}</span>
         {unit.baseStrike !== null ? (
@@ -86,11 +83,11 @@ export function LegPrices({ prices, legs }: { prices: UnitEvaluation['prices'] |
   const shown = legs.filter((l) => prices?.[l.id] !== undefined);
   if (!shown.length) return null;
   return (
-    <Tooltip content={{ title: 'Closing prices', body: 'Each leg’s close on the evaluated trigger candle.' }}>
+    <Tooltip content={{ title: 'Closing prices', body: 'Each instrument’s close on the evaluated trigger candle.' }}>
       <span className="inline-flex flex-wrap gap-2 text-xs tabular-nums">
         {shown.map((l) => (
           <span key={l.id}>
-            <span className={clsx('font-semibold', LEG_KIND_TEXT[l.kind])}>{l.id}</span> <span className="text-slate-300">{fmtNum(prices![l.id])}</span>
+            <span className={clsx('font-semibold', LEG_KIND_TEXT[l.kind])}>{legName(l)}</span> <span className="text-slate-300">{fmtNum(prices![l.id])}</span>
           </span>
         ))}
       </span>

@@ -3,7 +3,7 @@
  * the server: strategies on their own, and a strategy connected to a product.
  * Errors block saving / enabling; warnings are shown but allowed.
  */
-import { INDICATOR, MAX_LEGS, MAX_STRIKE_OFFSET, TIMEFRAME, sourceUnit, type ValueUnit } from './catalog';
+import { INDICATOR, MAX_LEGS, MAX_STRIKE_OFFSET, MA_PERIOD, TIMEFRAME, operandHistory, sourceUnit, type ValueUnit } from './catalog';
 import { legKindText } from './text';
 import type { ConnectionConfig, ExprNode, LegId, LegKind, Operand, StrategyDefinition, V2Product } from './types';
 
@@ -47,13 +47,11 @@ const UNIT_LABEL: Record<ValueUnit, string> = {
 
 interface Stats {
   leaves: number;
-  timeframes: Set<string>;
-  legs: Set<LegId>;
 }
 
 function validateOperand(o: Operand, path: string, issues: ValidationIssue[], legIds: Set<LegId>, warmup: number): void {
   if (o.kind === 'CONSTANT') return;
-  if (!legIds.has(o.series.leg)) issues.push({ path: `${path}.series.leg`, message: `Uses leg ${o.series.leg}, which the strategy doesn't have`, severity: 'error' });
+  if (!legIds.has(o.series.leg)) issues.push({ path: `${path}.series.leg`, message: `Reads an instrument the strategy doesn't have — pick its SPOT / FUT / CE / PE again`, severity: 'error' });
   if (o.kind !== 'INDICATOR') return;
   const spec = INDICATOR[o.indicator];
   if (!spec) {
@@ -71,7 +69,13 @@ function validateOperand(o: Operand, path: string, issues: ValidationIssue[], le
   if (o.source && spec.sources && !spec.sources.includes(o.source)) issues.push({ path: `${path}.source`, message: `${spec.label} can't use ${o.source} as its source`, severity: 'error' });
   if (spec.outputs && !o.output) issues.push({ path: `${path}.output`, message: `Choose which ${spec.label} output to use`, severity: 'error' });
   if (o.output && !spec.outputs?.some((x) => x.value === o.output)) issues.push({ path: `${path}.output`, message: `${spec.label} has no output "${o.output}"`, severity: 'error' });
-  const need = spec.requiredHistory(o.params) * TIMEFRAME[o.series.timeframe].factor;
+  if (o.ma) {
+    if (!spec.smoothable) issues.push({ path: `${path}.ma`, message: `${spec.label} doesn't take a moving average of itself`, severity: 'error' });
+    if (!Number.isInteger(o.ma.period) || o.ma.period < MA_PERIOD.min || o.ma.period > MA_PERIOD.max) {
+      issues.push({ path: `${path}.ma.period`, message: `The moving average length must be a whole number from ${MA_PERIOD.min} to ${MA_PERIOD.max}`, severity: 'error' });
+    }
+  }
+  const need = operandHistory(o) * TIMEFRAME[o.series.timeframe].factor;
   if (need > warmup) issues.push({ path, message: `${spec.label} needs ~${need} candles of history but only ~${warmup} are fetched — values may never be ready`, severity: 'warning' });
 }
 
@@ -87,18 +91,11 @@ function walk(node: ExprNode, path: string, issues: ValidationIssue[], legIds: S
       return;
     case 'PATTERN':
       stats.leaves++;
-      stats.timeframes.add(node.series.timeframe);
-      stats.legs.add(node.series.leg);
-      if (!legIds.has(node.series.leg)) issues.push({ path: `${path}.series.leg`, message: `Uses leg ${node.series.leg}, which the strategy doesn't have`, severity: 'error' });
+      if (!legIds.has(node.series.leg)) issues.push({ path: `${path}.series.leg`, message: `A pattern reads an instrument the strategy doesn't have — pick its SPOT / FUT / CE / PE again`, severity: 'error' });
       return;
     case 'CONDITION': {
       stats.leaves++;
       if (node.left.kind === 'CONSTANT') issues.push({ path: `${path}.left`, message: 'The left side must read data (indicator, price, volume or OI), not a number', severity: 'error' });
-      for (const o of [node.left, node.right]) {
-        if (o.kind === 'CONSTANT') continue;
-        stats.timeframes.add(o.series.timeframe);
-        stats.legs.add(o.series.leg);
-      }
       validateOperand(node.left, `${path}.left`, issues, legIds, warmup);
       validateOperand(node.right, `${path}.right`, issues, legIds, warmup);
       const lu = operandUnit(node.left);
@@ -113,29 +110,24 @@ export function validateStrategy(d: StrategyDefinition, opts: { warmupCandles?: 
   const issues: ValidationIssue[] = [];
   const warmup = opts.warmupCandles ?? 300;
 
-  if (d.legs.length === 0) issues.push({ path: 'legs', message: 'Add at least one leg', severity: 'error' });
-  if (d.legs.length > MAX_LEGS) issues.push({ path: 'legs', message: `At most ${MAX_LEGS} legs`, severity: 'error' });
+  if (d.legs.length === 0) issues.push({ path: 'legs', message: 'The conditions read no instrument', severity: 'error' });
+  if (d.legs.length > MAX_LEGS) issues.push({ path: 'legs', message: `At most ${MAX_LEGS} different instruments (SPOT / FUT / CE / PE at a strike) per strategy`, severity: 'error' });
   const ids = new Set<LegId>();
   const seen = new Set<string>();
   d.legs.forEach((l, i) => {
-    if (ids.has(l.id)) issues.push({ path: `legs[${i}]`, message: `Leg ${l.id} is defined twice`, severity: 'error' });
+    if (ids.has(l.id)) issues.push({ path: `legs[${i}]`, message: `${legKindText(l)} appears twice in the strategy’s instruments — pick it again in the conditions that read it`, severity: 'error' });
     ids.add(l.id);
     const isOption = l.kind === 'CE' || l.kind === 'PE';
     if (isOption && Math.abs(l.strikeOffset ?? 0) > MAX_STRIKE_OFFSET) issues.push({ path: `legs[${i}]`, message: `Strike offset must be within ±${MAX_STRIKE_OFFSET}`, severity: 'error' });
     const sig = legKindText(l);
-    if (seen.has(sig)) issues.push({ path: `legs[${i}]`, message: `Two legs are both ${sig} — they read the same contract`, severity: 'warning' });
+    if (seen.has(sig)) issues.push({ path: `legs[${i}]`, message: `${sig} is listed twice — open the conditions that read it and pick ${sig} again`, severity: 'warning' });
     seen.add(sig);
   });
 
-  const stats: Stats = { leaves: 0, timeframes: new Set(), legs: new Set() };
+  const stats: Stats = { leaves: 0 };
   walk(d.expression, 'expression', issues, ids, warmup, stats);
   if (stats.leaves === 0) issues.push({ path: 'expression', message: 'The strategy has no conditions', severity: 'error' });
-  for (const l of d.legs) {
-    if (!stats.legs.has(l.id)) issues.push({ path: 'legs', message: `Leg ${l.id} isn't used by any condition`, severity: 'warning' });
-  }
-  if (stats.leaves > 0 && !stats.timeframes.has(d.evaluation.triggerTimeframe)) {
-    issues.push({ path: 'evaluation.triggerTimeframe', message: `Evaluated on ${TIMEFRAME[d.evaluation.triggerTimeframe].label} candles, but no condition reads that timeframe`, severity: 'warning' });
-  }
+  // Legs no condition reads are fine (the trade plan may trade one), and the clock follows the conditions (legs.ts).
   return issues;
 }
 

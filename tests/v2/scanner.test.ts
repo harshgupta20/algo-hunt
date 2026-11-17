@@ -136,7 +136,7 @@ describe('V2 — strategy + product = alert', () => {
     expect(bank?.lastEvaluation?.trace.children!.map((c) => c.result)).toEqual(['FALSE', 'TRUE']);
 
     expect(env.channels.sent).toHaveLength(2);
-    expect(env.channels.sent.map((m) => m.message.text).join('\n')).toMatch(/Future leads the call[\s\S]*A · FUT: NIFTY20261027FUT[\s\S]*B · CE ATM: NIFTY2026101325000CE/);
+    expect(env.channels.sent.map((m) => m.message.text).join('\n')).toMatch(/Future leads the call[\s\S]*FUT: NIFTY20261027FUT[\s\S]*CE ATM: NIFTY2026101325000CE/);
   });
 
   it('does not re-alert the same candle and only scans products whose market is open', async () => {

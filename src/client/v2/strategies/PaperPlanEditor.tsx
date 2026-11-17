@@ -1,29 +1,42 @@
 'use client';
 
 /**
- * Step 4 of the strategy editor: paper trading — on for every connection of the strategy by default.
+ * Step 3 of the strategy editor: paper trading — on for every connection of the strategy by default.
  * These are the defaults its connections trade with (each connection can change its own values in
  * Connections or on the Paper tab), plus one rule per top-level group (or one for the whole
- * strategy): which leg to trade, Buy or Sell, and its trailing rules. Both backtests
- * start from this plan.
+ * strategy): which instrument to trade (any SPOT / FUT / CE / PE — not only those the conditions
+ * read), Buy or Sell, and its trailing rules. Both backtests start from this plan.
  */
+import { useState } from 'react';
 import { ArrowRight, ArrowRightLeft, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
 import type { LegId, PaperPlan, PaperRule, PaperSide, StrategyDefinition } from '@/shared/v2';
-import { PAPER_DEFAULTS, legName, paperGroups, planSizing, resolveRules } from '@/shared/v2';
+import { PAPER_DEFAULTS, legName, legsReadBy, naturalLeg, paperGroups, planSizing, resolveRules } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { Segmented, Toggle } from '../components';
 import { LEG_KIND_TEXT } from '../format';
 import { H } from '../help';
 import { ConditionsEditor } from '../paper/ConditionsEditor';
 import { PaperTermsFields, PlanBlock } from '../paper/PaperFields';
+import { FULL_NOTE, InstrumentPicker, type PickInstrument } from './InstrumentPicker';
 
-/** What each top-level group (or the whole strategy) trades: the leg and Buy / Sell ("Don't trade" = exit only). */
-export function PaperRulesEditor({ def, rules, onChange }: { def: StrategyDefinition; rules: PaperRule[]; onChange: (r: PaperRule[]) => void }) {
+/**
+ * What each top-level group (or the whole strategy) trades: the instrument and Buy / Sell ("Don't trade" = exit
+ * only). With `onPickInstrument` (the strategy's rules can change here) any instrument can be traded — e.g. FUT
+ * conditions → buy CE ATM; without it, one of the instruments the strategy reads.
+ */
+export function PaperRulesEditor({ def, rules, onChange, onPickInstrument }: { def: StrategyDefinition; rules: PaperRule[]; onChange: (r: PaperRule[]) => void; onPickInstrument?: PickInstrument }) {
   const groups = paperGroups(def);
+  const [full, setFull] = useState(false);
   const setRule = (i: number, patch: Partial<PaperRule>) => onChange(rules.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const groupLabel = (r: PaperRule) => (r.group === null ? 'Whole strategy' : (groups.find((g) => g.id === r.group)?.label ?? 'Group'));
   const spotLeg = rules.some((r) => def.legs.find((l) => l.id === r.leg)?.kind === 'SPOT');
+  const read = legsReadBy(def.expression);
+  /** What a rule's conditions point at: its group's option, else its future, else spot (the default trade). */
+  const suggested = (r: PaperRule) => {
+    const id = naturalLeg(def.legs, r.group === null ? def.expression : (groups.find((g) => g.id === r.group)?.node ?? def.expression));
+    return id && id !== r.leg && read.has(id) ? def.legs.find((l) => l.id === id) : undefined;
+  };
   return (
     <PlanBlock icon={ArrowRightLeft} title="What to trade" help={H.paper.rules}>
       <div className="flex flex-col divide-y divide-ink-700/60">
@@ -41,21 +54,37 @@ export function PaperRulesEditor({ def, rules, onChange }: { def: StrategyDefini
               </Tooltip>
               <ArrowRight aria-hidden className="hidden h-4 w-4 text-slate-500 sm:block" />
               <div className="flex flex-wrap items-center gap-2">
-                <Tooltip content={H.paper.tradeSide}>
-                  <select
-                    aria-label={`Leg to trade (${groupLabel(r)})`}
-                    className={clsx('input py-1 text-xs font-semibold', leg ? LEG_KIND_TEXT[leg.kind] : 'text-slate-400')}
-                    value={r.leg ?? ''}
-                    onChange={(e) => setRule(i, { leg: (e.target.value || null) as LegId | null })}
-                  >
-                    {def.legs.map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {legName(l)}
-                      </option>
-                    ))}
-                    <option value="">Don’t trade (exit only)</option>
-                  </select>
-                </Tooltip>
+                {onPickInstrument ? (
+                  <InstrumentPicker
+                    label={`Instrument to trade (${groupLabel(r)})`}
+                    value={leg ?? null}
+                    none={{ label: 'Don’t trade', help: H.paper.dontTrade }}
+                    onChange={(instr) => {
+                      if (!instr) return (setFull(false), setRule(i, { leg: null }));
+                      // This rule alone trading / reading its instrument: with 4 in use it may switch in place.
+                      const shared = rules.some((x, j) => j !== i && x.leg !== null && (x.leg === r.leg || legsReadBy(x.stopWhen).has(r.leg!)));
+                      const id = onPickInstrument(instr, r.leg ?? undefined, { onlyPlanUser: !shared });
+                      setFull(!id);
+                      if (id) setRule(i, { leg: id });
+                    }}
+                  />
+                ) : (
+                  <Tooltip content={H.paper.tradeSide}>
+                    <select
+                      aria-label={`Instrument to trade (${groupLabel(r)})`}
+                      className={clsx('input py-1 text-xs font-semibold', leg ? LEG_KIND_TEXT[leg.kind] : 'text-slate-400')}
+                      value={r.leg ?? ''}
+                      onChange={(e) => setRule(i, { leg: (e.target.value || null) as LegId | null })}
+                    >
+                      {def.legs.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {legName(l)}
+                        </option>
+                      ))}
+                      <option value="">Don’t trade (exit only)</option>
+                    </select>
+                  </Tooltip>
+                )}
                 {r.leg ? (
                   <Segmented<PaperSide>
                     label={`Buy or sell (${groupLabel(r)})`}
@@ -70,11 +99,27 @@ export function PaperRulesEditor({ def, rules, onChange }: { def: StrategyDefini
                   <span className="text-[11px] text-slate-500">only closes trades</span>
                 )}
               </div>
+              {leg && !read.has(leg.id) && (() => {
+                const alt = suggested(r);
+                return (
+                  <p className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 sm:col-start-3">
+                    {legName(leg)} isn’t read by {r.group === null ? 'the' : 'this group’s'} conditions — fine if that’s the plan (e.g. FUT signals → buy CE ATM).
+                    {alt && (
+                      <Tooltip content={H.paper.tradeSuggested}>
+                        <button type="button" className={clsx('btn-ghost py-0.5 text-[11px] font-semibold', LEG_KIND_TEXT[alt.kind])} onClick={() => setRule(i, { leg: alt.id })}>
+                          Trade {legName(alt)} instead
+                        </button>
+                      </Tooltip>
+                    )}
+                  </p>
+                );
+              })()}
             </div>
           );
         })}
       </div>
-      {spotLeg && <p className="text-[11px] text-warn">A Spot leg trades only on stocks — on indices and MCX those alerts won’t open a trade.</p>}
+      {full && <p className="text-[11px] text-warn">{FULL_NOTE}</p>}
+      {spotLeg && <p className="text-[11px] text-warn">SPOT trades only on stocks — on indices and MCX those alerts won’t open a trade.</p>}
     </PlanBlock>
   );
 }
@@ -83,7 +128,7 @@ export function PaperRulesEditor({ def, rules, onChange }: { def: StrategyDefini
 const keepConditions = (fresh: PaperRule[], cur: PaperRule[]): PaperRule[] =>
   fresh.map((r) => ({ ...r, stopWhen: cur.find((x) => x.group === r.group)?.stopWhen ?? null }));
 
-export function PaperPlanEditor({ def, plan, onChange }: { def: StrategyDefinition; plan: PaperPlan; onChange: (p: PaperPlan) => void }) {
+export function PaperPlanEditor({ def, plan, onChange, onPickInstrument }: { def: StrategyDefinition; plan: PaperPlan; onChange: (p: PaperPlan) => void; onPickInstrument?: PickInstrument }) {
   const groups = paperGroups(def);
   const rules = resolveRules(def, plan.rules);
   const set = (patch: Partial<PaperPlan>) => onChange({ ...plan, rules, ...patch });
@@ -107,7 +152,7 @@ export function PaperPlanEditor({ def, plan, onChange }: { def: StrategyDefiniti
         <>
           <PaperTermsFields value={plan} onChange={(p) => onChange({ ...p, rules })} hasGroups={groups.length > 0} sizing={planSizing(def, rules)} />
 
-          <PaperRulesEditor def={def} rules={rules} onChange={(r) => set({ rules: r })} />
+          <PaperRulesEditor def={def} rules={rules} onChange={(r) => set({ rules: r })} onPickInstrument={onPickInstrument} />
           {plan.trailing && <ConditionsEditor def={def} rules={rules} targetPct={plan.targetPct} onChange={(r) => set({ rules: r })} />}
           <Tooltip content={H.paper.savedWith}>
             <p className="text-[11px] text-slate-500">Defaults for every connection of this strategy — a connection can change its own values in Connections or on the Paper tab. Saved with the strategy; open trades keep their settings.</p>

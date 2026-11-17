@@ -155,7 +155,21 @@ export function EmptyState({ title, hint }: { title: string; hint?: string }) {
 
 // ---- panels & toggles (V2 and the market view) ----------------------------------------------------
 
-export function Section({ step, title, help, children, actions }: { step?: string; title: string; help: TooltipContent; children: ReactNode; actions?: ReactNode }) {
+/** A titled panel. `plain`: a light bordered block for use inside another panel (e.g. the builder on a Backtest page). */
+export function Section({ step, title, help, children, actions, plain }: { step?: string; title: string; help: TooltipContent; children: ReactNode; actions?: ReactNode; plain?: boolean }) {
+  if (plain) {
+    return (
+      <section className="rounded-lg border border-ink-700/60 bg-ink-950/30 p-3">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          {step && <span className="text-[10px] font-semibold uppercase tracking-widest text-accent-soft">{step}</span>}
+          <h4 className="text-sm font-semibold text-slate-200">{title}</h4>
+          <InfoTip content={help} />
+          {actions && <div className="ml-auto flex items-center gap-2">{actions}</div>}
+        </div>
+        {children}
+      </section>
+    );
+  }
   return (
     <section className="ui-section card p-4">
       <div className="ui-section-head flex items-center gap-2 mb-3">

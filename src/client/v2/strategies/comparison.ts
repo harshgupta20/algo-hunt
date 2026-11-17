@@ -1,5 +1,7 @@
 /**
  * Keeps a condition's two sides meaningful as the trader edits it:
+ *   - Both sides read the same series (e.g. "Close crossed above SMA(20)") and the left side moves to another
+ *     instrument, timeframe or candle type → the right side moves with it.
  *   - A price level (Bollinger Upper / Middle / Lower, SMA / EMA of price,
  *     Supertrend line) is compared with the price, not a number — choosing one
  *     while the other side is a number rewrites the condition to read
@@ -7,7 +9,7 @@
  *   - A reading (%B, Bandwidth, RSI, ADX, MACD, Supertrend direction) is
  *     compared with a number — a sensible default level is filled in.
  */
-import type { ConditionNode, Operand } from '@/shared/v2';
+import type { ConditionNode, Operand, SeriesSpec } from '@/shared/v2';
 import { INDICATOR, operandCore, operandUnit } from '@/shared/v2';
 
 type IndicatorOperand = Extract<Operand, { kind: 'INDICATOR' }>;
@@ -59,6 +61,11 @@ export function compareWithClose(cond: ConditionNode): ConditionNode {
  * adapted, a short note explaining it.
  */
 export function adaptCondition(cond: ConditionNode, side: 'left' | 'right', next: Operand): { cond: ConditionNode; note?: string } {
+  const { left: l, right: r } = cond;
+  const same = (a: SeriesSpec, b: SeriesSpec) => JSON.stringify(a) === JSON.stringify(b);
+  if (side === 'left' && next.kind !== 'CONSTANT' && l.kind !== 'CONSTANT' && r.kind !== 'CONSTANT' && same(l.series, r.series) && !same(next.series, l.series)) {
+    cond = { ...cond, right: { ...r, series: next.series } };
+  }
   const edited: ConditionNode = { ...cond, [side]: next };
 
   if (side === 'left') {

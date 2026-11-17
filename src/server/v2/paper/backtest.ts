@@ -10,8 +10,8 @@
  * candles for expired contracts (each product notes where its data starts) — NSE / BSE contracts as they were
  * listed come from Upstox in the re-picking backtest (optionsBacktest.ts).
  */
-import type { BacktestJob, BacktestProduct, BacktestRequest, BacktestResult, CompareProductResult, StrategyDefinition, V2Instrument, V2Strategy } from '@/shared/v2';
-import { normalizePlan, resolveRules, trailingRules } from '@/shared/v2';
+import type { BacktestJob, BacktestProduct, BacktestRequest, BacktestResult, CompareProductResult, LegId, StrategyDefinition, V2Instrument, V2Strategy } from '@/shared/v2';
+import { legNameById, normalizePlan, resolveRules, trailingRules } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { calendars, dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
 import { CandleCache, type CandleStats } from '../data/CandleCache';
@@ -121,7 +121,7 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
   const byProduct = (id: string) => closed.filter((t) => t.productId === id);
   const results: BacktestProduct[] = cmp.products.map((r) => {
     const list = byProduct(r.productId);
-    const unitContracts = r.unit ? Object.entries(r.unit.legs).map(([leg, i]) => `${leg}: ${i ? i.symbol : 'not listed'}`) : [];
+    const unitContracts = r.unit ? Object.entries(r.unit.legs).map(([leg, i]) => `${legNameById(leg as LegId, strategy.definition.legs)}: ${i ? i.symbol : 'not listed'}`) : [];
     return {
       productId: r.productId,
       data: 'KITE' as const,

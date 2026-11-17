@@ -25,8 +25,8 @@ export const LANDING_HELP = {
   presets: {
     lead: {
       title: 'Future leads the call',
-      body: 'Two legs. The future’s RSI is above the ATM call’s RSI, and the call’s RSI crosses 60.',
-      example: 'A · FUT RSI(14) > B · CE ATM RSI(14)\nB · CE ATM RSI(14) crossed above 60',
+      body: 'Two instruments. The future’s RSI is above the ATM call’s RSI, and the call’s RSI crosses 60.',
+      example: 'FUT RSI(14) > CE ATM RSI(14)\nCE ATM RSI(14) crossed above 60',
     },
     callPut: {
       title: 'Call up, put down',

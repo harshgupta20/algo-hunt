@@ -6,7 +6,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { PaperPlan, PaperRule, StrategyDefinition } from '../../src/shared/v2';
-import { backtestRequestSchema, defaultPaperPlan, normalizePlan, tradeStory } from '../../src/shared/v2';
+import { UNSAVED_STRATEGY_ID, backtestRequestSchema, defaultPaperPlan, normalizePlan, tradeStory } from '../../src/shared/v2';
 import { ProductService } from '../../src/server/v2/data/ProductService';
 import { RuntimeV2Store, createRuntimeState } from '../../src/server/v2/persistence/RuntimeV2Store';
 import type { RawCandle } from '../../src/server/v2/engine/candles';
@@ -333,11 +333,45 @@ describe('backtest', () => {
     provider.set(niftyFut, '1m', risingMinutes(40));
     const r = await svc.backtest({ ...jobRequest(), from: '2026-07-01' });
     expect(r.trades).toHaveLength(1);
-    expect(r.products[0]!.notes.join(' ')).toMatch(/^A · .*: Kite has candles for \S+ only from 2026-10-0\d — the days before can’t alert/);
+    expect(r.products[0]!.notes.join(' ')).toMatch(/^FUT: Kite has candles for \S+ only from 2026-10-0\d — the days before can’t alert/);
   });
 
   it('refuses a missing strategy or a reversed period', async () => {
     await expect(svc.backtest({ strategyId: 'nope', products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}) })).rejects.toThrow(/not found/i);
     await expect(svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: '2026-10-01', plan: plan({}) })).rejects.toThrow(/on or before/);
+  });
+
+  // Built on the Backtest page: tested as it is, unsaved; saved only from the builder.
+  it('backtests a new strategy that isn’t saved — and saves nothing', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    const draft: StrategyDefinition = { ...S, name: 'My idea' };
+    const req = { products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}), definition: draft };
+    expect(backtestRequestSchema.safeParse(req).success).toBe(true);
+    const before = (await svc.listStrategies()).length;
+    const r = await svc.backtest(req);
+    expect(r).toMatchObject({ strategyId: UNSAVED_STRATEGY_ID, strategyName: 'My idea' });
+    expect(r.trades[0]).toMatchObject({ strategyId: UNSAVED_STRATEGY_ID, exitReason: 'TARGET', grossPnl: 18_840 });
+    expect(await svc.listStrategies()).toHaveLength(before);
+    // As a job too: it remembers the definition, so the page can bring the unsaved strategy back.
+    const job = await settled((await svc.startBacktest(req)).id);
+    expect(job).toMatchObject({ status: 'DONE', strategyId: UNSAVED_STRATEGY_ID, strategyName: 'My idea', request: { definition: draft } });
+  });
+
+  it('backtests unsaved changes to a saved strategy; the saved one stays as it was', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    // The future never closes above 26,000: the changed rules don't alert.
+    const changed: StrategyDefinition = { ...S, expression: cond(field(legSeries('A')), 'CROSSED_ABOVE', num(26_000)) };
+    const r = await svc.backtest({ strategyId, definition: changed, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}) });
+    expect(r).toMatchObject({ strategyId, strategyName: 'Future breaks 25,100', trades: [] });
+    expect(r.products[0]).toMatchObject({ alerts: 0 });
+    expect(await svc.getStrategy(strategyId)).toMatchObject({ version: 1, definition: S });
+    expect((await run({})).trades).toHaveLength(1);
+  });
+
+  it('an unsaved strategy is checked like a save would check it', async () => {
+    const broken: StrategyDefinition = { ...S, legs: [] };
+    await expect(svc.backtest({ definition: broken, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}) })).rejects.toMatchObject({ status: 400, issues: expect.arrayContaining([expect.objectContaining({ severity: 'error' })]) });
+    await expect(svc.backtest({ strategyId: 'nope', definition: S, products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}) })).rejects.toThrow(/not found/i);
+    expect(backtestRequestSchema.safeParse({ products: ['NSE:NIFTY'], from: D, to: D, plan: plan({}) }).success).toBe(false);
   });
 });

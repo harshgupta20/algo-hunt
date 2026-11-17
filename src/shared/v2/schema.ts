@@ -3,6 +3,7 @@
  * history, product compatibility — live in validate.ts.
  */
 import { z } from 'zod';
+import { withDerivedClock } from './legs';
 import type { ConnectionConfig, ExprNode, StrategyDefinition, V2Settings } from './types';
 import { DEFAULT_V2_SETTINGS } from './types';
 
@@ -30,6 +31,7 @@ const operand = z.union([
     params: z.record(z.string(), z.number().finite()),
     source: sourceField.optional(),
     output: z.string().optional(),
+    ma: z.object({ type: z.enum(['SMA', 'EMA', 'WMA']), period: z.number().int().min(1).max(500) }).optional(),
     multiplier: z.number().finite().positive().optional(),
   }),
 ]);
@@ -57,14 +59,20 @@ const leg = z.object({
   label: z.string().trim().max(40).optional(),
 });
 
-export const strategyDefinitionSchema: z.ZodType<StrategyDefinition> = z.object({
-  schemaVersion: z.literal(1),
-  name: z.string().trim().min(1, 'name is required').max(120),
-  description: z.string().max(500).optional(),
-  legs: z.array(leg).min(1, 'add at least one leg').max(4, 'at most 4 legs'),
-  evaluation: z.object({ mode: z.enum(['COMPLETED_CANDLE', 'LIVE_CANDLE']), triggerTimeframe: timeframe }),
-  expression: exprNode,
-}) as z.ZodType<StrategyDefinition>;
+/**
+ * A strategy as the API receives it. The clock isn't the trader's choice: it is set from the conditions'
+ * timeframes (legs.ts), whatever the payload says — older clients may still send one.
+ */
+export const strategyDefinitionSchema: z.ZodType<StrategyDefinition> = z
+  .object({
+    schemaVersion: z.literal(1),
+    name: z.string().trim().min(1, 'name is required').max(120),
+    description: z.string().max(500).optional(),
+    legs: z.array(leg).min(1, 'the conditions read no instrument').max(4, 'at most 4 different instruments (SPOT / FUT / CE / PE at a strike)'),
+    evaluation: z.object({ mode: z.enum(['COMPLETED_CANDLE', 'LIVE_CANDLE']), triggerTimeframe: timeframe.default('15m') }),
+    expression: exprNode,
+  })
+  .transform((d) => withDerivedClock(d as StrategyDefinition)) as unknown as z.ZodType<StrategyDefinition>;
 
 export const alertPolicySchema = z.object({
   channels: z.object({ telegram: z.boolean(), email: z.boolean() }),

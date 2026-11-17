@@ -56,33 +56,44 @@ The first time, run `npm run live -- --check`. It connects to Kite, prints a few
    | --- | --- |
    | Future leads the call | FUT RSI above the ATM call's RSI, and the call's RSI crosses 60 |
    | Call up, put down | ATM call RSI up, ATM put RSI down |
-   | Future + 3 options | 4 legs |
-   | Spot breakout | 1 leg; works on cash stocks |
+   | Future + 3 options | FUT + three options (4 instruments) |
+   | Spot breakout | SPOT only; works on cash stocks |
 
-2. **Legs (1–4).** Choose what the strategy watches. No product yet.
-   - **SPOT**: index value or stock cash price.
-   - **FUT**: the future.
-   - **CE / PE**: a call or put at **ATM**, **ATM+1**, **ATM−2**, …
-   - Give a leg a name if you like (e.g. "Hedge put").
-3. **When.** Choose the evaluation clock, e.g. every closed 15-minute candle.
-4. **Conditions.** Compare any leg with any other leg, or with a number. Each value has its own timeframe and candle type (Normal, Heikin Ashi, Volume).
-   - Examples: *A · FUT RSI(14) > B · CE ATM RSI(14)*, *B · CE ATM Close crossed above B · CE ATM SMA(20)*.
-   - **Future AND options:** click **+ Condition** once per rule and pick the leg for each row:
+2. **When.** Choose **Completed candle** (recommended) or **Live candle**. There is no clock to set: the strategy
+   is checked as the shortest timeframe its conditions use closes (15 min + 1 hour → every 15 min; Daily only →
+   once a day). Timeframes that don't divide each other (10 min + 15 min) are checked every 10 min, so a 15-min close
+   that falls in between is acted on up to 5 min later — the section says so. A strategy saved before this change
+   keeps its own clock until you save it again (a note offers the new one).
+3. **Conditions.** Each value picks what it reads and how: **Instrument** (SPOT · FUT · CE · PE, and for options a
+   strike: **ATM**, **ATM+1**, **ATM−2**, …), then its own timeframe and candle type (Normal, Heikin Ashi, Volume).
+   Compare it with another value or a number. No product yet — each instrument becomes the connected product's
+   contract.
+   - **SPOT**: index value or stock cash price. **FUT**: the future. **CE / PE**: a call or put at a strike from ATM.
+   - Examples: *FUT RSI(14) > CE ATM RSI(14)*, *CE ATM Close crossed above CE ATM SMA(20)*.
+   - **Future AND options:** click **+ Condition** once per rule and pick the instrument in each row:
      ```
      AND
-       A · FUT    RSI(14) crossed above 60
-       A · FUT    Close > SMA(20)
-       B · CE ATM RSI(14) crossed above 60
-       C · PE ATM RSI(14) < 40
+       FUT    RSI(14) crossed above 60
+       FUT    Close > SMA(20)
+       CE ATM RSI(14) crossed above 60
+       PE ATM RSI(14) < 40
      ```
-   - **Need a leg you haven't added?** Pick **+ Add FUT / CE ATM / PE ATM / SPOT leg** at the bottom of any Leg list. The leg is added to section 1 and used by that condition. With only one leg, a hint above the conditions offers the same buttons.
+   - Up to **4 different instruments** per strategy. When both sides of a condition read the same thing (e.g.
+     *Close crossed above SMA(20)*), switching the left side's instrument or timeframe moves the right side too.
+   - **RSI-based MA** (TradingView's): pick **RSI-based MA** in the Indicator list — RSI(14) with an SMA(14) of it —
+     or set **MA of it** (SMA / EMA / WMA and its length) under any RSI or ADX. Comparing an RSI with an indicator
+     starts from its RSI-based MA, so *RSI(14) crossed above SMA(14) of RSI(14)* takes two clicks.
    - **Bollinger Bands and moving averages** are price levels, so you never type a number for them. Choosing Bollinger **Upper / Middle / Lower** (or SMA, EMA, the Supertrend line) makes the condition read *Close crossed above Bollinger Upper* automatically.
    - **N-candle low / high** is the lowest low (or highest high) of the previous N candles, not counting the current one: *Close crossed below Lowest low (3 candles)* = the 3-candle low is broken; *Close crossed above Highest high (20 candles)* = a 20-candle breakout.
      - **%B** and **Bandwidth %** are readings, so they get a number (%B 1 = on the upper band, Bandwidth 2 = a tight squeeze).
      - Older conditions like "Bollinger Upper crossed above 60" show a one-click **Compare Close with it** fix.
    - Combine conditions with AND / OR groups and NOT. Name a group (e.g. "Future conditions", "Option conditions") so the preview and alerts read clearly.
-5. Check the **Preview** and **Validation** on the right.
-6. **Try on a product.** Pick one product and press Run. You'll see every condition's current value and whether it would alert now. Nothing is saved or sent.
+4. Check the **Preview** and **Validation** on the right.
+5. **Try on a product.** Pick one product and press Run. You'll see every condition's current value and whether it would alert now. Nothing is saved or sent.
+6. **Paper trading** (section 3): **What to trade** uses the same SPOT · FUT · CE · PE picker and can trade an
+   instrument the conditions don't read — e.g. FUT conditions → buy **CE ATM**. Editing the conditions never
+   changes what is traded: switch your conditions from FUT to CE and the plan keeps trading FUT until you change it —
+   it says "FUT isn't read by the conditions" with a **Trade CE ATM instead** button.
 7. **Save.** Every save is a new version, and alerts show which version fired.
 
 ## 2. Compare products (Compare tab)
@@ -238,9 +249,9 @@ slippage on. Both backtests trade the same plan.
 
 **Changing the values**
 
-- **For a whole strategy:** open it (Strategies → ✎) → **4 · Paper trading**. These are the defaults all its
+- **For a whole strategy:** open it (Strategies → ✎) → **3 · Paper trading**. These are the defaults all its
   connections use, plus **what to trade**: one row per top-level group (a strategy whose top level is OR — e.g.
-  Bullish / Bearish), or one for the whole strategy — the leg (by default the group's option leg, else its future)
+  Bullish / Bearish), or one for the whole strategy — the instrument (SPOT · FUT · CE · PE — by default the group's option, else its future; any instrument, not only those the conditions read)
   and **Buy** or **Sell**, and each group's **trailing rules**. "Don't trade" turns a group into an
   exit signal only. Untick the box to stop paper trading the strategy. Changing only the paper settings doesn't
   create a new strategy version. (A backtest's **Save to strategy** saves here too.)

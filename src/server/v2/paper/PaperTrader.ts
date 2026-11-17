@@ -18,7 +18,7 @@
  * still being open, so the two can never close a trade twice.
  */
 import type { LegId, Market, PaperConditions, PaperExitReason, PaperPlan, PaperRule, PaperSide, PaperTrade, ProductKind, StrategyDefinition, UnitEvaluation, V2Connection, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
-import { atTarget, defaultPaperPlan, effectivePlan, hasCondition, marketOfExchange, paperGroups, resolveRules, stopNow, trailLevel, trailsPastTarget } from '@/shared/v2';
+import { atTarget, defaultPaperPlan, effectivePlan, hasCondition, legNameById, marketOfExchange, paperGroups, resolveRules, stopNow, trailLevel, trailsPastTarget } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
 import type { V2DataProvider } from '../data/DataProvider';
@@ -267,9 +267,9 @@ export class PaperTrader {
     // What this alert would trade (checked before closing anything, so both use one price request).
     const inst = rule?.leg ? (a.unit.legs[rule.leg] ?? null) : null;
     let skip: string | null = null;
-    if (!rule?.leg) skip = fired ? `${fired.label} doesn't trade` : 'no leg to trade';
-    else if (!inst) skip = `leg ${rule.leg} has no listed contract here`;
-    else if (inst.kind === 'SPOT' && a.product.kind !== 'STOCK') skip = `an index can't be traded — choose its future or an option leg`;
+    if (!rule?.leg) skip = fired ? `${fired.label} doesn't trade` : 'nothing to trade';
+    else if (!inst) skip = `${legNameById(rule.leg, a.strategy.definition.legs)} has no listed contract here`;
+    else if (inst.kind === 'SPOT' && a.product.kind !== 'STOCK') skip = `an index can't be traded — choose its future or an option`;
     else if (!a.cal.isMarketOpen(now)) skip = 'market closed';
     else if (plan.squareOff && now >= squareOffAt(a.cal, istDate(now), a.product.market === 'MCX' ? plan.squareOffMcx : plan.squareOffNse)) {
       skip = `after the ${a.product.market === 'MCX' ? plan.squareOffMcx : plan.squareOffNse} square-off`;

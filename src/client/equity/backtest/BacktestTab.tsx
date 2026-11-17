@@ -1,18 +1,19 @@
 'use client';
 
 /**
- * Equity backtest: strategy (saved or the builder's unsaved one) · stocks · period · money, run in the
- * background on the server (progress, time left, cancel), results below. The form and the running job survive
- * switching tabs. Every finished backtest goes into the history (History.tsx): open one to see it as it was, or
- * run it again from the form.
+ * Equity backtest: strategy (saved, the Strategies builder's unsaved one — or built / changed right here, tested
+ * unsaved as often as you like and saved when it's worth keeping) · stocks · period · money, run in the
+ * background on the server (progress, time left, cancel), results below. The form, the strategy being built and
+ * the running job survive switching tabs. Every finished backtest goes into the history (History.tsx): open one to
+ * see it as it was, or run it again from the form.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, FlaskConical } from 'lucide-react';
-import type { EqBacktestJob, EqBacktestRun, EqStockSource, EqStrategyDefinition } from '@/shared/equity';
-import { EQ_DEFAULT_CAPITAL, EQ_PRESETS, EQ_TIMEFRAME, strategySummary } from '@/shared/equity';
+import { ArrowLeft, Check, ChevronDown, ChevronRight, CopyPlus, FlaskConical, Pencil, Plus, Save, Undo2, X } from 'lucide-react';
+import type { EqBacktestJob, EqBacktestRun, EqStockSource, EqStrategy, EqStrategyDefinition } from '@/shared/equity';
+import { EQ_DEFAULT_CAPITAL, EQ_PRESETS, EQ_TIMEFRAME, defaultDefinition, hasErrors, strategySummary, validateDefinition } from '@/shared/equity';
 import { Tooltip } from '../../components/Tooltip';
-import { EmptyState, Section, Toggle } from '../../components/ui';
+import { Badge, EmptyState, Section, Toggle } from '../../components/ui';
 import { Cell, NumberInput } from '../../components/form';
 import { QuickPeriods, quickRange } from '../../components/QuickPeriods';
 import { QUICK_PERIODS, latestTradingDay, type QuickPeriodKey } from '../../components/periods';
@@ -23,6 +24,7 @@ import { E } from '../help';
 import { JobProgress } from '../JobProgress';
 import { StockPicker, useSymbols, type StockSource } from '../StockPicker';
 import { ai } from '../../ai/store';
+import { ReadsAs, StrategyForm } from '../strategies/StrategyForm';
 import { History } from './History';
 import { Results } from './Results';
 
@@ -34,8 +36,112 @@ interface Form {
   maxPositions: number | null;
 }
 
-/** Kept while the app is open, so leaving the tab and coming back restores the form, the job and the history view. */
-let remembered: { form: Form; jobId: string | null; historyDef: EqStrategyDefinition | null; viewing: string | null } | null = null;
+/** The strategy being built or changed on this page — not saved until one of the builder's save buttons. */
+interface Build {
+  def: EqStrategyDefinition;
+  /** The saved strategy it started from; null = a new strategy. */
+  baseId: string | null;
+  /** The rules shown (folded away to see the rest of the page). */
+  open: boolean;
+}
+/** The strategy list's choice for "build a new one here". */
+const BUILD = 'build';
+
+/**
+ * Kept while the app is open, so leaving the tab and coming back restores the form, the strategy being built, the
+ * job and the history view. `draft`: the Strategies builder's draft seen last — a different one has just arrived.
+ */
+let remembered: { form: Form; jobId: string | null; historyDef: EqStrategyDefinition | null; viewing: string | null; build: Build | null; draft: EqStrategyDefinition | null } | null = null;
+
+/**
+ * The builder on the Backtest page: the strategy's rules, folded away on demand, and how to keep it — a new
+ * strategy, the saved one updated (its next version), or a copy.
+ */
+function EqBuilder({
+  build,
+  base,
+  edited,
+  setDef,
+  onToggle,
+  onClose,
+  onSave,
+  saving,
+  saveError,
+}: {
+  build: Build;
+  base: EqStrategy | undefined;
+  edited: boolean;
+  setDef: Dispatch<SetStateAction<EqStrategyDefinition>>;
+  onToggle: () => void;
+  onClose: () => void;
+  onSave: (how: 'new' | 'update' | 'copy') => void;
+  saving: boolean;
+  saveError: string | null;
+}) {
+  const blocked = saving || hasErrors(validateDefinition(build.def));
+  const fix = blocked && !saving ? 'Fix the problems marked in red first.' : undefined;
+  const tip = (c: (typeof E.backtest)['saveNew']) => (fix ? { ...c, note: fix } : c);
+  return (
+    <div className="rounded-lg border border-accent/40 bg-ink-950/30 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Tooltip content={build.open ? E.backtest.builderHide : E.backtest.builderShow}>
+          <button type="button" className="btn-ghost px-1.5 py-1" aria-expanded={build.open} aria-label={build.open ? 'Hide the rules' : 'Show the rules'} onClick={onToggle}>
+            {build.open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          </button>
+        </Tooltip>
+        <span className="text-sm font-semibold text-slate-200">{build.def.name.trim() || 'New strategy'}</span>
+        {!base ? (
+          <Tooltip content={E.backtest.unsaved}>
+            <Badge tone="warn">new · not saved</Badge>
+          </Tooltip>
+        ) : edited ? (
+          <Tooltip content={E.backtest.changedRules}>
+            <Badge tone="warn">changed · saved is v{base.version}</Badge>
+          </Tooltip>
+        ) : (
+          <Tooltip content={E.backtest.sameRules}>
+            <Badge>same as saved v{base.version}</Badge>
+          </Tooltip>
+        )}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {!base && (
+            <Tooltip content={tip(E.backtest.saveNew)}>
+              <button type="button" className="btn-primary py-1 text-xs" disabled={blocked} onClick={() => onSave('new')}>
+                {saving ? <InlineSpinner className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />} Save as strategy
+              </button>
+            </Tooltip>
+          )}
+          {base && edited && (
+            <>
+              <Tooltip content={tip(E.backtest.saveUpdate)}>
+                <button type="button" className="btn-primary py-1 text-xs" disabled={blocked} onClick={() => onSave('update')}>
+                  {saving ? <InlineSpinner className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />} Update strategy (v{base.version + 1})
+                </button>
+              </Tooltip>
+              <Tooltip content={tip(E.backtest.saveCopy)}>
+                <button type="button" className="btn-ghost py-1 text-xs" disabled={blocked} onClick={() => onSave('copy')}>
+                  <CopyPlus className="w-3.5 h-3.5" /> Save as new
+                </button>
+              </Tooltip>
+            </>
+          )}
+          <Tooltip content={!base ? E.backtest.discardNew : edited ? E.backtest.discardChanges : E.backtest.closeBuilder}>
+            <button type="button" className="btn-ghost py-1 text-xs" disabled={saving} onClick={onClose}>
+              {base && edited ? <Undo2 className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />} {!base ? 'Discard' : edited ? 'Discard changes' : 'Close'}
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+      {build.open && (
+        <div className="mt-3 flex flex-col gap-3">
+          <StrategyForm d={build.def} setD={setDef} plain />
+          <ReadsAs d={build.def} plain />
+        </div>
+      )}
+      {saveError && <p className="mt-2 text-xs text-bear">{saveError}</p>}
+    </div>
+  );
+}
 
 /** How the stocks were chosen, in words, for the history line. */
 function stocksLabel(source: StockSource, label: string, symbols: string[]): string {
@@ -53,20 +159,30 @@ const SECONDS_PER_REQUEST = 0.36;
 export function BacktestTab({ initialStrategyId, initialHistory, draft }: { initialStrategyId?: string; initialHistory?: string; draft: EqStrategyDefinition | null }) {
   const qc = useQueryClient();
   const strategies = useQuery({ queryKey: ['eq-strategies'], queryFn: eqApi.strategies });
+  // A draft just handed over by the Strategies builder ("Backtest without saving") — not the one seen before.
+  const [freshDraft] = useState(() => draft !== null && draft !== remembered?.draft);
   const [form, setForm] = useState<Form>(() => {
     const base: Form = remembered?.form ?? { strategy: '', source: { kind: 'PRESET', preset: 'NIFTY50' }, range: quickRange('5Y', sessionEnd(), istToday()), capital: EQ_DEFAULT_CAPITAL, maxPositions: null };
-    if (draft) return { ...base, strategy: 'draft' };
+    if (freshDraft) return { ...base, strategy: 'draft' };
     if (initialStrategyId) return { ...base, strategy: initialStrategyId };
-    return base;
+    // The builder's draft is gone (the section was left): pick a saved one instead.
+    return base.strategy === 'draft' && !draft ? { ...base, strategy: '' } : base;
   });
+  /** The strategy being built here — kept unless another strategy was just handed over. */
+  const [build, setBuild] = useState<Build | null>(() => {
+    const b = remembered?.build ?? null;
+    return b && !freshDraft && (!initialStrategyId || b.baseId === initialStrategyId) ? b : null;
+  });
+  /** What the last save from the builder did (shown until the strategy changes). */
+  const [savedNote, setSavedNote] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(remembered?.jobId ?? null);
   /** A deleted / unsaved strategy's definition, from the history, to run again. */
   const [historyDef, setHistoryDef] = useState<EqStrategyDefinition | null>(remembered?.historyDef ?? null);
   /** A history entry shown instead of the latest run. */
   const [viewing, setViewing] = useState<string | null>(initialHistory ?? remembered?.viewing ?? null);
   useEffect(() => {
-    remembered = { form, jobId, historyDef, viewing };
-  }, [form, jobId, historyDef, viewing]);
+    remembered = { form, jobId, historyDef, viewing, build, draft };
+  }, [form, jobId, historyDef, viewing, build, draft]);
   // After a page reload: pick up the server's latest backtest (its result, or its progress).
   useEffect(() => {
     if (jobId) return;
@@ -101,8 +217,40 @@ export function BacktestTab({ initialStrategyId, initialHistory, draft }: { init
     ai.setPage(shownId ? { page: 'equity-backtest', backtestId: shownId, label: shownLabel ?? 'Backtest' } : { page: 'equity-backtest', label: 'Equity → Backtest' });
   }, [shownId, shownLabel]);
   useEffect(() => () => ai.setPage(null), []);
-  const def = form.strategy === 'draft' ? draft : form.strategy === 'history' ? historyDef : strategies.data?.find((s) => s.id === form.strategy)?.definition;
+  const picked = form.strategy === 'draft' ? draft : form.strategy === 'history' ? historyDef : strategies.data?.find((s) => s.id === form.strategy)?.definition;
+  /** The saved strategy the builder's rules started from (none: a new strategy — or one deleted since). */
+  const base = build?.baseId ? strategies.data?.find((s) => s.id === build.baseId) : undefined;
+  const edited = !!build && (!base || JSON.stringify(build.def) !== JSON.stringify(base.definition));
+  const def = build?.def ?? picked;
+  const buildBlocked = useMemo(() => !!build && hasErrors(validateDefinition(build.def)), [build]);
   const reversed = form.range.from > form.range.to;
+
+  /** Leave the strategy being built (asks first when it has unsaved rules). */
+  const leaveBuild = () => !build || !edited || window.confirm(`Discard “${build.def.name.trim() || 'the new strategy'}”${base ? '’s changes' : ''}? They aren’t saved.`);
+  const startNew = () => {
+    if (!leaveBuild()) return;
+    setBuild({ def: defaultDefinition(), baseId: null, open: true });
+    setSavedNote(null);
+    saveBuild.reset();
+  };
+  const setBuildDef: Dispatch<SetStateAction<EqStrategyDefinition>> = (v) => {
+    saveBuild.reset();
+    setBuild((b) => (b ? { ...b, def: typeof v === 'function' ? v(b.def) : v } : b));
+  };
+  const saveBuild = useMutation({
+    mutationFn: async (how: 'new' | 'update' | 'copy') => {
+      const d = build!.def;
+      const named = how === 'copy' && base && d.name.trim() === base.name.trim() ? { ...d, name: `${d.name.trim()} (copy)` } : d;
+      const s = how === 'update' ? await eqApi.updateStrategy(base!.id, d) : await eqApi.createStrategy(named);
+      await qc.invalidateQueries({ queryKey: ['eq-strategies'] });
+      return { s, how };
+    },
+    onSuccess: ({ s, how }) => {
+      setBuild(null);
+      setForm((f) => ({ ...f, strategy: s.id }));
+      setSavedNote(how === 'update' ? `Updated “${s.name}” to v${s.version}.` : `Saved “${s.name}” as a new strategy — it’s in Strategies and the Screener now.`);
+    },
+  });
 
   /** Fill the form from a history entry: its strategy as it is now (or as it was, if deleted / unsaved), stocks, period, money. */
   const runAgain = useMutation({
@@ -114,6 +262,9 @@ export function BacktestTab({ initialStrategyId, initialHistory, draft }: { init
       qc.setQueryData(['eq-backtest-record', rec.run.id], rec);
       const exists = rec.run.strategyId !== null && strategies.data?.some((s) => s.id === rec.run.strategyId);
       if (!exists) setHistoryDef(rec.request.definition);
+      // The run's strategy replaces the one being built here (asked before it started).
+      setBuild(null);
+      setSavedNote(null);
       // The same choice again (an index list = its members today); a watchlist deleted since → the stocks it had.
       const saved = rec.request.source;
       const source: EqStockSource = saved && !(saved.kind === 'WATCHLIST' && !watchlists.has(saved.id)) ? saved : { kind: 'PICK', symbols: rec.request.symbols };
@@ -125,7 +276,8 @@ export function BacktestTab({ initialStrategyId, initialHistory, draft }: { init
   const run = useMutation({
     mutationFn: () =>
       eqApi.startBacktest({
-        ...(form.strategy === 'draft' ? { definition: draft! } : form.strategy === 'history' ? { definition: historyDef! } : { strategyId: form.strategy }),
+        // Rules built or changed here are tested as they are, unsaved.
+        ...(build && edited ? { definition: build.def } : build && base ? { strategyId: base.id } : form.strategy === 'draft' ? { definition: draft! } : form.strategy === 'history' ? { definition: historyDef! } : { strategyId: form.strategy }),
         symbols,
         from: form.range.from,
         to: form.range.to,
@@ -149,8 +301,20 @@ export function BacktestTab({ initialStrategyId, initialHistory, draft }: { init
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-end gap-3">
             <Cell label="Strategy" help={E.backtest.strategy}>
-              <select aria-label="Strategy" className="input py-1.5 text-sm min-w-[18rem]" value={form.strategy} onChange={(e) => set({ strategy: e.target.value })}>
-                {!strategies.data?.length && !draft && <option value="">No saved strategies yet</option>}
+              <select
+                aria-label="Strategy"
+                className="input py-1.5 text-sm min-w-[18rem]"
+                value={build && !base ? BUILD : form.strategy}
+                onChange={(e) => {
+                  if (e.target.value === BUILD) return startNew();
+                  if (!leaveBuild()) return;
+                  setBuild(null);
+                  setSavedNote(null);
+                  set({ strategy: e.target.value });
+                }}
+              >
+                {!strategies.data?.length && !draft && !build && <option value="">No saved strategies yet</option>}
+                <option value={BUILD}>{build && !base ? `Building here: ${build.def.name.trim() || 'new strategy'}` : '＋ New strategy — build it here'}</option>
                 {draft && <option value="draft">Unsaved: {draft.name || 'new strategy'}</option>}
                 {historyDef && <option value="history">From the history: {historyDef.name}</option>}
                 {strategies.data?.map((s) => (
@@ -160,8 +324,52 @@ export function BacktestTab({ initialStrategyId, initialHistory, draft }: { init
                 ))}
               </select>
             </Cell>
+            <div className="ml-auto flex flex-wrap items-center gap-2 pb-0.5">
+              {picked && !build && (
+                <Tooltip content={E.backtest.editHere}>
+                  <button
+                    type="button"
+                    className="btn-ghost py-1 text-xs"
+                    onClick={() => {
+                      // A saved strategy's changes can update it; the builder's draft or a history entry's are a new one.
+                      const saved = strategies.data?.find((s) => s.id === form.strategy);
+                      setBuild({ def: structuredClone(picked), baseId: saved?.id ?? null, open: true });
+                      setSavedNote(null);
+                      saveBuild.reset();
+                    }}
+                  >
+                    <Pencil className="w-3.5 h-3.5" /> Change rules here
+                  </button>
+                </Tooltip>
+              )}
+              {(!build || base) && (
+                <Tooltip content={E.backtest.newStrategy}>
+                  <button type="button" className="btn-ghost py-1 text-xs" onClick={startNew}>
+                    <Plus className="w-3.5 h-3.5" /> New strategy
+                  </button>
+                </Tooltip>
+              )}
+            </div>
           </div>
-          {def && (
+          {savedNote && (
+            <p className="-mt-2 flex items-center gap-1.5 text-xs text-slate-300">
+              <Check className="w-3.5 h-3.5 shrink-0 text-accent-soft" /> {savedNote}
+            </p>
+          )}
+          {build && (
+            <EqBuilder
+              build={build}
+              base={base}
+              edited={edited}
+              setDef={setBuildDef}
+              onToggle={() => setBuild({ ...build, open: !build.open })}
+              onClose={() => leaveBuild() && setBuild(null)}
+              onSave={(how) => saveBuild.mutate(how)}
+              saving={saveBuild.isPending}
+              saveError={saveBuild.error ? (saveBuild.error as Error).message : null}
+            />
+          )}
+          {def && !build?.open && (
             <ul className="-mt-2 flex flex-col gap-0.5 text-[11px] text-slate-500">
               {strategySummary(def).map((l) => (
                 <li key={l}>{l}</li>
@@ -195,9 +403,10 @@ export function BacktestTab({ initialStrategyId, initialHistory, draft }: { init
           {reversed && <p className="-mt-2 text-xs text-warn">“From” must be on or before “to”.</p>}
 
           <div className="flex flex-wrap items-center gap-3">
-            <Tooltip content={E.backtest.run}>
-              <button type="button" className="btn-primary" disabled={!def || !symbols.length || loading || reversed || running || run.isPending} onClick={() => run.mutate()}>
+            <Tooltip content={build && edited ? E.backtest.runUnsaved : E.backtest.run}>
+              <button type="button" className="btn-primary" disabled={!def || !symbols.length || loading || reversed || running || run.isPending || buildBlocked} onClick={() => run.mutate()}>
                 {run.isPending || running ? <InlineSpinner /> : <FlaskConical className="w-4 h-4" />} Backtest {symbols.length ? countLabel(symbols) : 'stocks'}
+                {build && edited ? ' (unsaved rules)' : ''}
               </button>
             </Tooltip>
             {symbols.length > 0 && !running && (
@@ -210,11 +419,11 @@ export function BacktestTab({ initialStrategyId, initialHistory, draft }: { init
           {j?.status === 'CANCELLED' && <p className="text-xs text-slate-400">Backtest cancelled. Candles fetched so far stay in memory, so running it again picks up quickly.</p>}
           {j?.status === 'FAILED' && <p className="text-xs text-bear">{j.error}</p>}
           {(run.error || job.error || cancel.error) && <p className="text-xs text-bear">{((run.error ?? job.error ?? cancel.error) as Error).message}</p>}
-          {!strategies.isLoading && !strategies.data?.length && !draft && <EmptyState title="No equity strategies yet" hint="Create one in the Strategies tab (start from a template), then backtest it here." />}
+          {!strategies.isLoading && !strategies.data?.length && !draft && !build && <EmptyState title="No equity strategies yet" hint="Build one right here — “New strategy” above — or start from a template in the Strategies tab." />}
         </div>
       </Section>
 
-      <History viewing={viewing} savedIds={savedIds} onOpen={(r) => setViewing(r.id)} onRunAgain={(r) => runAgain.mutate(r)} onRemoved={(r) => viewing === r.id && setViewing(null)} />
+      <History viewing={viewing} savedIds={savedIds} onOpen={(r) => setViewing(r.id)} onRunAgain={(r) => leaveBuild() && runAgain.mutate(r)} onRemoved={(r) => viewing === r.id && setViewing(null)} />
       {runAgain.error && <p className="text-xs text-bear">{(runAgain.error as Error).message}</p>}
 
       {viewing ? (

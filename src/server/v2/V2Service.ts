@@ -31,6 +31,7 @@ import type {
 import {
   DEFAULT_TELEGRAM_BOT,
   TIMEFRAME,
+  UNSAVED_STRATEGY_ID,
   defaultPaperPlan,
   effectivePlan,
   hasErrors,
@@ -262,6 +263,15 @@ export class V2Service {
     }
     const s = await this.deps.store.strategies.update(id, d);
     for (const c of connections) await this.deps.store.units.clear(c.id);
+    // The saved trade plan follows the new rules: one rule per current group, each on a leg the strategy has. A rule
+    // kept for a group that's gone (or a leg that's gone) could otherwise trade whatever instrument later takes that
+    // letter once the group is back.
+    const plan = await this.deps.store.paper.getPlan(id);
+    if (plan) {
+      const p = normalizePlan(plan);
+      const rules = resolveRules(d, p.rules);
+      if (JSON.stringify(rules) !== JSON.stringify(p.rules)) await this.deps.store.paper.savePlan(id, { ...p, rules });
+    }
     return s!;
   }
 
@@ -538,10 +548,22 @@ export class V2Service {
 
   /** The request's strategy, its period and the plan's trailing rules checked (the same for both backtests). */
   private async checkedBacktest(req: BacktestRequest): Promise<V2Strategy> {
-    const s = await this.getStrategy(req.strategyId);
+    const s = req.definition ? await this.unsavedStrategy(req.definition, req.strategyId) : await this.getStrategy(req.strategyId ?? '');
     if (req.from > req.to) throw new V2ServiceError(400, '“From” must be on or before “to”');
     this.checkPlan(s, req.plan);
     return s;
+  }
+
+  /**
+   * A strategy built on the Backtest page and not saved: checked like a save would check it, tested as it is. With
+   * `baseId` (unsaved changes to a saved strategy) it keeps that id, so its trades read as that strategy's.
+   */
+  private async unsavedStrategy(d: StrategyDefinition, baseId?: string): Promise<V2Strategy> {
+    const issues = validateStrategy(d);
+    if (hasErrors(issues)) throw new V2ServiceError(400, 'The strategy has errors', issues);
+    const base = baseId ? await this.getStrategy(baseId) : null;
+    const at = new Date(this.now()).toISOString();
+    return { id: base?.id ?? UNSAVED_STRATEGY_ID, name: d.name.trim() || 'Unsaved strategy', version: base?.version ?? 0, definition: d, createdAt: base?.createdAt ?? at, updatedAt: at };
   }
 
   /**

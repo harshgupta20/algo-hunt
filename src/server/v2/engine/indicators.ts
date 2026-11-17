@@ -5,10 +5,11 @@
  * it — including the selectable source (e.g. SMA of volume) — and returns one
  * value per candle, aligned with the series.
  */
-import type { Operand, PatternId, SourceField } from '@/shared/v2';
+import type { MaType, Operand, PatternId, SourceField } from '@/shared/v2';
 import { INDICATOR, PATTERN } from '@/shared/v2';
 import { MAX_PATTERN_BARS, PATTERN_BY_ID } from '../../services/indicator/patterns';
 import { createIndicator } from '../../services/indicator/registry';
+import { Ema } from '../../services/indicator/types';
 import type { Candle } from './candles';
 
 type IndicatorOperand = Extract<Operand, { kind: 'INDICATOR' }>;
@@ -40,11 +41,41 @@ export function indicatorKey(op: IndicatorOperand): string {
     .sort()
     .map((k) => `${k}=${op.params[k]}`)
     .join(',');
-  return `${op.indicator}(${p})|${op.source ?? 'close'}|${outputOf(op) ?? ''}`;
+  return `${op.indicator}(${p})|${op.source ?? 'close'}|${outputOf(op) ?? ''}${op.ma ? `|${op.ma.type}${op.ma.period}` : ''}`;
+}
+
+/**
+ * A moving average of a value series (an indicator's own values — RSI-based MA). As TradingView (and Equity) do,
+ * values that aren't there yet (warm-up) are skipped rather than counted, so the average starts once `n` values
+ * exist. SMA / WMA over the last `n` values; EMA seeded with the SMA of the first `n`.
+ */
+export function movingAverage(values: Array<number | undefined>, type: MaType, n: number): Array<number | undefined> {
+  const out: Array<number | undefined> = new Array(values.length).fill(undefined);
+  const seen: number[] = [];
+  const ema = type === 'EMA' ? new Ema(n) : null;
+  const norm = (n * (n + 1)) / 2;
+  values.forEach((v, i) => {
+    if (v === undefined) return;
+    if (ema) {
+      out[i] = ema.push(v);
+      return;
+    }
+    seen.push(v);
+    if (seen.length < n) return;
+    let s = 0;
+    for (let j = 0; j < n; j++) s += (type === 'WMA' ? n - j : 1) * seen[seen.length - 1 - j]!;
+    out[i] = s / (type === 'WMA' ? norm : n);
+  });
+  return out;
 }
 
 /** One value per candle (undefined during warm-up). The multiplier is NOT applied here. */
 export function indicatorValues(candles: Candle[], op: IndicatorOperand): Array<number | undefined> {
+  const raw = rawIndicatorValues(candles, op);
+  return op.ma ? movingAverage(raw, op.ma.type, Math.max(1, Math.round(op.ma.period))) : raw;
+}
+
+function rawIndicatorValues(candles: Candle[], op: IndicatorOperand): Array<number | undefined> {
   if (op.indicator === 'RANGE') return rangeValues(candles, Math.max(1, Math.round(op.params.period ?? 3)), outputOf(op) === 'high');
   const lib = LIBRARY[op.indicator];
   if (!lib) throw new Error(`Unknown indicator ${op.indicator}`);

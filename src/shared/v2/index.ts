@@ -3,6 +3,7 @@ export * from './types';
 export * from './catalog';
 export * from './schema';
 export * from './validate';
+export * from './legs';
 export * from './text';
 export * from './paper';
 export * from './story';

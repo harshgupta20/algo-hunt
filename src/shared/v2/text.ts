@@ -3,6 +3,7 @@
  * and the IF/THEN preview of a strategy.
  */
 import { CANDLE_TYPES, INDICATOR, OPERATORS, PATTERN, TIMEFRAME } from './catalog';
+import { legsReadBy } from './legs';
 import type { AlertPolicy, CandleSpec, ConditionNode, ExpirySelector, ExprNode, LegDef, LegId, Operand, SeriesSpec, StrategyDefinition, V2Unit } from './types';
 
 /** "ATM", "ATM+1", "ATM−2". */
@@ -16,14 +17,17 @@ export function legKindText(l: Pick<LegDef, 'kind' | 'strikeOffset'>): string {
   return l.kind === 'CE' || l.kind === 'PE' ? `${l.kind} ${offsetText(l.strikeOffset)}` : l.kind;
 }
 
-/** Display name of a leg: its label, or "B · CE ATM+1". */
+/**
+ * Display name of a leg: what it is ("CE ATM+1", "FUT") — or the name given to it in the old legs editor. The
+ * letter (A–D) is internal since conditions pick instruments directly (legs.ts).
+ */
 export function legName(l: LegDef): string {
-  return l.label?.trim() ? `${l.id} · ${l.label.trim()}` : `${l.id} · ${legKindText(l)}`;
+  return l.label?.trim() || legKindText(l);
 }
 
 export function legNameById(id: LegId, legs: LegDef[]): string {
   const l = legs.find((x) => x.id === id);
-  return l ? legName(l) : `${id} · (missing leg)`;
+  return l ? legName(l) : '(removed instrument)';
 }
 
 export function candleText(c: CandleSpec): string {
@@ -56,7 +60,9 @@ export function operandCore(o: Operand): string {
       const out = o.output ? ` ${spec?.outputs?.find((x) => x.value === o.output)?.label ?? o.output}` : '';
       const src = o.source && o.source !== 'close' ? ` of ${FIELD_LABEL[o.source]?.toLowerCase() ?? o.source}` : '';
       const mult = o.multiplier && o.multiplier !== 1 ? `${o.multiplier} × ` : '';
-      return `${mult}${spec?.label ?? o.indicator}(${params})${out}${src}`;
+      // TradingView's "RSI-based MA" reads "SMA(14) of RSI(14)" (as in Equity).
+      const ma = o.ma ? `${o.ma.type}(${o.ma.period}) of ` : '';
+      return `${mult}${ma}${spec?.label ?? o.indicator}(${params})${out}${src}`;
     }
   }
 }
@@ -93,10 +99,26 @@ export function nodeText(n: ExprNode, legs: LegDef[], depth = 0): string {
   }
 }
 
-export function strategySummary(d: StrategyDefinition): string {
+/** When the strategy is checked, in words: "at every 15 min candle close" / "every minute on forming candles". */
+export function clockText(d: Pick<StrategyDefinition, 'evaluation'>): string {
+  const tf = TIMEFRAME[d.evaluation.triggerTimeframe].label;
+  return d.evaluation.mode === 'COMPLETED_CANDLE' ? `at every ${tf} candle close` : `every minute on forming candles (${tf} clock)`;
+}
+
+/**
+ * The IF / THEN preview. `planUses`: legs the trade plan uses (what it trades, its trailing rules) — a leg no
+ * condition reads is named as the plan's, or (a strategy saved before legs followed the conditions) as unread.
+ */
+export function strategySummary(d: StrategyDefinition, planUses?: ReadonlySet<LegId>): string {
+  const read = legsReadBy(d.expression);
+  const notRead = d.legs.filter((l) => !read.has(l.id));
+  const planOnly = planUses ? notRead.filter((l) => planUses.has(l.id)) : notRead;
+  const unread = planUses ? notRead.filter((l) => !planUses.has(l.id)) : [];
   return [
-    `Legs: ${d.legs.map(legName).join(' · ')}`,
-    `Evaluation: ${d.evaluation.mode === 'COMPLETED_CANDLE' ? 'completed' : 'live (forming)'} ${TIMEFRAME[d.evaluation.triggerTimeframe].label} candles`,
+    `Watches: ${d.legs.filter((l) => read.has(l.id)).map(legName).join(' · ') || '—'}`,
+    ...(planOnly.length ? [`Also used by the trade plan: ${planOnly.map(legName).join(' · ')}`] : []),
+    ...(unread.length ? [`Not read by anything: ${unread.map(legName).join(' · ')} (dropped on the next change)`] : []),
+    `Checked: ${clockText(d)}`,
     '',
     'IF',
     `  ${nodeText(d.expression, d.legs)}`,

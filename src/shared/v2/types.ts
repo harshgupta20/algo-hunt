@@ -1,14 +1,15 @@
 /**
  * V2 domain model — product-agnostic strategies.
  *
- *   Strategy   (logic only: 1–4 legs + conditions + evaluation clock — no product)
+ *   Strategy   (logic only: conditions on up to 4 instruments — legs and clock derived — no product)
  * + Connection (strategy → product, with expiry, strikes to scan and alert settings)
  * = Alert
  *
  * Products (NSE indices, NSE stocks, MCX commodities) are an independent catalogue.
- * A leg is a placeholder — SPOT, FUT, CE or PE (options relative to ATM) — that a
- * connection turns into a real contract of the chosen product. Conditions compare
- * any leg with any other leg, each on its own timeframe and candle type.
+ * Each condition picks the instrument it reads — SPOT, FUT, or a CE / PE at a strike from
+ * ATM — on its own timeframe and candle type. The app keeps those instruments as the
+ * strategy's legs (A–D, never shown to the trader; legs.ts), and a connection turns each
+ * leg into a real contract of the chosen product.
  */
 
 // ---- Markets, products, instruments -------------------------------------------------------
@@ -71,7 +72,7 @@ export interface LegDef {
   kind: LegKind;
   /** CE / PE: listed strikes away from ATM (0 = ATM, +1 = one strike above, −2 = two below). */
   strikeOffset?: number;
-  /** Optional name shown instead of the default ("B · CE ATM+1"). */
+  /** Optional name shown instead of the instrument ("CE ATM+1") — set in the old legs editor. */
   label?: string;
 }
 
@@ -83,6 +84,9 @@ export interface SeriesSpec {
 
 export type PriceField = 'open' | 'high' | 'low' | 'close';
 export type SourceField = PriceField | 'volume' | 'oi';
+
+/** A moving average taken of an indicator's own values (RSI with an SMA = TradingView's "RSI-based MA"). */
+export type MaType = 'SMA' | 'EMA' | 'WMA';
 
 /**
  * A value in a condition. Comparing legs = an operand on one leg vs an operand on another.
@@ -99,6 +103,8 @@ export type Operand =
       params: Record<string, number>;
       source?: SourceField;
       output?: string;
+      /** A moving average of the indicator's values, e.g. RSI(14) with SMA(14): TradingView's "RSI-based MA". */
+      ma?: { type: MaType; period: number };
       multiplier?: number;
     };
 
@@ -156,7 +162,10 @@ export type ExprNode = GroupNode | NotNode | ConditionNode | PatternNode;
 export type EvaluationMode = 'COMPLETED_CANDLE' | 'LIVE_CANDLE';
 export interface Evaluation {
   mode: EvaluationMode;
-  /** The clock: evaluated when this timeframe's candle closes (or every minute in live mode). */
+  /**
+   * The clock: evaluated when this timeframe's candle closes (or every minute in live mode). Not chosen by the
+   * trader — derived from the conditions' timeframes (clockTimeframe in legs.ts) on every edit and save.
+   */
   triggerTimeframe: Timeframe;
 }
 
@@ -164,7 +173,7 @@ export interface StrategyDefinition {
   schemaVersion: 1;
   name: string;
   description?: string;
-  /** 1–4 legs. */
+  /** 1–4 legs: the instruments the conditions (and the trade plan) read — kept by the app, not the trader. */
   legs: LegDef[];
   evaluation: Evaluation;
   expression: ExprNode;

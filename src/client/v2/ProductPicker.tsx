@@ -150,7 +150,7 @@ export function ProductPicker({
         <Tooltip
           content={{
             title: 'Products listed',
-            body: legsText ? `Only products with ${legsText} are listed — the legs this strategy uses. Cash-only stocks can’t run it.` : 'Every product matching the search and type.',
+            body: legsText ? `Only products with ${legsText} are listed — the instruments this strategy uses. Cash-only stocks can’t run it.` : 'Every product matching the search and type.',
             note: `Up to ${LIST_LIMIT} are listed at once; search to find the rest.`,
           }}
         >

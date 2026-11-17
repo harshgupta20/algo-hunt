@@ -311,7 +311,7 @@ export class V2Tools {
           continue;
         }
         r.unit = unit;
-        if (unit.baseStrike !== null) r.notes.push(`Option legs fixed at the strikes around ATM ${unit.atmStrike} (start of the period), expiry ${unit.expiry}`);
+        if (unit.baseStrike !== null) r.notes.push(`Options fixed at the strikes around ATM ${unit.atmStrike} (start of the period), expiry ${unit.expiry}`);
         await fetchUnits(candles, d, [unit], r.errors);
         if (opens.length) r.notes.push(...lateStarts(d, unit, candles, opens[0]!));
         const exits = (req.exits ?? []).map((x) => ({ key: x.key, def: exitDefinition(d, x.when) }));

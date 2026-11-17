@@ -2,7 +2,9 @@
 
 /**
  * Backtest: "if I had traded this strategy on these products, what would I have made?"
- *   setup    strategy · products · period · the strategy's trade plan — size, target / stop-loss / trailing stop,
+ *   strategy a saved one — or built / changed right here (the builder: legs, clock, conditions), backtested
+ *            unsaved as often as you like, then saved as a new strategy, as the saved one's next version, or a copy
+ *   setup    products · period · the strategy's trade plan — size, target / stop-loss / trailing stop,
  *            watch window, what each group trades, trailing rules (editable to try out; "Save to
  *            strategy" makes it the plan paper trading uses) · alert settings
  *   results  P&L, return on the money needed, the paper-trading figures and charts, by product, every trade,
@@ -14,12 +16,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, ChevronDown, ChevronRight, Download, FlaskConical, LogIn, LogOut, Save, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, CopyPlus, Download, FlaskConical, LogIn, LogOut, Pencil, Plus, Save, Undo2, X } from 'lucide-react';
 import clsx from 'clsx';
-import type { BacktestJob, BacktestRequest, BacktestResult, ConnectionConfig, PaperPlan } from '@/shared/v2';
-import { EXPIRY_MODES, TIMEFRAME, defaultPaperPlan, hasCondition, paperGroups, planSizing, resolveRules, watchWindowIssue } from '@/shared/v2';
+import type { BacktestJob, BacktestResult, ConnectionConfig, LegId, PaperPlan, PaperRule, StrategyDefinition, V2Strategy } from '@/shared/v2';
+import { EXPIRY_MODES, TIMEFRAME, defaultPaperPlan, hasCondition, paperGroups, planLegs, planSizing, pruneLegs, resolveRules, strategySummary, watchWindowIssue } from '@/shared/v2';
 import { InfoTip, Tooltip } from '../../components/Tooltip';
-import { EmptyState, StatCard } from '../../components/ui';
+import { Badge, EmptyState, StatCard } from '../../components/ui';
 import { InlineSpinner } from '../../components/loaders';
 import { v2Api } from '../api';
 import { Cell, LegBadge, Section, Segmented } from '../components';
@@ -27,6 +29,9 @@ import { daysAgo, istStampIso, istToday } from '../format';
 import { H } from '../help';
 import { ProductPicker } from '../ProductPicker';
 import { PaperRulesEditor } from '../strategies/PaperPlanEditor';
+import { blankStrategy } from '../strategies/defaults';
+import { instrumentPicker } from '../strategies/InstrumentPicker';
+import { IssueList, RulesEditor, useStrategyValidation } from '../strategies/RulesEditor';
 import { ConditionsEditor } from '../paper/ConditionsEditor';
 import { Sparkline } from '../paper/charts';
 import { inr, pct, pnlClass, signedInr } from '../paper/money';
@@ -43,6 +48,8 @@ const QUICK: readonly QuickPeriodKey[] = ['1D', '5D', '1W', '10D', '1M', '3M', '
 /** The backtest's job endpoints (one runs at a time; starting another cancels it). */
 const jobs = { key: 'v2-backtest-job', start: v2Api.startBacktest, get: v2Api.backtestJob, latest: v2Api.latestBacktest, cancel: v2Api.cancelBacktest };
 const symbolOfId = (id: string) => id.split(':')[1] ?? id;
+/** The strategy list's choice for "build a new one here". */
+const NEW_STRATEGY = '__new';
 const isMcx = (id: string) => id.startsWith('MCX:');
 
 /**
@@ -76,8 +83,8 @@ const planKey = (p: PaperPlan) =>
 /** What to change when alerts were skipped for this reason. */
 function skipHint(reason: string): string | null {
   if (reason.startsWith('After the')) return 'Switch “Square off daily” off in the trades settings to hold positions overnight.';
-  if (reason.startsWith('An index can’t be traded')) return 'In “What each group trades”, pick the future or an option leg instead of the index.';
-  if (/doesn['’]t trade/.test(reason)) return 'In “What each group trades”, choose a leg for that group.';
+  if (reason.startsWith('An index can’t be traded')) return 'In “What each group trades”, pick the future or an option instead of the index.';
+  if (/doesn['’]t trade/.test(reason)) return 'In “What each group trades”, choose an instrument for that group.';
   if (reason.startsWith('No price')) return 'There were no candles for that contract at the alert — it may not have traded yet.';
   return null;
 }
@@ -550,17 +557,159 @@ function RouteLine({ route }: { route: ReturnType<typeof dataRoute> }) {
   );
 }
 
+
+/** The strategy being built or changed on this page — not saved until one of the builder's save buttons. */
+interface Draft {
+  def: StrategyDefinition;
+  /** The saved strategy it started from; null = a new strategy. */
+  baseId: string | null;
+  /** Whose trade plan the form holds: the saved strategy's id, or this new strategy's own key. */
+  key: string;
+  /** The rules shown (folded away to see the rest of the page). */
+  open: boolean;
+}
+
+/** Kept while the app is open, so leaving Backtest and coming back restores the form — an unsaved strategy included. */
+let kept: {
+  strategyId: string;
+  draft: Draft | null;
+  products: string[];
+  range: { from: string; to: string };
+  plan: PaperPlan | null;
+  expiry: ConnectionConfig['expiry'];
+  shift: number;
+  trigger: 'ON_TRANSITION' | 'WHILE_TRUE';
+  jobId: string | null;
+} | null = null;
+
+const newDraft = (def: StrategyDefinition = blankStrategy()): Draft => ({ def, baseId: null, key: `new-${Date.now()}`, open: true });
+
+/**
+ * The builder on the Backtest page: the strategy's rules (legs, clock, conditions) with its check, folded away
+ * on demand, and how to keep it — a new strategy, the saved one updated (a new version), or a copy.
+ */
+function StrategyBuilder({
+  draft,
+  base,
+  edited,
+  update,
+  keep,
+  planUses,
+  onToggle,
+  onClose,
+  onSave,
+  saving,
+  saveError,
+  planIssue,
+}: {
+  draft: Draft;
+  base: V2Strategy | undefined;
+  edited: boolean;
+  update: (fn: (d: StrategyDefinition) => StrategyDefinition) => void;
+  /** Legs kept while the conditions change (the trade plan's, see BacktestTab). */
+  keep: Set<LegId>;
+  /** Legs the trade plan uses now (the preview names them). */
+  planUses: Set<LegId>;
+  onToggle: () => void;
+  onClose: () => void;
+  onSave: (how: 'new' | 'update' | 'copy') => void;
+  saving: boolean;
+  saveError: string | null;
+  planIssue: string | null;
+}) {
+  const validation = useStrategyValidation(draft.def);
+  const blocked = saving || validation.errors.length > 0 || !!planIssue;
+  const why = validation.errors.length ? 'Fix the errors in the check first.' : planIssue ? `Fix the trade plan first: ${planIssue}` : undefined;
+  return (
+    <div className="rounded-lg border border-accent/40 bg-ink-950/30 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Tooltip content={draft.open ? H.backtest.builderHide : H.backtest.builderShow}>
+          <button type="button" className="btn-ghost px-1.5 py-1" aria-expanded={draft.open} aria-label={draft.open ? 'Hide the rules' : 'Show the rules'} onClick={onToggle}>
+            {draft.open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          </button>
+        </Tooltip>
+        <Tooltip content={H.strategy.name} className="min-w-[14rem] flex-1">
+          <input aria-label="Strategy name" className="input w-full py-1 text-sm font-semibold" value={draft.def.name} onChange={(e) => update((d) => ({ ...d, name: e.target.value }))} />
+        </Tooltip>
+        {!base ? (
+          <Tooltip content={H.backtest.unsaved}>
+            <Badge tone="warn">new · not saved</Badge>
+          </Tooltip>
+        ) : edited ? (
+          <Tooltip content={H.backtest.changedRules}>
+            <Badge tone="warn">changed · saved is v{base.version}</Badge>
+          </Tooltip>
+        ) : (
+          <Tooltip content={H.backtest.sameRules}>
+            <Badge>same as saved v{base.version}</Badge>
+          </Tooltip>
+        )}
+        {validation.fetching && <InlineSpinner className="w-3.5 h-3.5 text-slate-500" />}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {!base && (
+            <Tooltip content={why ? { ...H.backtest.saveNew, note: why } : H.backtest.saveNew}>
+              <button type="button" className="btn-primary py-1 text-xs" disabled={blocked} onClick={() => onSave('new')}>
+                {saving ? <InlineSpinner className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />} Save as strategy
+              </button>
+            </Tooltip>
+          )}
+          {base && edited && (
+            <>
+              <Tooltip content={why ? { ...H.backtest.saveUpdate, note: why } : H.backtest.saveUpdate}>
+                <button type="button" className="btn-primary py-1 text-xs" disabled={blocked} onClick={() => onSave('update')}>
+                  {saving ? <InlineSpinner className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />} Update strategy (v{base.version + 1})
+                </button>
+              </Tooltip>
+              <Tooltip content={why ? { ...H.backtest.saveCopy, note: why } : H.backtest.saveCopy}>
+                <button type="button" className="btn-ghost py-1 text-xs" disabled={blocked} onClick={() => onSave('copy')}>
+                  <CopyPlus className="w-3.5 h-3.5" /> Save as new
+                </button>
+              </Tooltip>
+            </>
+          )}
+          <Tooltip content={!base ? H.backtest.discardNew : edited ? H.backtest.discardChanges : H.backtest.closeBuilder}>
+            <button type="button" className="btn-ghost py-1 text-xs" disabled={saving} onClick={onClose}>
+              {base && edited ? <Undo2 className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />} {!base ? 'Discard' : edited ? 'Discard changes' : 'Close'}
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+      {draft.open && (
+        <div className="mt-3 grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="flex min-w-0 flex-col gap-3">
+            <RulesEditor def={draft.def} update={update} keep={keep} plain />
+          </div>
+          <aside className="flex flex-col gap-3 xl:sticky xl:top-4">
+            <Section plain title="Reads as" help={H.strategy.preview}>
+              <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-slate-300">{strategySummary(draft.def, planUses)}</pre>
+            </Section>
+            <Section plain title="Check" help={H.backtest.builderCheck}>
+              <IssueList issues={validation.issues} checked={validation.checked} />
+            </Section>
+          </aside>
+        </div>
+      )}
+      {saveError && <p className="mt-2 text-xs text-bear">{saveError}</p>}
+    </div>
+  );
+}
+
 export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string }) {
   const strategies = useQuery({ queryKey: ['v2-strategies'], queryFn: v2Api.strategies });
   const settings = useQuery({ queryKey: ['v2-paper-settings'], queryFn: v2Api.paperSettings, staleTime: 30_000 });
   const upstoxStatus = useQuery({ queryKey: ['v2-options-status'], queryFn: v2Api.optionsStatus, staleTime: 30_000 });
-  const [strategyId, setStrategyId] = useState(initialStrategyId ?? '');
-  const [products, setProducts] = useState<string[]>([]);
-  const [range, setRange] = useState(() => quickRange('5D', latestTradingDay(null), istToday()));
+  // Back on this tab: the form as it was left (unless a strategy card opened it on another strategy).
+  const [resumed] = useState(() => (kept && (!initialStrategyId || kept.strategyId === initialStrategyId) ? kept : null));
+  const [strategyId, setStrategyId] = useState(resumed?.strategyId ?? initialStrategyId ?? '');
+  const [draft, setDraft] = useState<Draft | null>(resumed?.draft ?? null);
+  const [products, setProducts] = useState<string[]>(resumed?.products ?? []);
+  const [range, setRange] = useState(() => resumed?.range ?? quickRange('5D', latestTradingDay(null), istToday()));
   const [plan, setPlan] = useState<PaperPlan | null>(null);
-  const [expiry, setExpiry] = useState<ConnectionConfig['expiry']>({ mode: 'CURRENT' });
-  const [shift, setShift] = useState(0);
-  const [trigger, setTrigger] = useState<'ON_TRANSITION' | 'WHILE_TRUE'>('ON_TRANSITION');
+  const [expiry, setExpiry] = useState<ConnectionConfig['expiry']>(resumed?.expiry ?? { mode: 'CURRENT' });
+  const [shift, setShift] = useState(resumed?.shift ?? 0);
+  const [trigger, setTrigger] = useState<'ON_TRANSITION' | 'WHILE_TRUE'>(resumed?.trigger ?? 'ON_TRANSITION');
+  /** What the last save from the builder did (shown until the strategy changes). */
+  const [savedNote, setSavedNote] = useState<string | null>(null);
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ['v2-status'], queryFn: v2Api.status, staleTime: 30_000 });
   const marketOpen = Boolean(status.data && (status.data.markets.NSE.open || status.data.markets.MCX.open));
@@ -576,22 +725,33 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
   const j = job.data;
   const running = j?.status === 'RUNNING';
   const result: BacktestResult | null = j?.status === 'DONE' ? (j.result ?? null) : null;
-  /** The form of the backtest picked up on opening, applied once its strategy is loaded. */
-  const restore = useRef<BacktestRequest | null>(null);
+  /** The trade plan to put back once its strategy is loaded: whose it is (Draft.key / a strategy id) and the plan. */
+  const restore = useRef<{ owner: string; plan: PaperPlan } | null>(resumed?.plan ? { owner: resumed.draft?.key ?? resumed.strategyId, plan: resumed.plan } : null);
   useEffect(() => {
     if (initialStrategyId) setStrategyId(initialStrategyId);
   }, [initialStrategyId]);
-  // On opening (e.g. back from another tab): pick up the latest backtest — still running, or its result.
+  useEffect(() => {
+    kept = { strategyId, draft, products, range, plan, expiry, shift, trigger, jobId };
+  }, [strategyId, draft, products, range, plan, expiry, shift, trigger, jobId]);
+  // On opening: pick up the latest backtest — still running, or its result. Back from another tab: only the run of
+  // the form as it was left; after a reload: the form of the latest run too (an unsaved strategy included).
   useEffect(() => {
     let live = true;
     jobs.latest().then(
       (latest) => {
-        if (!live || !latest || (initialStrategyId && latest.strategyId !== initialStrategyId)) return;
+        if (!live || !latest) return;
+        if (resumed) {
+          if (latest.id === resumed.jobId) (qc.setQueryData([jobs.key, latest.id], latest), setJobId(latest.id));
+          return;
+        }
+        if (initialStrategyId && latest.strategyId !== initialStrategyId) return;
         const r = latest.request;
-        restore.current = r;
+        const d: Draft | null = r.definition ? { def: r.definition, baseId: r.strategyId ?? null, key: r.strategyId ?? `new-${latest.id}`, open: true } : null;
+        restore.current = { owner: d?.key ?? r.strategyId ?? '', plan: r.plan };
         qc.setQueryData([jobs.key, latest.id], latest);
         setJobId(latest.id);
-        setStrategyId(r.strategyId);
+        setDraft(d);
+        setStrategyId(r.strategyId ?? '');
         setProducts(r.products);
         setRange({ from: r.from, to: r.to });
         setExpiry(r.expiry ?? { mode: 'CURRENT' });
@@ -606,7 +766,12 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on opening
   }, []);
   const strategy = strategies.data?.find((s) => s.id === strategyId);
-  const def = strategy?.definition;
+  /** The saved strategy the builder's draft started from (none: a new strategy — or one deleted since). */
+  const base = draft?.baseId ? strategies.data?.find((s) => s.id === draft.baseId) : undefined;
+  const edited = !!draft && (!base || JSON.stringify(draft.def) !== JSON.stringify(base.definition));
+  // Unsaved rules with errors can't be backtested (the same check the builder shows).
+  const draftCheck = useStrategyValidation(draft && edited ? draft.def : null);
+  const def = draft?.def ?? strategy?.definition;
   const tf = def?.evaluation.triggerTimeframe;
   const hasOptions = def?.legs.some((l) => l.kind === 'CE' || l.kind === 'PE');
   const readsContracts = !!def?.legs.some((l) => l.kind !== 'SPOT');
@@ -618,23 +783,32 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
   useEffect(() => {
     if (range.to > lastDay) setRange((r) => ({ from: r.from > lastDay ? lastDay : r.from, to: lastDay }));
   }, [lastDay, range.to]);
-  // The strategy's plan as saved (what paper trading trades); the form starts from it each time the strategy changes.
+  // The strategy's plan as saved (what paper trading trades) — a new strategy's: the preferred defaults.
   const saved = useMemo(() => {
     if (!def) return null;
     const p = settings.data?.plans[strategyId];
     return p ? { ...p, rules: resolveRules(def, p.rules) } : defaultPaperPlan(def);
   }, [def, settings.data, strategyId]);
+  // The form starts from that plan each time the strategy changes (or its saved plan loads) — not on every edit
+  // of the rules being built (rules follow the groups wherever the plan is used).
+  const owner = def ? (draft?.key ?? strategyId) : '';
   useEffect(() => {
     if (!def) return setPlan(null);
     const r = restore.current;
-    if (r?.strategyId === strategyId && settings.data) {
+    if (r?.owner === owner && settings.data) {
       restore.current = null;
       setPlan({ ...saved!, ...r.plan, rules: resolveRules(def, r.plan.rules) });
       return;
     }
     setPlan(saved);
-  }, [strategyId, def, settings.data, saved]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
+  }, [owner, settings.data]);
   const rules = def && plan ? resolveRules(def, plan.rules) : [];
+  const planUses = planLegs(rules);
+  // Kept while the builder's conditions change: the plan's legs (also of groups gone for now) and — until the
+  // strategy's saved plan has loaded — every leg the saved strategy has.
+  const baseLegs = base?.definition.legs.map((l) => l.id) ?? [];
+  const keepLegs = new Set([...planUses, ...planLegs(plan?.rules), ...(settings.data ? [] : baseLegs)]);
   const sizing = def ? planSizing(def, rules) : { lots: true, cash: true };
   // The form differs from the strategy's plan (rules resolved to the current groups; a removed condition = none).
   const changed = !!plan && !!saved && planKey({ ...plan, rules }) !== planKey(saved);
@@ -652,8 +826,80 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
   // Rough, per product: one request per leg, one for the price that sets ATM and ~1–2 for the traded contracts' minutes.
   const estimate = def ? products.length * (def.legs.length + 2.5) * SECONDS_PER_REQUEST : 0;
 
+  /** Leave the strategy being built (asks first when it has unsaved rules). */
+  const leaveDraft = () => !draft || !edited || window.confirm(`Discard “${draft.def.name || 'the new strategy'}”${base ? '’s changes' : ''}? They aren’t saved.`);
+  const pick = (id: string) => {
+    if (!leaveDraft()) return;
+    setDraft(null);
+    setStrategyId(id);
+    setSavedNote(null);
+    saveDraft.reset();
+    if (!running) setJobId(null);
+    setProducts([]);
+  };
+  const startNew = () => {
+    if (!leaveDraft()) return;
+    setDraft(newDraft());
+    setStrategyId('');
+    setSavedNote(null);
+    saveDraft.reset();
+    if (!running) setJobId(null);
+  };
+  const saveDraft = useMutation({
+    mutationFn: async (how: 'new' | 'update' | 'copy') => {
+      // An instrument picked to trade and then dropped again isn't kept.
+      const d = pruneLegs(draft!.def, planLegs(resolveRules(draft!.def, plan?.rules)));
+      const named = how === 'copy' && base && d.name.trim() === base.name.trim() ? { ...d, name: `${d.name.trim()} (copy)` } : d;
+      const s = how === 'update' ? await v2Api.updateStrategy(base!.id, d) : await v2Api.createStrategy(named);
+      // The trade plan tested here becomes its paper plan (an update: only when it was changed here).
+      let planError: string | null = null;
+      if (plan && (how !== 'update' || changed)) {
+        try {
+          await v2Api.savePaperPlan(s.id, { ...plan, rules: resolveRules(s.definition, plan.rules) });
+        } catch (e) {
+          planError = (e as Error).message;
+        }
+      }
+      await Promise.all(['v2-strategies', 'v2-paper-settings', 'v2-paper-plan', 'v2-paper'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
+      return { s, how, planError };
+    },
+    onSuccess: ({ s, how, planError }) => {
+      setDraft(null);
+      setStrategyId(s.id);
+      const what = how === 'update' ? `Updated “${s.name}” to v${s.version}` : `Saved “${s.name}” as a new strategy`;
+      setSavedNote(planError ? `${what} — but not its trade plan: ${planError}` : `${what}, with this trade plan. Connect it to products (Connections) for live alerts and paper trades.`);
+    },
+  });
+
+  const updateDraft = (fn: (d: StrategyDefinition) => StrategyDefinition) => {
+    saveDraft.reset();
+    setDraft((cur) => (cur ? { ...cur, def: fn(cur.def) } : cur));
+  };
+  /** The plan's rules changed: an instrument the builder's strategy no longer trades (and no condition reads) leaves it. */
+  const setRules = (r: PaperRule[]) => {
+    if (!plan) return;
+    setPlan({ ...plan, rules: r });
+    setDraft((cur) => {
+      if (!cur) return cur;
+      // The saved strategy's own legs stay (a plan-only change isn't a new version).
+      const pruned = pruneLegs(cur.def, [...planLegs(resolveRules(cur.def, r)), ...planLegs(r), ...baseLegs]);
+      return pruned === cur.def ? cur : { ...cur, def: pruned };
+    });
+  };
+
   const run = useMutation({
-    mutationFn: () => jobs.start({ strategyId, products, from: range.from, to: range.to, plan: { ...plan!, rules }, expiry, strikeShift: shift, trigger }),
+    mutationFn: () =>
+      jobs.start({
+        // Unsaved rules are tested as they are (with the saved strategy they started from, if any).
+        ...(draft && edited ? { definition: draft.def, ...(base ? { strategyId: base.id } : {}) } : { strategyId }),
+        products,
+        from: range.from,
+        to: range.to,
+        plan: { ...plan!, rules },
+        expiry,
+        strikeShift: shift,
+        trigger,
+      }),
     onSuccess: (started) => {
       qc.setQueryData([jobs.key, started.id], started);
       setJobId(started.id);
@@ -670,8 +916,9 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-3">
             <Tooltip content={H.backtest.strategy}>
-              <select aria-label="Strategy" className="input py-1.5 text-sm min-w-[16rem]" value={strategyId} onChange={(e) => (setStrategyId(e.target.value), !running && setJobId(null), setProducts([]))}>
+              <select aria-label="Strategy" className="input py-1.5 text-sm min-w-[16rem]" value={draft && !base ? NEW_STRATEGY : strategyId} onChange={(e) => (e.target.value === NEW_STRATEGY ? startNew() : pick(e.target.value))}>
                 <option value="">Choose a strategy…</option>
+                <option value={NEW_STRATEGY}>{draft && !base ? `Unsaved: ${draft.def.name.trim() || 'new strategy'}` : '＋ New strategy — build it here'}</option>
                 {strategies.data?.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -683,7 +930,49 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
               <LegBadge key={l.id} leg={l} />
             ))}
             {tf && <span className="text-[11px] text-slate-500">· {TIMEFRAME[tf].label} candles</span>}
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {strategy && !draft && (
+                <Tooltip content={H.backtest.editHere}>
+                  <button type="button" className="btn-ghost py-1 text-xs" onClick={() => (setSavedNote(null), saveDraft.reset(), setDraft({ def: structuredClone(strategy.definition), baseId: strategy.id, key: strategy.id, open: true }))}>
+                    <Pencil className="w-3.5 h-3.5" /> Change rules here
+                  </button>
+                </Tooltip>
+              )}
+              {(!draft || base) && (
+                <Tooltip content={H.backtest.newStrategy}>
+                  <button type="button" className="btn-ghost py-1 text-xs" onClick={startNew}>
+                    <Plus className="w-3.5 h-3.5" /> New strategy
+                  </button>
+                </Tooltip>
+              )}
+            </div>
           </div>
+          {savedNote && (
+            <p className="-mt-2 flex items-center gap-1.5 text-xs text-slate-300">
+              <Check className="w-3.5 h-3.5 shrink-0 text-accent-soft" /> {savedNote}
+            </p>
+          )}
+
+          {draft && (
+            <StrategyBuilder
+              draft={draft}
+              base={base}
+              edited={edited}
+              update={updateDraft}
+              keep={keepLegs}
+              planUses={planUses}
+              onToggle={() => setDraft({ ...draft, open: !draft.open })}
+              onClose={() => {
+                if (!leaveDraft()) return;
+                setDraft(null);
+                if (!base) setStrategyId('');
+              }}
+              onSave={(how) => saveDraft.mutate(how)}
+              saving={saveDraft.isPending}
+              saveError={saveDraft.error ? (saveDraft.error as Error).message : null}
+              planIssue={planIssue}
+            />
+          )}
 
           {def && plan && (
             <>
@@ -705,9 +994,15 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
               <div className="rounded-lg border border-ink-700/60 bg-ink-950/30 p-3">
                 <div className="mb-3 flex flex-wrap items-center gap-2">
                   <h4 className="ui-section-title text-sm font-semibold text-slate-200">Trade plan</h4>
-                  <span className="text-[12px] text-slate-500">the strategy’s plan — paper trading uses the same</span>
+                  <span className="text-[12px] text-slate-500">{draft && edited ? 'saved with the strategy when you save it above' : 'the strategy’s plan — paper trading uses the same'}</span>
                   <InfoTip content={H.backtest.plan} />
-                  {changed ? (
+                  {draft && edited ? (
+                    <Tooltip content={H.backtest.planWithStrategy} className="ml-auto">
+                      <span className="flex items-center gap-1 text-[11px] text-slate-500">
+                        <Save className="w-3 h-3" /> Saved with the strategy
+                      </span>
+                    </Tooltip>
+                  ) : changed ? (
                     <Tooltip content={H.backtest.saveToStrategy} className="ml-auto">
                       <button type="button" className="btn-ghost py-0.5 text-[11px]" disabled={savePlan.isPending || !!planIssue} onClick={() => savePlan.mutate()}>
                         {savePlan.isPending ? <InlineSpinner className="w-3 h-3" /> : <Save className="w-3 h-3" />} Save to strategy
@@ -723,8 +1018,8 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
                 </div>
                 <div className="flex flex-col gap-3">
                   <PaperTermsFields value={plan} onChange={setPlan} base={saved ?? undefined} hasGroups={paperGroups(def).length > 0} sizing={sizing} nseOnly={nseOnly} />
-                  <PaperRulesEditor def={def} rules={rules} onChange={(r) => setPlan({ ...plan, rules: r })} />
-                  {plan.trailing && <ConditionsEditor def={def} rules={rules} targetPct={plan.targetPct} onChange={(r) => setPlan({ ...plan, rules: r })} />}
+                  <PaperRulesEditor def={def} rules={rules} onChange={(r) => setRules(r)} onPickInstrument={draft ? instrumentPicker(draft.def, updateDraft, keepLegs) : undefined} />
+                  {plan.trailing && <ConditionsEditor def={def} rules={rules} targetPct={plan.targetPct} onChange={(r) => setRules(r)} />}
                   {savePlan.error && <p className="text-xs text-bear">{(savePlan.error as Error).message}</p>}
                 </div>
               </div>
@@ -764,13 +1059,14 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
               </div>
               {products.length > 0 && <RouteLine route={route} />}
               <div className="flex flex-wrap items-center gap-5">
-                <Tooltip content={H.backtest.run}>
-                  <button type="button" className="btn-primary" disabled={!products.length || run.isPending || running || reversed || !!planIssue} onClick={() => run.mutate()}>
+                <Tooltip content={draft && edited ? H.backtest.runUnsaved : H.backtest.run}>
+                  <button type="button" className="btn-primary" disabled={!products.length || run.isPending || running || reversed || !!planIssue || draftCheck.errors.length > 0} onClick={() => run.mutate()}>
                     {run.isPending || running ? <InlineSpinner /> : <FlaskConical className="w-4 h-4" />} Backtest {products.length || ''} product{products.length === 1 ? '' : 's'}
+                    {draft && edited ? ' (unsaved rules)' : ''}
                   </button>
                 </Tooltip>
                 {products.length > 0 && !running && (
-                  <Tooltip content={{ ...H.backtest.run, title: 'Rough waiting time', note: 'An estimate before it starts: one request per leg and per traded contract, per product (Upstox’s contract lists add a few). Candles still in memory from an earlier run are free.' }}>
+                  <Tooltip content={{ ...H.backtest.run, title: 'Rough waiting time', note: 'An estimate before it starts: one request per instrument and per traded contract, per product (Upstox’s contract lists add a few). Candles still in memory from an earlier run are free.' }}>
                     <span className="self-center text-[11px] text-slate-500">≈ {duration(estimate)} of requests</span>
                   </Tooltip>
                 )}
@@ -781,7 +1077,12 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
               {(run.error || job.error || cancel.error) && <p className="text-xs text-bear">{((run.error ?? job.error ?? cancel.error) as Error).message}</p>}
             </>
           )}
-          {!strategies.data?.length && !strategies.isLoading && <EmptyState title="No strategies yet" hint="Create a strategy first." />}
+          {!strategies.data?.length && !strategies.isLoading && !draft && (
+            <EmptyState
+              title="No strategies yet"
+              hint="Build one right here — “New strategy” above — backtest it, and save it once it’s worth keeping."
+            />
+          )}
         </div>
       </Section>
 
