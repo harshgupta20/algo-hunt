@@ -78,8 +78,10 @@ The first time, run `npm run live -- --check`. It connects to Kite, prints a few
        CE ATM RSI(14) crossed above 60
        PE ATM RSI(14) < 40
      ```
-   - Up to **4 different instruments** per strategy. When both sides of a condition read the same thing (e.g.
-     *Close crossed above SMA(20)*), switching the left side's instrument or timeframe moves the right side too.
+   - Up to **4 different instruments** per strategy. You pick the instrument and candles once per condition: the
+     **Compared with** side reads the same ("Same as the value: FUT · 15 min") and moves with it. To compare two
+     different things — *FUT RSI > CE ATM RSI*, or 15-min against 1-hour — click **Another instrument / timeframe**
+     on that side (**Same as the value** puts it back).
    - **RSI-based MA** (TradingView's): pick **RSI-based MA** in the Indicator list — RSI(14) with an SMA(14) of it —
      or set **MA of it** (SMA / EMA / WMA and its length) under any RSI or ADX. Comparing an RSI with an indicator
      starts from its RSI-based MA, so *RSI(14) crossed above SMA(14) of RSI(14)* takes two clicks.

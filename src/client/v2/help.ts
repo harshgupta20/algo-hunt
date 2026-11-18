@@ -152,6 +152,13 @@ export const H = {
       note: 'No product is chosen here — each instrument becomes the connected product’s contract. Up to 4 different instruments per strategy.',
     },
     instrumentOfStrategy: { title: 'Instrument', body: 'One of the instruments the strategy’s conditions read (pick others in the conditions themselves).' },
+    sameSeries: {
+      title: 'Reads the same as the value',
+      body: 'This side reads the value’s instrument and candles, and moves with it when you change them — the usual case, e.g. RSI vs its own RSI-based MA.',
+      note: 'To compare two different things — the future’s RSI above the call’s, or 15-min against 1-hour — use “Another instrument / timeframe”.',
+    },
+    otherSeries: { title: 'Another instrument or timeframe', body: 'Give this side its own instrument (e.g. CE ATM) and candles, to compare it with a different one than the value’s.', example: 'FUT RSI(14) > CE ATM RSI(14)' },
+    backToSame: { title: 'Same as the value', body: 'Read this side from the value’s instrument and candles again — it then moves with the value.' },
     strike: { title: 'Strike', body: 'Listed strikes away from ATM: ATM, ATM+1 (one strike above), ATM−2 (two below)… ATM comes from the spot price, or the future when there is no spot (MCX).' },
     timeframe: { title: 'Timeframe', body: 'Candle size for this value. 2h / 4h are built from 1h candles and Weekly from daily, aligned to each market’s session.' },
     candle: { title: 'Candle type', body: 'Normal, Heikin Ashi (smoothed), or Volume candles (close each time the given volume trades; restart daily).' },

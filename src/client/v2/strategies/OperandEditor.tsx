@@ -13,12 +13,14 @@
  *   ─────────
  *   Instrument  SPOT · FUT · CE · PE (+ strike from ATM)
  *   Candles     timeframe · candle type
+ * The "Compared with" side reads the value's instrument and candles (and moves with it) — one line, "Same as the
+ * value: FUT · 15 min" — until the trader asks for another instrument or timeframe (FUT RSI > CE ATM RSI).
  * Each control explains itself on hover (no ⓘ next to every label).
  */
 import { useState } from 'react';
 import clsx from 'clsx';
 import type { CandleSpec, LegDef, MaType, Operand, SeriesSpec, SourceField } from '@/shared/v2';
-import { CANDLE_TYPES, INDICATOR, INDICATORS, MA_PERIOD, MA_TYPES, RSI_MA_DEFAULT, TIMEFRAMES, legName } from '@/shared/v2';
+import { CANDLE_TYPES, INDICATOR, INDICATORS, MA_PERIOD, MA_TYPES, RSI_MA_DEFAULT, TIMEFRAME, TIMEFRAMES, candleText, legName, legNameById } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { Mini, Panel, Row } from '../../components/condition';
 import { NumberInput } from '../../components/form';
@@ -142,6 +144,29 @@ export function SeriesPicker({
 
 type Kind = Operand['kind'];
 
+const sameSeries = (a: SeriesSpec, b: SeriesSpec) => JSON.stringify(a) === JSON.stringify(b);
+
+/** The compared side reading what the value reads: one line instead of a second instrument / candles picker. */
+function SameAsValue({ series, legs, onOther }: { series: SeriesSpec; legs: LegDef[]; onOther: () => void }) {
+  const leg = legs.find((l) => l.id === series.leg);
+  return (
+    <Row label="Reads">
+      <Help content={H.editor.sameSeries}>
+        <span className="cursor-help text-[11px] text-slate-400">
+          Same as the value:{' '}
+          <span className={clsx('font-semibold', leg ? LEG_KIND_TEXT[leg.kind] : 'text-warn')}>{legNameById(series.leg, legs)}</span> · {TIMEFRAME[series.timeframe].label}
+          {series.candle.type !== 'NORMAL' ? ` · ${candleText(series.candle)}` : ''}
+        </span>
+      </Help>
+      <Help content={H.editor.otherSeries}>
+        <button type="button" className="btn-ghost py-0.5 text-[11px]" onClick={onOther}>
+          Another instrument / timeframe
+        </button>
+      </Help>
+    </Row>
+  );
+}
+
 export function OperandEditor({
   value,
   onChange,
@@ -151,6 +176,7 @@ export function OperandEditor({
   onPickInstrument,
   allowConstant = true,
   defaultIndicator,
+  follow,
 }: {
   value: Operand;
   onChange: (o: Operand) => void;
@@ -161,8 +187,12 @@ export function OperandEditor({
   allowConstant?: boolean;
   /** The indicator "What → Indicator" starts with (default SMA) — e.g. the RSI-based MA against an RSI. */
   defaultIndicator?: (series: SeriesSpec) => IndicatorOperand;
+  /** The compared side: the value's series — read from it (one line) unless the trader picks another. */
+  follow?: SeriesSpec;
 }) {
+  const [own, setOwn] = useState(false);
   const series = value.kind === 'CONSTANT' ? defaultSeries : value.series;
+  const followsValue = !!follow && value.kind !== 'CONSTANT' && sameSeries(value.series, follow);
   const setKind = (k: Kind) => {
     if (k === value.kind) return;
     if (k === 'CONSTANT') onChange({ kind: 'CONSTANT', value: 60 });
@@ -185,7 +215,32 @@ export function OperandEditor({
     <Panel
       title={left ? 'Value' : 'Compared with'}
       help={left ? H.editor.valuePanel : H.editor.comparedPanel}
-      footer={value.kind !== 'CONSTANT' && <SeriesPicker label={side} value={value.series} onChange={(s) => onChange({ ...value, series: s } as Operand)} legs={legs} onPickInstrument={onPickInstrument} />}
+      footer={
+        value.kind !== 'CONSTANT' &&
+        (follow && followsValue && !own ? (
+          <SameAsValue series={follow} legs={legs} onOther={() => setOwn(true)} />
+        ) : (
+          <>
+            <SeriesPicker label={side} value={value.series} onChange={(s) => onChange({ ...value, series: s } as Operand)} legs={legs} onPickInstrument={onPickInstrument} />
+            {follow && (
+              <Row label="">
+                <Help content={H.editor.backToSame}>
+                  <button
+                    type="button"
+                    className="btn-ghost py-0.5 text-[11px]"
+                    onClick={() => {
+                      setOwn(false);
+                      if (!followsValue) onChange({ ...value, series: follow } as Operand);
+                    }}
+                  >
+                    Same as the value
+                  </button>
+                </Help>
+              </Row>
+            )}
+          </>
+        ))
+      }
     >
       <Row label="What">
         <Help content={H.editor.operandKind}>

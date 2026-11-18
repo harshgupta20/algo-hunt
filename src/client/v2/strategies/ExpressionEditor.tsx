@@ -176,6 +176,7 @@ function ConditionEditor({ node, ctx, onChange }: { node: ConditionNode; ctx: Ct
           value={node.right}
           onChange={(right) => edit('right', right)}
           defaultSeries={node.left.kind === 'CONSTANT' ? ctx.defaultSeries : node.left.series}
+          follow={node.left.kind === 'CONSTANT' ? undefined : node.left.series}
           legs={ctx.legs}
           onPickInstrument={ctx.onPickInstrument}
           // An RSI is usually compared with its own average (TradingView's RSI-based MA).

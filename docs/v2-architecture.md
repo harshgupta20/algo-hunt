@@ -61,6 +61,9 @@ and backtests key on them) and every screen and message names a leg by its instr
   5 min late there; the editor says so (`clockLags`). The editor sets the clock on every edit and
   `strategyDefinitionSchema` sets it on whatever the API receives; strategies saved before keep their stored clock until
   their rules are saved again (the editor shows a note with *Use 15 min*).
+- The **Compared with** side of a condition reads the value's series (one line, "Same as the value: FUT · 15 min";
+  `OperandEditor` `follow`) and moves with it (`adaptCondition`), until the trader gives it its own instrument /
+  candles ("Another instrument / timeframe") — then it stays put.
 - Groups can be named (shown in the preview, explain view and traces). The operand model leaves room for arithmetic
   operands later (differences, % gaps, strike levels).
 - **Moving average of an indicator** (`ma: { type: SMA | EMA | WMA, period }` on RSI / ADX, as in Equity): RSI + SMA is
