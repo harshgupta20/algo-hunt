@@ -4,7 +4,7 @@
  * Trailing rules per trade rule (each group that trades, or the whole strategy): an AND / OR condition tree — the
  * strategy editor's — on any leg, e.g. "close crossed below SMA 20" or "close crossed below the previous candle's
  * low". With Trailing SL on they run from the target on — they are the trailing SL. Part of the plan, so paper
- * trading and both backtests use them; used by the strategy editor (step 4) and the backtest pages (shown while
+ * trading and both backtests use them; used by the strategy editor (step 3) and the backtest pages (shown while
  * Trailing SL is on).
  */
 import { Plus, ShieldAlert, Trash2, TrendingUp } from 'lucide-react';
@@ -85,7 +85,7 @@ function ConditionBlock({ def, rule, title, onChange }: { def: StrategyDefinitio
         <Tooltip content={H.paper.tradeSide}>
           <span className="inline-flex cursor-help items-center gap-1 rounded-md border border-ink-700 bg-ink-900 px-1.5 py-px text-[11px]">
             <span className="text-slate-400">{sell ? 'Sell' : 'Buy'}</span>
-            <span className={clsx('font-semibold', leg ? LEG_KIND_TEXT[leg.kind] : 'text-warn')}>{leg ? legName(leg) : rule.leg}</span>
+            <span className={clsx('font-semibold', leg ? LEG_KIND_TEXT[leg.kind] : 'text-warn')}>{leg ? legName(leg) : '(removed instrument)'}</span>
           </span>
         </Tooltip>
         {on && (

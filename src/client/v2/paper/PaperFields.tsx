@@ -185,7 +185,7 @@ export function PaperTermsFields({
           </Tooltip>
         )}
         {trailIssue && <p className="text-[11px] text-warn">{trailIssue}</p>}
-        {noRules && <p className="text-[11px] text-slate-500">{value.trailing ? 'Trailing SL needs trailing rules — this strategy has none: add them in its trade plan (Strategies → ✎ → 4 · Paper trading), or switch Trailing SL off here.' : 'Trailing SL: add trailing rules in the strategy’s trade plan first (Strategies → ✎ → 4 · Paper trading).'}</p>}
+        {noRules && <p className="text-[11px] text-slate-500">{value.trailing ? 'Trailing SL needs trailing rules — this strategy has none: add them in its trade plan (Strategies → ✎ → 3 · Paper trading), or switch Trailing SL off here.' : 'Trailing SL: add trailing rules in the strategy’s trade plan first (Strategies → ✎ → 3 · Paper trading).'}</p>}
       </PlanBlock>
 
       <PlanBlock icon={Clock} title="When it trades" help={H.paper.blockWhen}>
@@ -310,7 +310,7 @@ export function PaperConnectionEditor({
       </div>
       {value.enabled && <PaperTermsFields value={value} onChange={setValue} base={strategyPlan} hasGroups={hasGroups} sizing={sizing} rulesInStrategy />}
       <p className="text-[11px] text-slate-500">
-        Which leg each group trades (Buy / Sell) and its trailing rules are set per strategy (strategy editor, step 4). Changes apply to new trades; the watch window applies to this connection’s alerts too.
+        Which instrument each group trades (Buy / Sell) and its trailing rules are set per strategy (strategy editor, step 3). Changes apply to new trades; the watch window applies to this connection’s alerts too.
       </p>
       {(save.error || reset.error) && <p className="text-xs text-bear">{((save.error ?? reset.error) as Error).message}</p>}
       <div className="flex flex-wrap gap-2">

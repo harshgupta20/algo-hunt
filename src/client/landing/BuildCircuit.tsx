@@ -137,10 +137,7 @@ function LegNode({ leg, k, y }: { leg: DemoLeg; k: number; y: number }) {
   return (
     <g>
       <rect x={LEG.x} y={top} width={LEG.w} height={LEG.h} rx={16} fill="rgb(255 255 255 / 0.03)" stroke={color} strokeOpacity={0.35} />
-      <circle cx={LEG.x + 24} cy={top + 24} r={12} fill={color} fillOpacity={0.18} stroke={color} />
-      <text x={LEG.x + 24} y={top + 28.5} textAnchor="middle" fontSize={12} fontWeight={700} fill={color} className={s.mono}>
-        {leg.id}
-      </text>
+      <circle cx={LEG.x + 24} cy={top + 24} r={6} fill={color} fillOpacity={0.35} stroke={color} />
       <text x={LEG.x + 44} y={top + 29} fontSize={14} fontWeight={600} fill="rgb(var(--fg))">
         {leg.label}
       </text>
@@ -187,7 +184,7 @@ function CondNode({ p, c, k, y }: { p: Preset; c: DemoCond; k: number; y: number
       />
       <text x={COND.x + 16} y={top + 28} fontSize={12} className={s.mono}>
         <tspan fill={LEG_COLOR[a.kind]} fontWeight={700}>
-          {a.id} · {a.label}
+          {a.label}
         </tspan>
         <tspan fill="rgb(203 213 225)"> {c.field} </tspan>
         <tspan fill="rgb(var(--fg))" fontWeight={700}>
@@ -197,7 +194,7 @@ function CondNode({ p, c, k, y }: { p: Preset; c: DemoCond; k: number; y: number
           <>
             <tspan fill={LEG_COLOR[b.kind]} fontWeight={700}>
               {' '}
-              {b.id} · {b.label}
+              {b.label}
             </tspan>
             <tspan fill="rgb(203 213 225)"> {c.bField}</tspan>
           </>
@@ -332,7 +329,7 @@ function CircuitList({ p, k }: { p: Preset; k: number }) {
           >
             <div className="flex items-center justify-between text-sm">
               <span className="font-semibold" style={{ color: LEG_COLOR[l.kind] }}>
-                {l.id} · {l.label}
+                {l.label}
               </span>
               <span className={clsx(s.mono, 'text-xs text-slate-300')}>{fmt(l, l.value(k))}</span>
             </div>
@@ -352,8 +349,8 @@ function CircuitList({ p, k }: { p: Preset; k: number }) {
               )}
             >
               <span className={clsx(s.mono, 'text-[12px] text-slate-300')}>
-                <span style={{ color: LEG_COLOR[a.kind] }}>{a.id}</span> {c.field} {c.op}{' '}
-                {b ? <span style={{ color: LEG_COLOR[b.kind] }}>{b.id}</span> : typeof c.b === 'number' ? c.b : c.bField}
+                <span style={{ color: LEG_COLOR[a.kind] }}>{a.label}</span> {c.field} {c.op}{' '}
+                {b ? <span style={{ color: LEG_COLOR[b.kind] }}>{b.label}</span> : typeof c.b === 'number' ? c.b : c.bField}
               </span>
               <span className={clsx('h-3 w-3 shrink-0 rounded-full border', ok ? 'border-accent bg-accent' : 'border-white/25')} />
             </div>
@@ -392,7 +389,7 @@ export function BuildCircuit() {
             is a circuit.
           </>
         }
-        sub="1–4 legs: spot, futures, calls and puts at ATM ±3. RSI, MACD, Supertrend, Bollinger, ADX and 17 candle patterns, from 1 min to weekly. No product needed yet."
+        sub="Up to 4 instruments: spot, futures, calls and puts at ATM ±3. RSI, MACD, Supertrend, Bollinger, ADX and 17 candle patterns, from 1 min to weekly. No product needed yet."
       />
       <Reveal className="mt-14">
         <div ref={ref} className={clsx(s.panel, 'p-4 sm:p-7')}>

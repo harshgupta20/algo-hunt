@@ -2,21 +2,21 @@
 
 /**
  * Expression tree editor: AND / OR groups (nestable), NOT wrappers,
- * conditions (any leg vs any leg or a number) and candlestick patterns, with
+ * conditions (any instrument vs any instrument or a number) and candlestick patterns, with
  * reordering. Each condition reads in plain words and warns about incompatible
  * comparisons.
  *
  * Layout, the same for every item so a strategy scans at a glance:
  *   group header   All of these (AND) | Any of these (OR) — must be true · 3 items · name
- *   item card      ① sentence (leg chips · value · comparison · value)        ↑ ↓ NOT ✕   ▾ collapse
+ *   item card      ① sentence (instrument chips · value · comparison · value)  ↑ ↓ NOT ✕   ▾ collapse
  *                  Value panel  →  comparison  →  Compared-with panel          (stacks when narrow)
  *   between items  the group's AND / OR
  */
 import clsx from 'clsx';
 import { AlertTriangle, ArrowDown, ArrowUp, Ban, CandlestickChart, FolderPlus, Info, Plus, Trash2, Undo2 } from 'lucide-react';
 import { Fragment, useState, type ReactNode } from 'react';
-import type { ConditionNode, ExprNode, GroupNode, LegDef, LegId, LegKind, Operand, PatternNode, SeriesSpec } from '@/shared/v2';
-import { OPERATORS, PATTERN, PATTERNS, TIMEFRAME, candleText, legName, legNameById, operandCore, operandUnit } from '@/shared/v2';
+import type { ConditionNode, ExprNode, GroupNode, LegDef, Operand, PatternNode, SeriesSpec } from '@/shared/v2';
+import { OPERATORS, PATTERN, PATTERNS, TIMEFRAME, candleText, legNameById, operandCore, operandUnit } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { IconButton } from '../../components/ui';
 import { ItemCard, Joiner, LogicToggle, OpWord, OperatorBox, Panel, Row } from '../../components/condition';
@@ -24,12 +24,14 @@ import { LEG_KIND_TEXT } from '../format';
 import { H } from '../help';
 import { adaptCondition, compareWithClose, isPriceLevel } from './comparison';
 import { newCondition, newGroup, newPattern, wrapNot } from './defaults';
-import { OperandEditor, SeriesPicker } from './OperandEditor';
+import type { PickInstrument } from './InstrumentPicker';
+import { OperandEditor, SeriesPicker, rsiMaOperand } from './OperandEditor';
 
 interface Ctx {
   defaultSeries: SeriesSpec;
   legs: LegDef[];
-  onAddLeg?: (kind: LegKind) => LegId | undefined;
+  /** Any instrument may be picked (the strategy's own rules); without it only the strategy's instruments (trailing rules). */
+  onPickInstrument?: PickInstrument;
 }
 
 function Toolbar({ index, count, onMove, onRemove, onNot, isNot }: { index: number; count: number; onMove: (d: -1 | 1) => void; onRemove: () => void; onNot: () => void; isNot: boolean }) {
@@ -65,7 +67,7 @@ const UNIT_LABEL: Record<string, string> = {
 
 // ---- the sentence in each item's header ---------------------------------------------------------
 
-/** "B · CE ATM · 15 min" in the leg's colour (candle type shown when it isn't Normal). */
+/** "CE ATM · 15 min" in the instrument's colour (candle type shown when it isn't Normal). */
 function SeriesChip({ s, legs }: { s: SeriesSpec; legs: LegDef[] }) {
   const leg = legs.find((l) => l.id === s.leg);
   return (
@@ -148,10 +150,11 @@ function ConditionEditor({ node, ctx, onChange }: { node: ConditionNode; ctx: Ct
   };
   // A price level (band, average) compared with a number — usually a leftover; offer the natural form.
   const levelVsNumber = isPriceLevel(node.left) && node.right.kind === 'CONSTANT';
+  const rsiLeft = node.left.kind === 'INDICATOR' && node.left.indicator === 'RSI' && !node.left.ma;
   return (
     <div className="cond-body flex flex-col gap-2.5">
       <div className="cond-cols">
-        <OperandEditor side="Left" value={node.left} onChange={(left) => edit('left', left)} defaultSeries={ctx.defaultSeries} legs={ctx.legs} onAddLeg={ctx.onAddLeg} allowConstant={false} />
+        <OperandEditor side="Left" value={node.left} onChange={(left) => edit('left', left)} defaultSeries={ctx.defaultSeries} legs={ctx.legs} onPickInstrument={ctx.onPickInstrument} allowConstant={false} />
         <OperatorBox>
           <Tooltip content={{ ...H.editor.operatorBox, title: `Comparison — ${opSpec?.label ?? ''}`, note: H.editor.operator.body }}>
             <select
@@ -174,7 +177,9 @@ function ConditionEditor({ node, ctx, onChange }: { node: ConditionNode; ctx: Ct
           onChange={(right) => edit('right', right)}
           defaultSeries={node.left.kind === 'CONSTANT' ? ctx.defaultSeries : node.left.series}
           legs={ctx.legs}
-          onAddLeg={ctx.onAddLeg}
+          onPickInstrument={ctx.onPickInstrument}
+          // An RSI is usually compared with its own average (TradingView's RSI-based MA).
+          defaultIndicator={rsiLeft ? (series) => rsiMaOperand(series, node.left) : undefined}
         />
       </div>
       {note && !levelVsNumber && (
@@ -208,7 +213,7 @@ function PatternEditor({ node, ctx, onChange }: { node: PatternNode; ctx: Ctx; o
   const groups = [...new Set(PATTERNS.map((p) => p.group))];
   return (
     <div className="max-w-xl">
-      <Panel title="Candlestick pattern" help={H.editor.addPattern} footer={<SeriesPicker label="Pattern" value={node.series} onChange={(series) => onChange({ ...node, series })} legs={ctx.legs} onAddLeg={ctx.onAddLeg} />}>
+      <Panel title="Candlestick pattern" help={H.editor.addPattern} footer={<SeriesPicker label="Pattern" value={node.series} onChange={(series) => onChange({ ...node, series })} legs={ctx.legs} onPickInstrument={ctx.onPickInstrument} />}>
         <Row label="Pattern">
           <Tooltip content={H.editor.pattern}>
             <select aria-label="Pattern" className="input py-1 text-xs font-semibold" value={node.pattern} onChange={(e) => onChange({ ...node, pattern: e.target.value as PatternNode['pattern'] })}>
@@ -339,49 +344,23 @@ export function GroupEditor({ group, ctx, onChange, depth = 0, embedded }: { gro
   );
 }
 
-/** With a single leg, point out how to bring the other instruments into the conditions. */
-function OneLegHint({ legs, onAddLeg }: { legs: LegDef[]; onAddLeg?: Ctx['onAddLeg'] }) {
-  if (legs.length !== 1 || !onAddLeg) return null;
-  const only = legs[0]!;
-  const offer = (['FUT', 'CE', 'PE'] as const).filter((k) => k !== only.kind);
-  return (
-    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-slate-300">
-      <span>
-        Only leg <span className="font-semibold">{legName(only)}</span> exists, so every condition reads it. To combine the future with options, add legs:
-      </span>
-      {offer.map((k) => (
-        <Tooltip key={k} content={{ ...H.legs.add, title: `Add a ${k === 'FUT' ? 'FUT' : `${k} ATM`} leg`, body: `Adds leg ${k === 'FUT' ? 'FUT' : `${k} ATM`} to section 1 so conditions can use it.` }}>
-          <button type="button" className={clsx('btn-ghost py-0.5 text-xs font-semibold', LEG_KIND_TEXT[k])} onClick={() => onAddLeg(k)}>
-            <Plus className="w-3 h-3" /> {k === 'FUT' ? 'FUT' : `${k} ATM`}
-          </button>
-        </Tooltip>
-      ))}
-    </div>
-  );
-}
-
 /** Root editor: the root is always a group (a single condition is wrapped). */
 export function ExpressionEditor({
   expression,
   onChange,
   defaultSeries,
   legs,
-  onAddLeg,
+  onPickInstrument,
   bare,
 }: {
   expression: ExprNode;
   onChange: (root: ExprNode) => void;
   defaultSeries: SeriesSpec;
   legs: LegDef[];
-  onAddLeg?: Ctx['onAddLeg'];
+  onPickInstrument?: Ctx['onPickInstrument'];
   /** No box around the root group (it already sits in a card). */
   bare?: boolean;
 }) {
   const root: GroupNode = expression.type === 'AND' || expression.type === 'OR' ? expression : newGroup('AND', [expression]);
-  return (
-    <>
-      <OneLegHint legs={legs} onAddLeg={onAddLeg} />
-      <GroupEditor group={root} ctx={{ defaultSeries, legs, onAddLeg }} onChange={onChange} embedded={bare} />
-    </>
-  );
+  return <GroupEditor group={root} ctx={{ defaultSeries, legs, onPickInstrument }} onChange={onChange} embedded={bare} />;
 }

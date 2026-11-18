@@ -1,39 +1,27 @@
 'use client';
 
 /**
- * V2 strategy editor — product-agnostic:
- *   1 Legs        1–4 placeholders (SPOT, FUT, CE / PE relative to ATM)
- *   2 When        evaluation mode + trigger timeframe
- *   3 Conditions  any leg vs any leg (or a number), AND / OR / NOT
- *   4 Paper       optional simulated trades on its alerts (saved with the strategy)
+ * Futures & Options strategy editor — product-agnostic:
+ *   1 When        evaluation mode (the clock follows the conditions' timeframes)
+ *   2 Conditions  each value picks its instrument (SPOT, FUT, CE / PE at a strike) and timeframe; AND / OR / NOT
+ *   3 Paper       optional simulated trades on its alerts (saved with the strategy) — may trade any instrument
  * with a live preview, validation and "try on a product".
  */
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, PlayCircle, Save, X, XCircle } from 'lucide-react';
-import clsx from 'clsx';
-import type { ExprNode, LegId, LegKind, PaperPlan, StrategyDefinition, V2Strategy } from '@/shared/v2';
-import { TIMEFRAMES, defaultPaperPlan, resolveRules, strategySummary } from '@/shared/v2';
+import { PlayCircle, Save, X } from 'lucide-react';
+import type { PaperPlan, StrategyDefinition, V2Strategy } from '@/shared/v2';
+import { defaultPaperPlan, planLegs, pruneLegs, resolveRules, strategySummary } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { V2ApiError, v2Api, type ExplainResult } from '../api';
-import { Cell, Section, Segmented } from '../components';
+import { Section } from '../components';
 import { ExplainView } from '../ExplainView';
 import { H } from '../help';
 import { ProductPicker } from '../ProductPicker';
-import { dominantSeries, legSeries, nextLegId, usedLegs } from './defaults';
-import { ExpressionEditor } from './ExpressionEditor';
-import { LegsEditor } from './LegsEditor';
+import { instrumentPicker } from './InstrumentPicker';
+import { IssueList, RulesEditor, useStrategyValidation } from './RulesEditor';
 import { PaperPlanEditor } from './PaperPlanEditor';
 import { InlineSpinner } from '../../components/loaders';
-
-function useDebounced<T>(value: T, ms: number): T {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setV(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return v;
-}
 
 export function StrategyEditor({ strategy, initial, onClose }: { strategy?: V2Strategy; initial: StrategyDefinition; onClose: (saved?: V2Strategy) => void }) {
   const qc = useQueryClient();
@@ -47,29 +35,30 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: V2St
   useEffect(() => {
     if (savedPaper.data && !paperDirty) setPaper(savedPaper.data);
   }, [savedPaper.data, paperDirty]);
-  const debounced = useDebounced(def, 400);
-  const validation = useQuery({ queryKey: ['v2-validate', debounced], queryFn: () => v2Api.validateStrategy(debounced), retry: false });
-  const set = (patch: Partial<StrategyDefinition>) => {
+  const validation = useStrategyValidation(def);
+  const update = (fn: (d: StrategyDefinition) => StrategyDefinition) => {
     setServerError(null);
-    setDef((d) => ({ ...d, ...patch }));
+    setDef(fn);
   };
-  const used = usedLegs(def.expression);
-  /** Quick add from a condition's Leg list or the one-leg hint; returns the new leg's id. */
-  const addLeg = (kind: LegKind): LegId | undefined => {
-    const id = nextLegId(def.legs);
-    if (!id) return undefined;
-    setServerError(null);
-    setDef((d) => ({ ...d, legs: [...d.legs, kind === 'CE' || kind === 'PE' ? { id, kind, strikeOffset: 0 } : { id, kind }] }));
-    return id;
-  };
-  const defaultSeries = dominantSeries(def.expression, legSeries(def.legs[0]?.id ?? 'A', def.evaluation.triggerTimeframe));
+  const set = (patch: Partial<StrategyDefinition>) => update((d) => ({ ...d, ...patch }));
+  // Legs the trade plan uses (what it trades, its trailing rules).
+  const planUses = planLegs(resolveRules(def, paper.rules));
+  // Kept while the conditions change: those, legs of rules whose groups are gone for now (so their letters are
+  // never handed to another instrument), and — until the saved plan has loaded — every leg the strategy has.
+  const savedLegs = strategy?.definition.legs.map((l) => l.id) ?? [];
+  const keep = new Set([...planUses, ...planLegs(paper.rules), ...(strategy && !savedPaper.data ? savedLegs : [])]);
+  const pickTrade = instrumentPicker(def, update, keep);
 
   const save = useMutation({
     mutationFn: async () => {
+      const rules = resolveRules(def, paper.rules);
+      // An instrument picked to trade and then dropped again isn't kept (an untouched strategy is saved as it was).
+      const edited = !strategy || JSON.stringify(def) !== JSON.stringify(strategy.definition);
+      const clean = edited ? pruneLegs(def, planLegs(rules)) : def;
       // Only the paper settings changed → no new strategy version.
-      const unchanged = strategy && JSON.stringify(def) === JSON.stringify(strategy.definition);
-      const s = unchanged ? strategy : strategy ? await v2Api.updateStrategy(strategy.id, def) : await v2Api.createStrategy(def);
-      if (paperDirty) await v2Api.savePaperPlan(s.id, { ...paper, rules: resolveRules(def, paper.rules) });
+      const unchanged = strategy && JSON.stringify(clean) === JSON.stringify(strategy.definition);
+      const s = unchanged ? strategy : strategy ? await v2Api.updateStrategy(strategy.id, clean) : await v2Api.createStrategy(clean);
+      if (paperDirty) await v2Api.savePaperPlan(s.id, { ...paper, rules: resolveRules(s.definition, rules) });
       return s;
     },
     onSuccess: (s) => {
@@ -81,9 +70,8 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: V2St
   });
   const run = useMutation({ mutationFn: () => v2Api.explainDraft(def, tryProduct[0]!), onSuccess: setExplain });
 
-  const issues = serverError?.issues ?? validation.data?.issues ?? [];
+  const issues = serverError?.issues ?? validation.issues;
   const errors = issues.filter((i) => i.severity === 'error');
-  const warnings = issues.filter((i) => i.severity === 'warning');
 
   return (
     <div className="flex flex-col gap-4">
@@ -114,55 +102,23 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: V2St
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-4 items-start">
         <div className="flex flex-col gap-4 min-w-0">
-          <Section step="1 · Legs" title="What the strategy watches" help={H.legs.section}>
-            <LegsEditor legs={def.legs} onChange={(legs) => set({ legs })} used={used} />
-          </Section>
+          <RulesEditor def={def} update={update} keep={keep} />
 
-          <Section step="2 · When" title="Evaluation clock" help={H.editor.triggerTf}>
-            <div className="flex flex-wrap items-end gap-4">
-              <Cell label="Mode" help={H.editor.mode}>
-                <Segmented
-                  label="Evaluation mode"
-                  value={def.evaluation.mode}
-                  onChange={(mode) => set({ evaluation: { ...def.evaluation, mode } })}
-                  options={[
-                    { value: 'COMPLETED_CANDLE', label: 'Completed candle', help: { title: 'Completed candle', body: 'Evaluate once when each trigger candle closes, on closed candles only.' } },
-                    { value: 'LIVE_CANDLE', label: 'Live candle', help: { title: 'Live candle', body: 'Evaluate every minute on forming candles (faster, but can change before the close).' } },
-                  ]}
-                />
-              </Cell>
-              <Cell label="Trigger timeframe" help={H.editor.triggerTf}>
-                <select
-                  aria-label="Trigger timeframe"
-                  className="input py-1 text-xs"
-                  value={def.evaluation.triggerTimeframe}
-                  onChange={(e) => set({ evaluation: { ...def.evaluation, triggerTimeframe: e.target.value as StrategyDefinition['evaluation']['triggerTimeframe'] } })}
-                >
-                  {TIMEFRAMES.map((t) => (
-                    <option key={t.key} value={t.key}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-              </Cell>
-            </div>
-          </Section>
-
-          <Section step="3 · Conditions" title="When should it alert?" help={H.editor.conditions}>
-            <ExpressionEditor expression={def.expression} onChange={(expression: ExprNode) => set({ expression })} defaultSeries={defaultSeries} legs={def.legs} onAddLeg={addLeg} />
-          </Section>
-
-          <Section step="4 · Paper trading" title="Simulated trades on every alert" help={H.paper.section}>
+          <Section step="3 · Paper trading" title="Simulated trades on every alert" help={H.paper.section}>
             {strategy && savedPaper.isLoading ? (
               <InlineSpinner className="w-4 h-4 text-slate-500" />
             ) : (
               <PaperPlanEditor
                 def={def}
+                onPickInstrument={pickTrade}
                 plan={paper}
                 onChange={(p) => {
                   setServerError(null);
                   setPaperDirty(true);
                   setPaper(p);
+                  // An instrument picked here and dropped again (no condition reads it) leaves the strategy at once;
+                  // the saved strategy's own legs stay, so a paper-only change never makes a new version.
+                  setDef((d) => pruneLegs(d, [...planLegs(resolveRules(d, p.rules)), ...planLegs(p.rules), ...savedLegs]));
                 }}
               />
             )}
@@ -171,23 +127,11 @@ export function StrategyEditor({ strategy, initial, onClose }: { strategy?: V2St
 
         <aside className="flex flex-col gap-4 xl:sticky xl:top-4">
           <Section title="Preview" help={H.strategy.preview}>
-            <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-slate-300 font-mono">{strategySummary(def)}</pre>
+            <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-slate-300 font-mono">{strategySummary(def, planUses)}</pre>
           </Section>
-          <Section title="Validation" help={H.strategy.validation} actions={validation.isFetching ? <InlineSpinner className="w-3.5 h-3.5 text-slate-500" /> : undefined}>
+          <Section title="Validation" help={H.strategy.validation} actions={validation.fetching ? <InlineSpinner className="w-3.5 h-3.5 text-slate-500" /> : undefined}>
             {serverError && !serverError.issues && <p className="text-xs text-bear mb-2">{serverError.message}</p>}
-            {errors.length === 0 && warnings.length === 0 && validation.data && (
-              <p className="flex items-center gap-1.5 text-xs text-bull">
-                <CheckCircle2 className="w-3.5 h-3.5" /> No problems found
-              </p>
-            )}
-            <ul className="flex flex-col gap-1.5">
-              {[...errors, ...warnings].map((i) => (
-                <li key={`${i.path}:${i.message}`} className={clsx('flex items-start gap-1.5 text-xs', i.severity === 'error' ? 'text-bear' : 'text-warn')}>
-                  {i.severity === 'error' ? <XCircle className="w-3.5 h-3.5 shrink-0 mt-px" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />}
-                  <span>{i.message}</span>
-                </li>
-              ))}
-            </ul>
+            <IssueList issues={issues} checked={validation.checked} />
           </Section>
           <Section
             title="Try on a product"

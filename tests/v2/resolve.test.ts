@@ -47,7 +47,7 @@ describe('connection → units', () => {
     expect(r.units.map((u) => u.key)).toEqual(['2026-10-20|24950', '2026-10-20|25000', '2026-10-20|25050']);
     const edge = resolveUnits(d(legs), 'NSE:NIFTY', nifty, config(), 25_190, TODAY);
     expect(edge.units[0]!.legs.C).toBeNull();
-    expect(edge.notes.join()).toMatch(/Leg C .* outside the listed strikes/);
+    expect(edge.notes.join()).toMatch(/(CE|PE) ATM\S* is outside the listed strikes/);
   });
 
   it('never guesses ATM without a price', () => {

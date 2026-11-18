@@ -58,7 +58,7 @@ function compareColumns(connected: Record<string, string>): Column<CompareProduc
     {
       key: 'contracts',
       label: 'Contracts',
-      help: { title: 'Contracts', body: 'The unit (strike · expiry) and each leg’s contract it was checked on.' },
+      help: { title: 'Contracts', body: 'The unit (strike · expiry) and each instrument’s contract it was checked on.' },
       fields: [
         { key: 'contract', label: 'Contract', type: 'text', noSort: true, value: (p) => Object.values(p.unit?.legs ?? {}).flatMap((i: V2Instrument | null | undefined) => (i ? [i.symbol] : [])) },
         { key: 'strike', label: 'Strike', type: 'number', value: (p) => p.unit?.baseStrike },

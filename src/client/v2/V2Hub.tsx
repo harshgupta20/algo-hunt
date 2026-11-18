@@ -69,7 +69,7 @@ export function V2Hub() {
     <div>
       <PageHeader
         title="Futures & Options · Strategy + Product = Alert"
-        subtitle="Build product-agnostic strategies (1–4 legs), connect them to NSE indices, stocks or MCX commodities, and compare which products they fire on."
+        subtitle="Build product-agnostic strategies (conditions on spot, futures and options), connect them to NSE indices, stocks or MCX commodities, and compare which products they fire on."
         actions={
           <Tooltip content={H.nav}>
             <Badge tone="warn">beta</Badge>

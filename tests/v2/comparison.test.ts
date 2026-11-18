@@ -17,7 +17,7 @@ describe('Bollinger / price-level comparisons', () => {
     expect(r.cond.left).toEqual(close);
     expect(r.cond.right).toEqual(bb('upper'));
     expect(r.cond.operator).toBe('CROSSED_ABOVE');
-    expect(conditionText(r.cond, legs)).toBe('[A · FUT] [5 min] [Normal] Close crossed above Bollinger Bands(20,2) Upper');
+    expect(conditionText(r.cond, legs)).toBe('[FUT] [5 min] [Normal] Close crossed above Bollinger Bands(20,2) Upper');
     expect(r.note).toMatch(/price level/);
   });
 

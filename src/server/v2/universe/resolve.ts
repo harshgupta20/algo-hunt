@@ -118,8 +118,8 @@ export function resolveUnits(
       else {
         const k = strikes[atm + shift + (l.strikeOffset ?? 0)];
         legs[l.id] = k === undefined ? null : option(l.kind, k);
-        if (k === undefined) notes.push(`Leg ${l.id} (${l.kind} ${offsetName((l.strikeOffset ?? 0) + shift)}) is outside the listed strikes`);
-        else if (!legs[l.id]) notes.push(`Leg ${l.id}: no ${l.kind} listed at ${k}`);
+        if (k === undefined) notes.push(`${l.kind} ${offsetName((l.strikeOffset ?? 0) + shift)} is outside the listed strikes`);
+        else if (!legs[l.id]) notes.push(`No ${l.kind} listed at ${k}`);
       }
     }
     units.push({ key: `${expiry}|${base}`, productId, expiry, baseStrike: base, atmStrike: strikes[atm], shift, legs });

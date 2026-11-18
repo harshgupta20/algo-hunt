@@ -13,12 +13,13 @@ Configuration, MCX) and MCX V2 were removed on 2026-09-27. Trader guide: [v2-use
 ## 1. The idea
 
 ```
-Strategy  (logic only: 1–4 legs + conditions + evaluation clock — no product)
+Strategy  (logic only: conditions on up to 4 instruments — no product; legs and clock derived)
    + Connection  (strategy → product: expiry, strike positions, alert settings)
    = Alert
 ```
 
-- **Strategies are product-agnostic.** A strategy names **legs** — placeholders — and writes conditions between them.
+- **Strategies are product-agnostic.** Each condition picks the instrument it reads (SPOT / FUT / CE / PE at a strike) —
+  a placeholder the app keeps as the strategy's **legs** — and compares it with another value or a number.
 - **Products are an independent catalogue**: NSE indices (NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, NIFTYNXT50),
   BSE indices (SENSEX, BANKEX), every NSE cash stock (plus its futures and options where listed), and the MCX
   commodities.
@@ -35,13 +36,36 @@ Strategy  (logic only: 1–4 legs + conditions + evaluation clock — no product
 | `FUT` | the future | with option legs: the future the options expire into (first future expiring on/after the option expiry); otherwise the connection's futures expiry |
 | `CE` / `PE` + strike offset | an option of the connection's expiry at *ATM + position + offset*, stepping along the listed strikes | ATM = nearest listed strike to the spot price, or to the future when there is no spot (MCX) |
 
-A strategy has 1–4 legs (`A`–`D`), each optionally named. Conditions compare **any leg with any other leg** (or a
-number), each value on its own timeframe and candle type — e.g. `A · FUT RSI(14) > B · CE ATM RSI(14)`. The operand
-model leaves room for arithmetic operands later (differences, % gaps, strike levels).
+A strategy has 1–4 legs (`A`–`D`) — **derived, never edited** (since 2026-11-16; `src/shared/v2/legs.ts`). There is no
+legs step: each value in a condition picks its instrument (SPOT · FUT · CE · PE + strike) next to its timeframe and
+candle type, e.g. `FUT RSI(14) > CE ATM RSI(14)`. The letters stay internal (the engine, units, alerts, paper trades
+and backtests key on them) and every screen and message names a leg by its instrument (`legName`).
 
-In the editor, every Leg list ends with **+ Add FUT / CE ATM / PE ATM / SPOT leg** (adds the leg and assigns it), a
-hint with the same buttons appears while a strategy has a single leg, and groups can be named (shown in the preview,
-explain view and traces).
+- **Picking an instrument** (`instrumentPicker`) reuses the strategy's leg for it, or adds one on a free letter; with all
+  four taken, the value's own leg switches in place when nothing else uses it (for a trade rule: when no condition
+  reads it and no other rule trades or reads it).
+- **`tidyLegs`** runs on every edit of the conditions: legs nothing uses are dropped and the clock is re-derived. Legs
+  the trade plan uses (`planLegs`: what it trades, its trailing rules — also rules kept for groups that are gone for
+  now) stay exactly as they are, so *FUT conditions → buy CE ATM* keeps a leg no condition reads, and **editing the
+  conditions never changes what the plan trades**: switching the only FUT condition to CE ATM adds the call while the
+  plan keeps trading FUT; "What to trade" then says FUT isn't read and offers *Trade CE ATM instead* (one click). An
+  earlier draft let the new instrument take the old letter (the plan followed silently); an independent review showed
+  how that could switch an index strategy to trading its untradeable spot, so it was dropped.
+- A plan change drops a leg nothing uses any more (StrategyEditor, the Backtest builder) — never one the saved
+  strategy has, so a paper-only change makes no new version. Saving a strategy (`V2Service.updateStrategy`) re-resolves
+  its stored plan against the new rules, so no stored rule points at a letter that's gone or later reassigned.
+- **The clock** (`evaluation.triggerTimeframe`) isn't chosen either: `clockTimeframe` = the shortest timeframe the
+  conditions read (15 min + 1 h → 15 min), else Daily, else Weekly. It must be one a condition reads: each alert's leg
+  prices (`pricesAt`) and the wait for late vendor data (`pendingReason`, the live worker's `unsettled`) work on the
+  clock's own candles. Timeframes that don't divide the clock (10 + 15 min) are acted on at the next check — up to
+  5 min late there; the editor says so (`clockLags`). The editor sets the clock on every edit and
+  `strategyDefinitionSchema` sets it on whatever the API receives; strategies saved before keep their stored clock until
+  their rules are saved again (the editor shows a note with *Use 15 min*).
+- Groups can be named (shown in the preview, explain view and traces). The operand model leaves room for arithmetic
+  operands later (differences, % gaps, strike levels).
+- **Moving average of an indicator** (`ma: { type: SMA | EMA | WMA, period }` on RSI / ADX, as in Equity): RSI + SMA is
+  TradingView's RSI-based MA (the editor lists it as its own entry, default SMA 14). The average starts once the
+  indicator has `period` values (warm-up values skipped, as TradingView does); EMA is SMA-seeded.
 
 A product can run a strategy only if it has every leg type the strategy uses; the UI marks the rest "can't run" and
 the server refuses them.

@@ -117,9 +117,9 @@ describe('options backtest', () => {
       expect(t).toMatchObject({ entryAt: new Date(ist(date, '10:15')).toISOString(), entryPrice: 100, targetPrice: 110, stopPrice: 95, exitReason: 'TARGET', exitPrice: 110, exitAt: new Date(ist(date, '10:35')).toISOString(), quantity: qty, lots: 1, grossPnl: 10 * qty, netPnl: 10 * qty, charges: 0 });
     }
     expect(r.summary.overall).toMatchObject({ trades: 3, wins: 3, netPnl: 750 + 750 + 650 });
-    expect(r.products[0]!.contracts).toContain('A · SPOT: NIFTY');
+    expect(r.products[0]!.contracts).toContain('SPOT: NIFTY');
     // Every contract a candle read: also the mornings' ATM (E1 25,000 on 13 Oct, E2 25,000 on 14 Oct, before 10:00).
-    expect(r.products[0]!.contracts.find((c) => c.startsWith('B ·'))).toMatch(/^B · CE ATM: 4 contracts over 2 expiries \(NIFTY 25000 CE 2026-10-13 … NIFTY 25050 CE 2026-10-20\)$/);
+    expect(r.products[0]!.contracts.find((c) => c.startsWith('CE ATM'))).toMatch(/^CE ATM: 4 contracts over 2 expiries \(NIFTY 25000 CE 2026-10-13 … NIFTY 25050 CE 2026-10-20\)$/);
   });
 
   it('gives the same trades as the Backtest when the contract it picks is the one the Backtest fixes', async () => {
@@ -210,7 +210,7 @@ describe('options backtest', () => {
     // Every 15-minute close from 10:15 to 15:30 → 22 alerts, on calls walking from 25,000 up to 25,200 (25,015 → 25,225;
     // a close exactly between two strikes keeps the lower one, as the scanner's resolver does).
     expect(whileTrue.products[0]!.alerts).toBe(22);
-    expect(whileTrue.products[0]!.contracts.find((c) => c.startsWith('B ·'))).toMatch(/^B · CE ATM: 5 contracts over 1 expiry \(NIFTY 25000 CE .* … NIFTY 25200 CE /);
+    expect(whileTrue.products[0]!.contracts.find((c) => c.startsWith('CE ATM'))).toMatch(/^CE ATM: 5 contracts over 1 expiry \(NIFTY 25000 CE .* … NIFTY 25200 CE /);
     expect(s.id).not.toBe(gt.id);
   });
 
@@ -226,7 +226,7 @@ describe('options backtest', () => {
     expect(r.trades).toHaveLength(1);
     expect(r.trades[0]).toMatchObject({ exitReason: 'STOP_RULE', exitAt: new Date(ist(D1, '11:15')).toISOString(), exitPrice: 98 });
     expect(r.trades[0]!.instrument.strike).toBe(25_000);
-    expect(r.notes.some((n) => /^Trailing rules: .*on the legs the trade was opened with/.test(n))).toBe(true);
+    expect(r.notes.some((n) => /^Trailing rules: .*on the contracts the trade was opened with/.test(n))).toBe(true);
   });
 
   it('watch window: an alert candle outside it opens nothing', async () => {
@@ -279,7 +279,7 @@ describe('options backtest', () => {
     expect(r.trades.map(money)).toEqual((await run({})).trades.map(money));
     expect(r.notes.join(' ')).toContain('The index / stock from Kite; every contract from Upstox');
     // ATM and the spot leg read Kite's candles; Upstox's index is read only to check it against Kite's.
-    expect(r.products[0]!.contracts).toContain('A · SPOT: NIFTY 50');
+    expect(r.products[0]!.contracts).toContain('SPOT: NIFTY 50');
     expect(r.checks).toEqual([
       expect.objectContaining({ productId: P, what: 'NIFTY 50 (index / stock), 15-minute closes', from: D1, to: D3, matched: 75, medianDiffPct: 0, withinTickPct: 100, ok: true }),
       expect.objectContaining({ productId: P, what: `${kCall.symbol} (contract), 1-minute closes`, matched: 375, ok: true }),

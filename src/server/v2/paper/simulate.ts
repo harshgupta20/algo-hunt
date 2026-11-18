@@ -15,7 +15,7 @@
  *   one open position per product (a backtest tests one strike position)
  */
 import type { BacktestSkip, PaperExitReason, PaperPlan, PaperTrade, StrategyDefinition, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
-import { atTarget, conditionKey, nodeText, paperGroups, planSizing, tradePath, trailing, trailingRules, trailsPastTarget, watchWindow } from '@/shared/v2';
+import { atTarget, conditionKey, legNameById, nodeText, paperGroups, planSizing, tradePath, trailing, trailingRules, trailsPastTarget, watchWindow } from '@/shared/v2';
 import { exitDefinition } from '../engine/series';
 import { istDate } from '../../utils/marketTime';
 import type { MarketCalendar } from '../calendar/MarketCalendar';
@@ -199,11 +199,11 @@ export function simulate(x: SimInput): SimOutput {
     }
     const inst = e.unit.legs[rule.leg] ?? null;
     if (!inst) {
-      skip(e, `Leg ${rule.leg} has no listed contract`);
+      skip(e, `${legNameById(rule.leg, d.legs)} has no listed contract`);
       continue;
     }
     if (inst.kind === 'SPOT' && product.kind !== 'STOCK') {
-      skip(e, 'An index can’t be traded — choose its future or an option leg');
+      skip(e, 'An index can’t be traded — choose its future or an option');
       continue;
     }
     const squareOffTime = product.market === 'MCX' ? plan.squareOffMcx : plan.squareOffNse;

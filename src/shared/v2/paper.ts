@@ -352,6 +352,16 @@ function legsIn(n: ExprNode, out = new Set<LegId>()): Set<LegId> {
   return out;
 }
 
+/** Legs a plan's rules use — what they trade and what their trailing rules read — so editing the conditions keeps them. */
+export function planLegs(rules: PaperRule[] = []): Set<LegId> {
+  const out = new Set<LegId>();
+  for (const r of rules) {
+    if (r.leg) out.add(r.leg);
+    if (r.stopWhen) legsIn(r.stopWhen, out);
+  }
+  return out;
+}
+
 /** The leg a group most naturally trades: its option leg (CE / PE), else its future, else spot. */
 export function naturalLeg(legs: LegDef[], node: ExprNode): LegId | null {
   const used = legs.filter((l) => legsIn(node).has(l.id));

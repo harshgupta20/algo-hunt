@@ -66,14 +66,16 @@ describe('strategy + connection validation', () => {
   it('accepts a product-agnostic strategy comparing two legs', () => {
     expect(strategyDefinitionSchema.safeParse(s).success).toBe(true);
     expect(validateStrategy(s).filter((i) => i.severity === 'error')).toEqual([]);
-    expect(legName(s.legs[1]!)).toBe('B · CE ATM+1');
-    expect(strategySummary(s)).toMatch(/\[A · FUT\] \[15 min\] \[Normal\] RSI\(14\) > \[B · CE ATM\+1\] \[15 min\] \[Normal\] RSI\(14\)/);
+    // Legs read as their instrument — the letters are internal since conditions pick instruments directly.
+    expect(legName(s.legs[1]!)).toBe('CE ATM+1');
+    expect(strategySummary(s)).toMatch(/\[FUT\] \[15 min\] \[Normal\] RSI\(14\) > \[CE ATM\+1\] \[15 min\] \[Normal\] RSI\(14\)/);
   });
 
-  it('rejects conditions on missing legs, flags unused legs and more than 4 legs', () => {
+  it('rejects conditions on missing legs and more than 4 instruments; a leg only the trade plan uses is fine', () => {
     const missing = { ...s, expression: cond(field(legSeries('C')), 'GT', num(1)) };
-    expect(validateStrategy(missing).map((i) => i.message).join()).toMatch(/Uses leg C, which the strategy doesn't have/);
-    expect(validateStrategy({ ...s, legs: [...s.legs, { id: 'C', kind: 'PE' }] }).some((i) => i.severity === 'warning' && /Leg C isn't used/.test(i.message))).toBe(true);
+    expect(validateStrategy(missing).map((i) => i.message).join()).toMatch(/Reads an instrument the strategy doesn't have — pick its SPOT \/ FUT \/ CE \/ PE again/);
+    // e.g. FUT conditions → the plan buys PE ATM: no condition reads leg C, and that's not worth a warning.
+    expect(validateStrategy({ ...s, legs: [...s.legs, { id: 'C', kind: 'PE' }] })).toEqual([]);
     expect(strategyDefinitionSchema.safeParse({ ...s, legs: ['A', 'B', 'C', 'D', 'A'].map((id) => ({ id, kind: 'FUT' })) }).success).toBe(false);
   });
 
@@ -105,8 +107,8 @@ describe('named groups', () => {
       },
     );
     const text = strategySummary(d);
-    expect(text).toMatch(/Future conditions: \(\[A · FUT\] \[15 min\] \[Normal\] RSI\(14\) > 60\)/);
-    expect(text).toMatch(/AND Option conditions: \(\[B · CE ATM\]/);
+    expect(text).toMatch(/Future conditions: \(\[FUT\] \[15 min\] \[Normal\] RSI\(14\) > 60\)/);
+    expect(text).toMatch(/AND Option conditions: \(\[CE ATM\]/);
   });
 });
 

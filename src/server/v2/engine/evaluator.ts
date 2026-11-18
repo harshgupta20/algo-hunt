@@ -31,7 +31,7 @@ import type {
   V2Instrument,
   V2Unit,
 } from '@/shared/v2';
-import { CANDLE_TYPES, INDICATOR, PATTERN, TIMEFRAME, conditionText, nodeText, operandCore } from '@/shared/v2';
+import { CANDLE_TYPES, PATTERN, TIMEFRAME, conditionText, legKindText, legNameById, nodeText, operandCore, operandHistory } from '@/shared/v2';
 import type { Candle } from './candles';
 import { fieldValue, indicatorKey, indicatorValues, patternValues } from './indicators';
 import { forEachLeaf, legInstrument, seriesKey } from './series';
@@ -138,7 +138,7 @@ class UnitContext {
     const instrument = legInstrument(s.leg, this.input.unit);
     if (!instrument) {
       const def = this.input.definition.legs.find((l) => l.id === s.leg);
-      return { error: !def ? `leg ${s.leg} is not defined` : `no ${def.kind} contract for leg ${s.leg} on this product${def.kind === 'CE' || def.kind === 'PE' ? ' / strike' : ''}` };
+      return { error: !def ? 'reads an instrument the strategy doesn’t have' : `no ${legKindText(def)} contract on this product${def.kind === 'CE' || def.kind === 'PE' ? ' at this strike' : ''}` };
     }
     const res = this.input.lookup(instrument, s);
     if ('error' in res) return { error: res.error, instrument };
@@ -153,7 +153,7 @@ class UnitContext {
   operand(o: Operand): ResolvedOperand {
     if (o.kind === 'CONSTANT') return { label: String(o.value), constant: o.value, idx: 0 };
     const s = this.series(o.series);
-    const label = `${s.instrument ? seriesLabel(s.instrument, o.series) : o.series.leg} · ${operandCore(o)}`;
+    const label = `${s.instrument ? seriesLabel(s.instrument, o.series) : legNameById(o.series.leg, this.input.definition.legs)} · ${operandCore(o)}`;
     const leg = o.series.leg;
     if ('error' in s) return { label, leg, idx: -1, error: s.error };
     const key = `${seriesKey(s.instrument, o.series)}|${this.mode}`;
@@ -173,8 +173,7 @@ class UnitContext {
         );
         break;
       case 'INDICATOR': {
-        const spec = INDICATOR[o.indicator];
-        need = spec ? spec.requiredHistory(o.params) : 1;
+        need = operandHistory(o);
         const raw = this.cached(`${key}|I:${indicatorKey(o)}`, () => indicatorValues(s.candles, o));
         const m = o.multiplier ?? 1;
         values = m === 1 ? raw : raw.map((v) => (v === undefined ? undefined : v * m));
@@ -186,7 +185,7 @@ class UnitContext {
 
   pattern(n: PatternNode): { values?: Array<boolean | undefined>; candles?: Candle[]; idx: number; label: string; error?: string } {
     const s = this.series(n.series);
-    const label = `${s.instrument ? seriesLabel(s.instrument, n.series) : n.series.leg} · ${PATTERN[n.pattern]?.label ?? n.pattern}`;
+    const label = `${s.instrument ? seriesLabel(s.instrument, n.series) : legNameById(n.series.leg, this.input.definition.legs)} · ${PATTERN[n.pattern]?.label ?? n.pattern}`;
     if ('error' in s) return { label, idx: -1, error: s.error };
     const values = this.cached(`${seriesKey(s.instrument, n.series)}|${this.mode}|P:${n.pattern}`, () => patternValues(s.candles, n.pattern));
     return { label, values, candles: s.candles, idx: s.idx };

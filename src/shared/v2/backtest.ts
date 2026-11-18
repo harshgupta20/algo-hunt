@@ -12,10 +12,20 @@
 import { z } from 'zod';
 import type { PaperPlan, PaperStats, PaperSummary, PaperTrade } from './paper';
 import { paperPlanSchema } from './paper';
-import type { ExpirySelector, Timeframe } from './types';
+import { strategyDefinitionSchema } from './schema';
+import type { ExpirySelector, StrategyDefinition, Timeframe } from './types';
+
+/** The id a backtest gives a strategy that isn't saved yet (built on the Backtest page). */
+export const UNSAVED_STRATEGY_ID = 'unsaved';
 
 export interface BacktestRequest {
-  strategyId: string;
+  /** The saved strategy to test — or, with `definition`, the one its unsaved changes start from. */
+  strategyId?: string;
+  /**
+   * The strategy as built on the Backtest page, not saved (yet): tested instead of the saved one. Without
+   * `strategyId` it is a new strategy.
+   */
+  definition?: StrategyDefinition;
   products: string[];
   /** IST dates, inclusive. */
   from: string;
@@ -139,7 +149,8 @@ export interface BacktestJob {
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const backtestRequestSchema = z.object({
-  strategyId: z.string().min(1),
+  strategyId: z.string().min(1).optional(),
+  definition: strategyDefinitionSchema.optional(),
   products: z.array(z.string().min(1)).min(1),
   from: isoDate,
   to: isoDate,
@@ -148,7 +159,7 @@ export const backtestRequestSchema = z.object({
   strikeShift: z.number().int().min(-10).max(10).optional(),
   trigger: z.enum(['ON_TRANSITION', 'WHILE_TRUE']).optional(),
   cooldownMinutes: z.number().min(0).max(1440).nullable().optional(),
-}) as unknown as z.ZodType<BacktestRequest>;
+}).refine((r) => r.strategyId || r.definition, { message: 'Choose a strategy, or build one', path: ['strategyId'] }) as unknown as z.ZodType<BacktestRequest>;
 
 /** Upstox — every contract a backtest reads on NSE / BSE (expired ones included): set up, logged in, until when. */
 export interface OptionsSourceStatus {

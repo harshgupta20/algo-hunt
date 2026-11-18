@@ -107,8 +107,8 @@ export function exampleStrategies(): Array<{ key: string; label: string; descrip
     },
     {
       key: 'fut-leads-call',
-      label: 'Future leads the call (2 legs)',
-      description: 'A · FUT and B · CE ATM on 15-minute candles: the future’s RSI(14) is above the call’s, and the call’s RSI(14) crosses above 60.',
+      label: 'Future leads the call (FUT + CE)',
+      description: 'FUT and CE ATM on 15-minute candles: the future’s RSI(14) is above the call’s, and the call’s RSI(14) crosses above 60.',
       definition: {
         schemaVersion: 1,
         name: 'Future leads the call',
@@ -122,8 +122,8 @@ export function exampleStrategies(): Array<{ key: string; label: string; descrip
     },
     {
       key: 'call-vs-put',
-      label: 'Call up, put down (2 legs)',
-      description: 'B · CE ATM RSI crosses above 60 while C · PE ATM RSI crosses below 40, and the call closes above its SMA(20).',
+      label: 'Call up, put down (CE + PE)',
+      description: 'CE ATM RSI crosses above 60 while PE ATM RSI crosses below 40, and the call closes above its SMA(20).',
       definition: {
         schemaVersion: 1,
         name: 'Call up, put down',
@@ -137,7 +137,7 @@ export function exampleStrategies(): Array<{ key: string; label: string; descrip
     },
     {
       key: 'four-legs',
-      label: 'Future + 3 options (4 legs)',
+      label: 'Future + 3 options (4 instruments)',
       description: 'FUT RSI above 60, the ATM call crossing above 60, the ATM put below 40, and a volume spike on the call two strikes above ATM.',
       definition: {
         schemaVersion: 1,
@@ -159,8 +159,8 @@ export function exampleStrategies(): Array<{ key: string; label: string; descrip
     },
     {
       key: 'spot-breakout',
-      label: 'Spot breakout (1 leg — stocks too)',
-      description: 'A · SPOT closes above its upper Bollinger band with volume 1.5× its 20-candle average. Works on cash stocks.',
+      label: 'Spot breakout (SPOT — stocks too)',
+      description: 'SPOT closes above its upper Bollinger band with volume 1.5× its 20-candle average. Works on cash stocks.',
       definition: {
         schemaVersion: 1,
         name: 'Spot breakout',
