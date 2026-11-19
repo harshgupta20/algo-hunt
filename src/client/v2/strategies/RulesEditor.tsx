@@ -6,10 +6,13 @@
  *
  * No legs step and no clock to set (2026-11-16): each condition picks its instrument (SPOT / FUT / CE / PE) and
  * its timeframe; the legs and the clock follow from them (tidyLegs, shared/v2/legs.ts).
+ *
+ * Conditions open in the simple view — one line per leg (SimpleConditions, 2026-11-19) — unless they use something
+ * a line can't show; the Advanced view is the full editor (patterns, NOT, groups, other candles …).
  */
 import { useEffect, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Info, XCircle } from 'lucide-react';
 import clsx from 'clsx';
 import type { ExprNode, LegId, StrategyDefinition, ValidationIssue } from '@/shared/v2';
 import { TIMEFRAME, clockLags, clockText, clockTimeframe, tidyLegs, withDerivedClock } from '@/shared/v2';
@@ -20,6 +23,8 @@ import { H } from '../help';
 import { dominantSeries, legSeries } from './defaults';
 import { ExpressionEditor } from './ExpressionEditor';
 import { instrumentPicker } from './InstrumentPicker';
+import { SimpleConditions } from './SimpleConditions';
+import { simpleIssue } from './simpleRows';
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -93,6 +98,10 @@ export function RulesEditor({
   const derived = clockTimeframe(def.expression);
   const staleClock = derived && derived !== def.evaluation.triggerTimeframe ? derived : null;
   const lags = staleClock ? [] : clockLags(def.expression);
+  // Simple unless the trader picked Advanced, or the conditions use something a line can't show.
+  const issue = simpleIssue(def.expression);
+  const [view, setView] = useState<'simple' | 'advanced'>(() => (issue ? 'advanced' : 'simple'));
+  const simple = view === 'simple' && !issue;
 
   return (
     <>
@@ -134,8 +143,49 @@ export function RulesEditor({
         )}
       </Section>
 
-      <Section plain={plain} step="2 · Conditions" title="When should it alert?" help={H.editor.conditions}>
-        <ExpressionEditor expression={def.expression} onChange={setExpression} defaultSeries={defaultSeries} legs={def.legs} onPickInstrument={pick} />
+      <Section
+        plain={plain}
+        step="2 · Conditions"
+        title="When should it alert?"
+        help={simple ? H.simple.view : H.editor.conditions}
+        actions={
+          <div role="radiogroup" aria-label="Conditions view" className="flex overflow-hidden rounded-lg border border-ink-700 text-xs">
+            {(['simple', 'advanced'] as const).map((v) => {
+              const on = v === 'simple' ? simple : !simple;
+              const blocked = v === 'simple' && !!issue;
+              return (
+                <Tooltip key={v} content={v === 'advanced' ? H.simple.advanced : blocked ? { ...H.simple.blocked, note: `${issue}.` } : H.simple.view} side="bottom">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    disabled={blocked}
+                    onClick={() => setView(v)}
+                    className={clsx('px-2.5 py-1 font-semibold', on ? 'bg-accent text-white' : 'bg-ink-800 text-slate-400 hover:text-slate-200', blocked && 'cursor-not-allowed opacity-50 hover:text-slate-400')}
+                  >
+                    {v === 'simple' ? 'Simple' : 'Advanced'}
+                  </button>
+                </Tooltip>
+              );
+            })}
+          </div>
+        }
+      >
+        {simple ? (
+          <SimpleConditions expression={def.expression} onChange={setExpression} defaultSeries={defaultSeries} legs={def.legs} onPickInstrument={pick} />
+        ) : (
+          <>
+            {issue && (
+              <Tooltip content={H.simple.blocked} className="mb-2.5 block">
+                <p className="flex w-fit cursor-help items-center gap-1.5 text-[11px] text-slate-500">
+                  <Info className="h-3.5 w-3.5 shrink-0" />
+                  Shown in Advanced — {issue}.
+                </p>
+              </Tooltip>
+            )}
+            <ExpressionEditor expression={def.expression} onChange={setExpression} defaultSeries={defaultSeries} legs={def.legs} onPickInstrument={pick} />
+          </>
+        )}
       </Section>
     </>
   );

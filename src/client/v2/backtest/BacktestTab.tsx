@@ -19,7 +19,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, ChevronRight, CopyPlus, Download, FlaskConical, LogIn, LogOut, Pencil, Plus, Save, Undo2, X } from 'lucide-react';
 import clsx from 'clsx';
 import type { BacktestJob, BacktestResult, ConnectionConfig, LegId, PaperPlan, PaperRule, StrategyDefinition, V2Strategy } from '@/shared/v2';
-import { EXPIRY_MODES, TIMEFRAME, defaultPaperPlan, hasCondition, paperGroups, planLegs, planSizing, pruneLegs, resolveRules, strategySummary, watchWindowIssue } from '@/shared/v2';
+import { EXPIRY_MODES, TIMEFRAME, defaultPaperPlan, hasCondition, paperGroupWord, paperGroups, planLegs, planSizing, pruneLegs, resolveRules, stopOf, strategySummary, targetOf, watchWindowIssue } from '@/shared/v2';
 import { InfoTip, Tooltip } from '../../components/Tooltip';
 import { Badge, EmptyState, StatCard } from '../../components/ui';
 import { InlineSpinner } from '../../components/loaders';
@@ -29,6 +29,7 @@ import { daysAgo, istStampIso, istToday } from '../format';
 import { H } from '../help';
 import { ProductPicker } from '../ProductPicker';
 import { PaperRulesEditor } from '../strategies/PaperPlanEditor';
+import { ExitConditionsEditor } from '../paper/ExitConditionsEditor';
 import { blankStrategy } from '../strategies/defaults';
 import { instrumentPicker } from '../strategies/InstrumentPicker';
 import { IssueList, RulesEditor, useStrategyValidation } from '../strategies/RulesEditor';
@@ -77,7 +78,7 @@ const duration = (seconds: number) => {
 const planKey = (p: PaperPlan) =>
   JSON.stringify({
     ...p,
-    rules: p.rules.map((r) => ({ group: r.group, leg: r.leg, side: r.side, stopWhen: hasCondition(r.stopWhen) ? r.stopWhen : null })),
+    rules: p.rules.map((r) => ({ group: r.group, leg: r.leg, side: r.side, stopWhen: hasCondition(r.stopWhen) ? r.stopWhen : null, exitWhen: hasCondition(r.exitWhen) ? r.exitWhen : null })),
   });
 
 /** What to change when alerts were skipped for this reason. */
@@ -1017,9 +1018,10 @@ export function BacktestTab({ initialStrategyId }: { initialStrategyId?: string 
                   )}
                 </div>
                 <div className="flex flex-col gap-3">
-                  <PaperTermsFields value={plan} onChange={setPlan} base={saved ?? undefined} hasGroups={paperGroups(def).length > 0} sizing={sizing} nseOnly={nseOnly} />
                   <PaperRulesEditor def={def} rules={rules} onChange={(r) => setRules(r)} onPickInstrument={draft ? instrumentPicker(draft.def, updateDraft, keepLegs) : undefined} />
-                  {plan.trailing && <ConditionsEditor def={def} rules={rules} targetPct={plan.targetPct} onChange={(r) => setRules(r)} />}
+                  <PaperTermsFields value={plan} onChange={setPlan} base={saved ?? undefined} hasGroups={paperGroups(def).length > 0} groupWord={paperGroupWord(def)} sizing={sizing} nseOnly={nseOnly} />
+                  <ExitConditionsEditor def={def} rules={rules} onChange={(r) => setRules(r)} onPickInstrument={draft ? instrumentPicker(draft.def, updateDraft, keepLegs) : undefined} target={targetOf(plan)} stop={stopOf(plan)} />
+                  {plan.trailing && <ConditionsEditor def={def} rules={rules} target={targetOf(plan)} onChange={(r) => setRules(r)} />}
                   {savePlan.error && <p className="text-xs text-bear">{(savePlan.error as Error).message}</p>}
                 </div>
               </div>

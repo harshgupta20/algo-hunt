@@ -144,6 +144,22 @@ describe('live candles', () => {
     expect(after.candles[0]).toMatchObject({ open: 198, high: 203, volume: 90 });
   });
 
+  it('a contract’s high / low over a span (the signal candle of a paper stop-loss) — only when the stream watched all of it', () => {
+    const lc = make();
+    tick(lc, '09:15:10', 101, 10);
+    tick(lc, '09:16:20', 98.5, 20);
+    tick(lc, '09:17:40', 103, 30);
+    tick(lc, '09:20:10', 104, 40);
+    lc.finalize(at('09:21:03'));
+    expect(lc.range(T, at('09:15:00'), at('09:20:00'))).toEqual({ high: 103, low: 98.5 });
+    expect(lc.range(T, at('09:20:00'), at('09:21:00'))).toEqual({ high: 104, low: 104 });
+    expect(lc.range(999, at('09:15:00'), at('09:20:00'))).toBeUndefined(); // not streamed
+    // The socket dropped for a while: that span isn't trusted (Kite's candles are asked instead).
+    lc.lost([T], at('09:21:30'));
+    expect(lc.range(T, at('09:20:00'), at('09:25:00'))).toBeUndefined();
+    expect(lc.range(T, at('09:15:00'), at('09:20:00'))).toEqual({ high: 103, low: 98.5 });
+  });
+
   it("doesn't trust Kite's data past a period it is still missing (Kite catching up)", () => {
     const lc = make();
     tick(lc, '09:15:30', 101, 10);

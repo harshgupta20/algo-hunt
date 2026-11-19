@@ -200,6 +200,68 @@ export const H = {
     },
   } satisfies Record<string, TooltipContent>,
 
+  /** The simple conditions view: one line per leg (strategy editor and the Backtest builder). */
+  simple: {
+    view: {
+      title: 'Simple view',
+      body: 'One line per leg: instrument → timeframe → indicator → comparison → a number or another indicator. The compared indicator reads the same instrument and timeframe.',
+    },
+    advanced: {
+      title: 'Advanced view',
+      body: 'The full editor: candle patterns, NOT, groups inside groups, Heikin Ashi / volume candles, an indicator of volume / OI, a multiplier, and comparing with another instrument or timeframe.',
+      note: 'Strategies that use any of these open here. Remove them to go back to the simple view.',
+    },
+    blocked: { title: 'Simple view not available', body: 'These conditions use something a one-line leg can’t show — edit them in the Advanced view.' },
+    all: { title: 'All legs (AND)', body: 'Set every gap between the legs to AND: alert only when every leg is true on the same check.', example: 'Leg 1 AND Leg 2 AND Leg 3', note: 'Click the AND / OR between two legs to change just that gap.' },
+    any: {
+      title: 'Any leg (OR)',
+      body: 'Set every gap between the legs to OR: alert when at least one leg is true.',
+      note: 'Each leg can then trade its own instrument (Paper trading → What to trade). Click the AND / OR between two legs to change just that gap.',
+    },
+    joinAnd: {
+      title: 'AND',
+      body: 'Both legs must be true. Click to make it OR.',
+      note: 'AND joins first: Leg 1 AND Leg 2 OR Leg 3 = (Leg 1 AND Leg 2) OR Leg 3 — legs joined by AND form a block, marked at its left.',
+    },
+    joinOr: {
+      title: 'OR',
+      body: 'Either side of this line is enough. Click to make it AND.',
+      note: 'Each block between two ORs fires on its own and can trade its own instrument (Paper trading → What to trade).',
+    },
+    mixed: {
+      title: 'How the legs combine',
+      body: 'AND joins before OR, so the legs between two ORs are a block that must all be true — and any one block is enough.',
+      example: 'Leg 1 AND Leg 2 OR Leg 3 = (Leg 1 AND Leg 2) OR Leg 3',
+    },
+    leg: {
+      title: 'Leg',
+      body: 'One condition of the strategy, read left to right: instrument, timeframe, indicator, comparison, then a number or an indicator.',
+      example: 'FUT · 15 min · RSI(14) crossed above 60',
+    },
+    instrument: {
+      title: 'Instrument',
+      body: 'What this leg reads: SPOT (index value / stock cash price), FUT (the future), CE (call) or PE (put) at a strike from ATM.',
+      note: 'No product is chosen here — each becomes the connected product’s contract. Up to 4 different instruments per strategy.',
+    },
+    strike: { title: 'Strike', body: 'Listed strikes away from ATM: ATM, ATM+1 (one strike above), ATM−2 (two below)… ATM comes from the spot price (the future on MCX).' },
+    timeframe: { title: 'Timeframe', body: 'Candle size this leg reads — both sides of the comparison. The strategy is checked as the shortest timeframe of its legs closes.' },
+    value: { title: 'Indicator', body: 'What this leg looks at: a price (Close, Open, High, Low, Volume, OI) or an indicator. Its settings are in the brackets after it.' },
+    setting: { title: 'Setting', body: 'Change the number in the bracket.' },
+    output: { title: 'Line', body: 'Which line of the indicator: Bollinger Upper / Middle / Lower, MACD line / signal, +DI / −DI…' },
+    operator: {
+      title: 'Comparison',
+      body: 'Greater / less / equal compare the two values on the checked candle. Crossed above = the previous candle was at or below and this one is above (crossed below: the other way).',
+    },
+    rightKind: {
+      title: 'Number or indicator',
+      body: 'Compare with a fixed number (e.g. RSI with 60), or with an indicator / price on the same instrument and timeframe (e.g. Close with SMA(20)).',
+    },
+    number: { title: 'Number', body: 'The fixed level to compare with, e.g. 60 for RSI, 25 for ADX, 1 for Bollinger %B, or a price for Close.' },
+    copy: { title: 'Copy leg', body: 'Add a copy of this leg below — then change what differs.' },
+    remove: { title: 'Remove leg', body: 'Delete this leg.' },
+    add: { title: 'Add leg', body: 'Add a condition line: instrument, timeframe, indicator, comparison, number or indicator.', note: 'Starts on the instrument and timeframe most legs use.' },
+  } satisfies Record<string, TooltipContent>,
+
   connection: {
     collapse: { title: 'Minimize', body: 'Collapse this strategy’s list to its header (the products stay listed in one line). Remembered in this browser.' },
     expand: { title: 'Expand', body: 'Show every connection of this strategy again.' },
@@ -469,11 +531,12 @@ export const H = {
     sell: { title: 'Sell', body: 'Open by selling the contract; profit when its price goes down. Uses an estimated margin.' },
     target: {
       title: 'Target',
-      body: 'This % in your favour from the entry. Normally it closes the trade in profit (a limit order, filled at the target price). With Trailing SL on it doesn’t close the trade: it is where trailing starts — needed then. Untick for no target.',
+      body: 'This far in your favour from the entry — in % of the entry price, or in price points of the traded contract (% / pts). Normally it closes the trade in profit (a limit order, filled at the target price). With Trailing SL on it doesn’t close the trade: it is where trailing starts — needed then. Untick for no target.',
+      example: 'Buy CE at ₹150: +20 % → ₹180 · +20 pts → ₹170',
     },
     stop: {
       title: 'Stop-loss',
-      body: 'Close when the contract moves this % against you from the entry (a market order at the price that crossed it). Untick for no stop-loss.',
+      body: 'Close when the contract moves this far against you from the entry — in % of the entry price, in price points (% / pts), or at the signal candle’s low (buy) / high (sell) (prev candle) — a market order at the price that crossed it. Untick for no stop-loss.',
       note: 'With Trailing SL on it guards the trade only until the target. If a stop and the target are reached at once the stop-loss counts — results are never flattered.',
     },
     trailing: {
@@ -488,6 +551,13 @@ export const H = {
     storyWorst: { title: 'Worst price', body: 'The worst price while the trade was open and the loss there, before charges — how far it went against you.' },
     storyGiven: { title: 'Given back', body: 'Profit at the best price minus the profit at the exit (before charges) — what the exit let go.' },
     storyStop: { title: 'The stop', body: 'The price stop when the trade closed (or now, while open): the stop-loss until the target. With Trailing SL there is none after the target — the trailing rules close it.' },
+    conditionsChart: {
+      title: 'Why it entered and exited',
+      body: 'The candles of the instrument and timeframe the conditions read, around this trade — with the values they compare (e.g. RSI and its MA in the pane below, averages and bands on the candles) and the numbers they compare with (dashed). The blue candle is where the conditions were met: the trade entered at its close. The dashed line is where it exited.',
+      note: 'Computed by the backtest from the same candles it decided on. Hover a candle for its prices and values.',
+    },
+    conditionsChartSeries: { title: 'Instrument and timeframe', body: 'The conditions read more than one instrument or timeframe — each has its own chart.' },
+    storyPath: { title: 'The traded contract', body: 'The price of the contract the trade held, from entry to exit, with its target and stop-loss — what closed it.' },
     storyBars: { title: 'Bar size', body: 'Minutes of trading in each bar of the chart — 1-minute candles merged so the whole trade fits. The trade itself was followed minute by minute (live: every price).' },
     trailingNoRules: {
       title: 'Trailing SL',
@@ -506,6 +576,22 @@ export const H = {
       body: 'Trail a winning trade with your own conditions — price below a moving average, the previous candle’s low broken, RSI turning. Combine as many as you like with AND / OR, on any of the strategy’s instruments and timeframes.',
       note: 'With Trailing SL on they start at the target and are checked at every candle close of the smallest timeframe used after that; the trade exits at that close. Square-off, expiry and the other group still apply — whichever comes first. Paper trading and both backtests use them.',
     },
+    exitBlock: {
+      title: 'Additional exit condition',
+      body: 'An exit in addition to the target and stop-loss — e.g. a buy on “RSI crossed above its MA” also exits on “RSI crossed below its MA”. A trade has three ways out; whichever comes first closes it: the target (always a profit), the stop-loss (always a loss), or this condition at the candle close where it comes true (a profit or a loss — wherever the price is then).',
+      example: 'Buy ₹25,100 · target +50 pts (₹25,150) · stop ₹25,080 · RSI crosses back at the 10:50 close with the price at ₹25,130 → closed there, +30',
+      note: 'Checked at every candle close from the entry on; the target and stop-loss on every price. Independent of the alert settings (cooldown, “becomes true”). Square-off still applies. Paper trading and both backtests use it.',
+    },
+    exitTarget: { title: '① Target', body: 'Closes the trade when the price moves this far in your favour — always a profit. Set in Size & exits above.' },
+    exitStop: { title: '② Stop-loss', body: 'Closes the trade when the price moves this far against you — always a loss. Set in Size & exits above.' },
+    exitCondition: {
+      title: '③ Additional exit condition',
+      body: 'Closes the trade at the candle close where the condition below comes true — in profit or in loss, wherever the price is then. Whichever of ①, ② and ③ comes first closes the trade.',
+    },
+    exitOpposite: { title: 'Opposite of its entry', body: 'Fill in the mirror of the conditions that open these trades: crossed above ↔ crossed below, > ↔ <. You can change it afterwards.' },
+    exitOppositeAll: { title: 'Opposite of each entry', body: 'For every leg that trades: exit on the mirror of its own entry — buy on a cross above → exit on the cross below, sell on a cross below → exit on the cross above.' },
+    exitAdd: { title: 'Add a condition', body: 'Start an additional exit condition from scratch (one line, like the legs).' },
+    exitRemove: { title: 'Remove the additional exit condition', body: 'These trades then close only by the target, stop-loss, trailing, square-off or the other leg.' },
     stopWhen: { title: 'Close the trade when…', body: 'Trailing rules for these trades — e.g. close crossed below SMA 20, or below the previous candle’s low.', note: 'Shown as “Trailing rule” in results.' },
     stopWhenRemove: { title: 'Remove the trailing rules', body: 'Trailing SL needs at least one rule — without one these trades can’t trail (switch Trailing SL off for a normal stop-loss and target).' },
     condSma: { title: 'Price crosses the average', body: 'Adds: the traded contract’s close crossed below its SMA(20) (above for a sell) — a stop that trails with the average. Pick EMA, another period or another instrument instead.' },
@@ -518,7 +604,10 @@ export const H = {
     },
     squareOffNse: { title: 'NSE / BSE square-off', body: 'Time (IST) open NSE / BSE trades close each day. Zerodha squares off MIS at about 15:20.' },
     squareOffMcx: { title: 'MCX square-off', body: 'Time (IST) open MCX trades close each day (never after the session ends).' },
-    opposite: { title: 'Exit on the other group', body: 'When another group of the strategy fires on the same product and strike position, close the open trade (then open the new group’s trade). Off: keep it until its own exit.' },
+    opposite: {
+      title: 'Exit on the other leg / group',
+      body: 'With Any leg (OR), each leg (or AND block of legs) trades on its own. When another one fires on the same product and strike position, close the open trade (then open the new one’s trade). Off: keep it until its own exit.',
+    },
     charges: { title: 'Charges', body: 'Deduct approximate Zerodha charges from each trade: ₹20 brokerage per order (options), STT / CTT, exchange, SEBI, GST and stamp duty.' },
     slippage: { title: 'Slippage', body: 'A worse fill than the market price on each side (entry and market exits), in % — real orders rarely fill at the last traded price.' },
     defaults: { title: 'Reset to defaults', body: '1 lot per futures / options trade, ₹10,000 per stock trade, +20 % target, −10 % stop-loss, no trailing stop, the whole session watched, square-off 15:20 NSE / 23:20 MCX, exit on the other group, charges and 0.5 % slippage on.' },
@@ -533,6 +622,18 @@ export const H = {
       note: 'Profit and loss sides: for a sell, profit is the price falling.',
     },
     pctOn: { title: 'On / off', body: 'Tick to use it, untick for none.' },
+    unitPct: { title: '%', body: 'Measured in % of the entry price — e.g. 20 % on a ₹150 premium = ₹30.', note: 'Same size on every product, whatever its price.' },
+    unitCandle: {
+      title: 'Previous candle',
+      body: 'The stop-loss is the signal candle’s low for a buy, its high for a sell — the traded contract’s own candle that fired the alert (the trade enters at its close), on the strategy’s timeframe. Fixed at entry.',
+      example: 'Buy CE at its 10:15–10:30 close ₹148, that candle’s low ₹142.5 → stop-loss ₹142.5',
+      note: 'If that low / high isn’t below / above the entry (a fast move after the close), the trade opens without a stop-loss and says so. To move it up candle by candle, use Trailing rules (“Previous candle broken”).',
+    },
+    unitPoints: {
+      title: 'Points',
+      body: 'Measured in price points of the traded contract — e.g. 20 points on a ₹150 premium = ₹170 target; on a NIFTY future, 50 points.',
+      note: 'The same points on every product — think of the price levels of the products you connect. A level at or below 0 is never reached.',
+    },
     tradeSuggested: { title: 'Trade what the conditions read', body: 'Trade the instrument these conditions point at — their option, else their future — instead. Editing the conditions never changes what the plan trades; this does, in one click.' },
     dontTrade: { title: 'Don’t trade', body: 'This group’s alerts open no trade — it only closes trades (with “Exit when another group fires”).' },
     tradeSide: { title: 'Instrument and side', body: 'The contract this group’s alerts trade, and whether they buy or sell it. “Don’t trade” = the group only closes trades (with “Exit when another group fires”).' },
@@ -595,7 +696,7 @@ export const H = {
       STOP: { title: 'Stop-loss', body: 'Closed when the price crossed the fixed stop-loss %.' },
       TRAIL: { title: 'Trailing stop', body: 'Closed when the price came back to the trailing stop % from the best price since entry (a setting since removed — trades opened with it). Open the trade to see how it moved.' },
       STOP_RULE: { title: 'Trailing rule', body: 'One of your trailing rules (e.g. close below SMA 20, the previous candle’s low) came true — closed at that candle’s close (paper: the price right after it).' },
-      TARGET_RULE: { title: 'Target condition', body: 'A target condition came true — a setting since removed (the target now starts trailing); older trades only.' },
+      TARGET_RULE: { title: 'Exit condition', body: 'Its additional exit condition came true at a candle close before the target or stop-loss — closed at that candle’s close (paper: the price right after it), in profit or in loss.', note: 'Trades from before 4 Nov 2026: the old target conditions.' },
       SQUARE_OFF: { title: 'Square-off', body: 'Closed at the daily intraday square-off time.' },
       OPPOSITE: { title: 'Other group', body: 'Closed because another group of the strategy fired.' },
       EXPIRY: { title: 'Expiry', body: 'Closed at the contract’s expiry (last price of the session).' },

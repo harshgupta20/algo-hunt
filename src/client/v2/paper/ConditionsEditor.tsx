@@ -9,8 +9,8 @@
  */
 import { Plus, ShieldAlert, Trash2, TrendingUp } from 'lucide-react';
 import clsx from 'clsx';
-import type { ExprNode, GroupNode, PaperRule, StrategyDefinition } from '@/shared/v2';
-import { hasCondition, legName, paperGroups } from '@/shared/v2';
+import type { ExitLevel, ExprNode, GroupNode, PaperRule, StrategyDefinition } from '@/shared/v2';
+import { exitText, hasCondition, legName, paperGroups } from '@/shared/v2';
 import { Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { LEG_KIND_TEXT } from '../format';
 import { PlanBlock } from './PaperFields';
@@ -118,8 +118,8 @@ function ConditionBlock({ def, rule, title, onChange }: { def: StrategyDefinitio
   );
 }
 
-/** Trailing rules for every rule that trades; `targetPct` says where they start (the target, or the entry without one). */
-export function ConditionsEditor({ def, rules, targetPct, onChange }: { def: StrategyDefinition; rules: PaperRule[]; targetPct: number | null; onChange: (rules: PaperRule[]) => void }) {
+/** Trailing rules for every rule that trades; `target` says where they start (the target, or the entry without one). */
+export function ConditionsEditor({ def, rules, target, onChange }: { def: StrategyDefinition; rules: PaperRule[]; target: ExitLevel | null; onChange: (rules: PaperRule[]) => void }) {
   const groups = paperGroups(def);
   const label = (r: PaperRule) => (r.group === null ? 'Every trade' : `${groups.find((g) => g.id === r.group)?.label ?? 'Group'} trades`);
   const traded = rules.filter((r) => r.leg);
@@ -132,8 +132,8 @@ export function ConditionsEditor({ def, rules, targetPct, onChange }: { def: Str
       help={H.paper.conditions}
       aside={
         <Tooltip content={H.paper.trailsAtTarget}>
-          <span className={clsx('cursor-help rounded-full border px-2 py-0.5 text-[11px] font-semibold', targetPct === null ? 'border-warn/40 text-warn' : 'border-bull/40 bg-bull/10 text-bull')}>
-            {targetPct === null ? 'Set a target — trailing starts there' : `Start at +${targetPct}%`}
+          <span className={clsx('cursor-help rounded-full border px-2 py-0.5 text-[11px] font-semibold', target === null ? 'border-warn/40 text-warn' : 'border-bull/40 bg-bull/10 text-bull')}>
+            {target === null ? 'Set a target — trailing starts there' : `Start at +${exitText(target)}`}
           </span>
         </Tooltip>
       }

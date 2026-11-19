@@ -12,7 +12,8 @@ import { Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { LEG_KIND_TEXT } from '../format';
 import { H } from '../help';
 
-const OFFSETS = Array.from({ length: 21 }, (_, i) => i - 10);
+/** Strikes from ATM a CE / PE can sit at: ATM−10 … ATM+10. */
+export const OFFSETS = Array.from({ length: 21 }, (_, i) => i - 10);
 
 /**
  * Picks an instrument for a strategy and returns the leg that reads it: the strategy's leg when it has one, else a

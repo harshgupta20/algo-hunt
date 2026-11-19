@@ -7,7 +7,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ExprNode, PaperPlan, PaperTrade, StrategyDefinition, UnitEvaluation, V2Connection, V2Product, V2Strategy, V2Unit } from '../../src/shared/v2';
-import { PAPER_DEFAULTS, defaultPaperPlan, normalizePaperSummary, normalizePlan, paperPlanSchema, resolveRules, stopNow } from '../../src/shared/v2';
+import { PAPER_DEFAULTS, candleStop, defaultPaperPlan, effectivePlan, exitConditions, exitLevelPrice, oppositeOf, exitText, normalizePaperSummary, normalizePlan, paperOverrideSchema, paperPlanSchema, resolveRules, stopNow, stopOf, targetOf } from '../../src/shared/v2';
 import { calendars } from '../../src/server/v2/calendar/MarketCalendar';
 import { ProductService } from '../../src/server/v2/data/ProductService';
 import { roundTripCharges } from '../../src/server/v2/paper/charges';
@@ -106,7 +106,20 @@ describe('paper trading — end to end through the scanner', () => {
     await env.svc.scan();
     expect(env.store.data.paperTrades[0]).toMatchObject({ lots: 2, quantity: 150, stopPrice: null, targetPrice: 120.6 });
     const sum = await env.svc.paperSummary();
-    expect(sum.connections[0]!.paper).toEqual({ enabled: true, lotsPerTrade: 2, cashPerTrade: 10_000, targetPct: 20, stopPct: null, trailing: false, squareOff: true, custom: true });
+    expect(sum.connections[0]!.paper).toEqual({
+      enabled: true,
+      lotsPerTrade: 2,
+      cashPerTrade: 10_000,
+      targetPct: 20,
+      stopPct: null,
+      targetUnit: 'PCT',
+      targetPoints: null,
+      stopUnit: 'PCT',
+      stopPoints: null,
+      trailing: false,
+      squareOff: true,
+      custom: true,
+    });
     // Trailing SL on needs a trailing rule — this strategy has none.
     await expect(env.svc.saveConnectionPaper(c.id, { trailing: true })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/trailing rule/) });
 
@@ -241,6 +254,43 @@ describe('paper trading — end to end through the scanner', () => {
     expect(sum.strategies).toEqual([expect.objectContaining({ strategyId: s.id, name: 'Future leads the call', enabled: true, cashPerTrade: 10_000 })]);
     expect(sum.connections).toEqual([expect.objectContaining({ connectionId: c.id, symbol: 'NIFTY' })]);
     expect(sum.equity).toEqual([{ at: new Date(NOW + 5 * 60_000).toISOString(), pnl: 1507.5 - charges }]);
+  });
+
+  it('target / stop-loss in points: price points from the fill, per strategy and per connection', async () => {
+    const { s, c } = await connect((p) => ({ ...p, enabled: true, targetUnit: 'POINTS', targetPct: null, targetPoints: 15, stopUnit: 'POINTS', stopPct: null, stopPoints: 8 }));
+    await env.svc.scan();
+    const [t] = env.store.data.paperTrades;
+    // Entry ₹100.50 (₹100 + 0.5 % slippage): target 100.5 + 15, stop 100.5 − 8.
+    expect(t).toMatchObject({ entryPrice: 100.5, targetPrice: 115.5, stopPrice: 92.5 });
+    expect(t!.terms).toMatchObject({ targetPct: null, targetPoints: 15, stopPct: null, stopPoints: 8 });
+    env.clock.now = NOW + 5 * 60_000;
+    env.provider.ltp.set(atmCe.token, 116);
+    await env.svc.scan();
+    const [closed] = await env.svc.paperTrades({ strategyId: s.id });
+    expect(closed).toMatchObject({ status: 'CLOSED', exitReason: 'TARGET', exitPrice: 115.5, grossPnl: 15 * 75 });
+    const brief = (await env.svc.paperSummary()).connections[0]!.paper;
+    expect(brief).toMatchObject({ targetUnit: 'POINTS', targetPoints: 15, stopUnit: 'POINTS', stopPoints: 8 });
+
+    // A connection's own target in %: its next trade uses it; the stop stays the strategy's points.
+    await env.svc.saveConnectionPaper(c.id, { targetUnit: 'PCT', targetPct: 10, targetPoints: null });
+    const eff = effectivePlan(await env.svc.paperPlan(s.id), (await env.svc.paperSettings()).overrides[c.id]);
+    expect(targetOf(eff)).toEqual({ value: 10, unit: 'PCT' });
+    expect(stopOf(eff)).toEqual({ value: 8, unit: 'POINTS' });
+  });
+
+  it('stop-loss at the signal candle: the traded contract’s own candle that fired the alert (Kite’s 1-minute candles)', async () => {
+    // The alert fires on the 10:45–11:00 candle; the call's minutes in it dip to ₹97.20.
+    env.provider.set(
+      atmCe,
+      '1m',
+      Array.from({ length: 15 }, (_, j) => ({ time: Math.floor((ist(D, '10:45') + j * 60_000) / 1000), open: 99, high: 101, low: j === 9 ? 97.2 : 98.5, close: 100, volume: 5 })),
+    );
+    await connect((p) => ({ ...p, enabled: true, stopUnit: 'CANDLE', stopPct: null }));
+    await env.svc.scan();
+    const [t] = env.store.data.paperTrades;
+    expect(t).toMatchObject({ entryPrice: 100.5, stopPrice: 97.2 });
+    expect(t!.terms).toMatchObject({ stopCandle: true, stopPct: null });
+    expect(env.channels.sent[0]!.message.text).toContain('stop ₹97.2 (signal candle low)');
   });
 
   it('closes by hand at the latest price, and a reset clears the strategy', async () => {
@@ -456,6 +506,54 @@ describe('paper trader', () => {
     expect(closed[0]).toMatchObject({ exitReason: 'STOP_RULE' });
   });
 
+  it('exit condition ("Exit when…"): from the entry, at the first candle close it is true — Trailing SL or not', async () => {
+    const provider = new FixtureV2Provider([spotI, futI, ceI, peI]);
+    const times = timesEndingAt(ist(D, '11:15'), 15, 40, NSE_SESSION);
+    const env = trader(ist(D, '11:00'), provider);
+    const exitWhen = cond(field(legSeries('B')), 'LT', num(95));
+    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), targetUnit: 'POINTS', targetPct: null, targetPoints: 50, stopPct: null, rules: [{ group: bull.id, leg: 'B', side: 'BUY', exitWhen }, { group: bear.id, leg: 'C', side: 'BUY' }] });
+    const line = await env.alert('bull');
+    expect(line).toMatch(/target ₹150\.5 · or when \[CE ATM\] \[15 min\] \[Normal\] Close < 95/);
+    expect(env.store.data.paperTrades[0]!.conditions).toMatchObject({ exitWhen });
+    expect(env.store.data.paperTrades[0]!.conditions?.stopWhen).toBeUndefined();
+    // The 11:00–11:15 candle closes at 94: the exit condition is true at 11:15 — the target (₹150.50) wasn't reached.
+    provider.set(ceI, '15m', candlesAt(times, times.map((t) => (t >= ist(D, '11:00') ? 94 : 100))));
+    env.prices.set(ceI.token, 96);
+    env.clock.now = ist(D, '11:15') + 20_000;
+    const { closed } = await env.t.monitor(cals);
+    expect(closed[0]).toMatchObject({ exitReason: 'TARGET_RULE', exitPrice: expect.any(Number) });
+  });
+
+  it('exit condition = the other group’s own entry: its alert closes the trade by the exit condition and opens the other — even with “exit on the other group” off', async () => {
+    const env = trader();
+    // The bear group's conditions under other ids (as "Opposite of its entry" or a hand-made copy would be).
+    const copy = (n: ExprNode): ExprNode =>
+      n.type === 'AND' || n.type === 'OR' ? { type: n.type, id: `${n.id}-x`, children: n.children.map(copy) } : n.type === 'NOT' ? { ...n, id: `${n.id}-x`, child: copy(n.child) } : { ...n, id: `${n.id}-x` };
+    const exitWhen = copy(bear);
+    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), exitOnOpposite: false, rules: [{ group: bull.id, leg: 'B', side: 'BUY', exitWhen }, { group: bear.id, leg: 'C', side: 'BUY' }] });
+    await env.alert('bull');
+    env.prices.set(ceI.token, 110);
+    const line = await env.alert('bear');
+    expect(line).toMatch(/closed BUY 1 lot \(75\) NIFTY2026101325000CE @ ₹109\.45 \(exit condition\)/);
+    expect(line).toMatch(/\n📄 Paper: BUY 1 lot \(75\) NIFTY2026101325000PE/);
+    expect(env.store.data.paperTrades.map((t) => [t.leg, t.status, t.exitReason ?? null])).toEqual([
+      ['B', 'CLOSED', 'TARGET_RULE'],
+      ['C', 'OPEN', null],
+    ]);
+  });
+
+  it('exit condition: the target first when it comes first (whichever is earlier)', async () => {
+    const provider = new FixtureV2Provider([spotI, futI, ceI, peI]);
+    const env = trader(ist(D, '11:00'), provider);
+    const exitWhen = cond(field(legSeries('B')), 'LT', num(95));
+    await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), targetUnit: 'POINTS', targetPct: null, targetPoints: 5, stopPct: null, rules: [{ group: bull.id, leg: 'B', side: 'BUY', exitWhen }, { group: bear.id, leg: 'C', side: 'BUY' }] });
+    await env.alert('bull');
+    env.prices.set(ceI.token, 106);
+    env.clock.now = ist(D, '11:05');
+    const { closed } = await env.t.monitor(cals);
+    expect(closed[0]).toMatchObject({ exitReason: 'TARGET', exitPrice: 105.5 });
+  });
+
   it('sizes futures / options in the plan’s lots, stocks in ₹ per trade', async () => {
     const env = trader();
     await env.store.paper.savePlan('s1', { ...defaultPaperPlan(grouped, true), lotsPerTrade: 3, cashPerTrade: 100_000 });
@@ -550,6 +648,70 @@ describe('paper trader', () => {
 });
 
 describe('paper results and plan', () => {
+  it('target / stop-loss in % or points: levels, text, schema, older plans', () => {
+    const pct = { targetPct: 20, stopPct: 10 };
+    expect(targetOf(pct)).toEqual({ value: 20, unit: 'PCT' }); // a plan saved before points
+    expect(targetOf({ ...pct, targetUnit: 'POINTS', targetPoints: null })).toBeNull();
+    expect(stopOf({ ...pct, stopUnit: 'POINTS', stopPoints: 12.5 })).toEqual({ value: 12.5, unit: 'POINTS' });
+    expect(exitText({ value: 20, unit: 'PCT' })).toBe('20%');
+    expect(exitText({ value: 15, unit: 'POINTS' })).toBe('15 pts');
+    expect(exitLevelPrice(150, { value: 20, unit: 'POINTS' }, true)).toBe(170);
+    expect(exitLevelPrice(150, { value: 20, unit: 'POINTS' }, false)).toBe(130);
+    expect(exitLevelPrice(150, { value: 20, unit: 'PCT' }, true)).toBeCloseTo(180, 9);
+    expect(exitLevelPrice(150, { value: 200, unit: 'POINTS' }, false)).toBeNull(); // at or below 0: never reached
+    expect(exitLevelPrice(150, null, true)).toBeNull();
+
+    const plan = defaultPaperPlan(strategy([{ id: 'A', kind: 'FUT' }], cond(ind(legSeries('A'), 'RSI', { period: 14 }), 'GT', num(60))), true);
+    expect(plan).toMatchObject({ targetUnit: 'PCT', targetPoints: null, stopUnit: 'PCT', stopPoints: null });
+    // An older client sends no units: % with no points.
+    const { targetUnit: _a, targetPoints: _b, stopUnit: _c, stopPoints: _d, ...old } = plan;
+    expect(paperPlanSchema.parse(old)).toMatchObject({ targetUnit: 'PCT', targetPoints: null, stopUnit: 'PCT', stopPoints: null });
+    expect(normalizePlan(old as PaperPlan)).toMatchObject({ targetUnit: 'PCT', targetPoints: null });
+    expect(paperPlanSchema.safeParse({ ...plan, targetUnit: 'POINTS', targetPct: null, targetPoints: 25 }).success).toBe(true);
+    expect(paperPlanSchema.safeParse({ ...plan, targetUnit: 'POINTS', targetPoints: 0 }).success).toBe(false);
+    expect(paperPlanSchema.safeParse({ ...plan, stopUnit: 'TICKS' }).success).toBe(false);
+    // Trailing SL needs a target — in points too.
+    expect(paperPlanSchema.safeParse({ ...plan, trailing: true, targetUnit: 'POINTS', targetPct: null, targetPoints: null }).success).toBe(false);
+    expect(paperOverrideSchema.safeParse({ targetUnit: 'POINTS', targetPoints: 40, targetPct: null }).success).toBe(true);
+  });
+
+  it('the opposite of an entry: crossed above ↔ below, > ↔ <, ≥ ↔ ≤ — what "Opposite of its entry" fills in', () => {
+    const A = legSeries('A', '5m');
+    const rsi = ind(A, 'RSI', { period: 14 });
+    const rsiMa = { ...rsi, ma: { type: 'SMA' as const, period: 9 } } as typeof rsi;
+    let n = 0;
+    const entry = and(cond(rsi, 'CROSSED_ABOVE', rsiMa), cond(field(A), 'GTE', ind(A, 'EMA', { period: 20 })));
+    const exit = oppositeOf(entry, () => `x${n++}`);
+    expect(exit).toMatchObject({ type: 'AND', children: [{ operator: 'CROSSED_BELOW', left: rsi, right: rsiMa }, { operator: 'LTE' }] });
+    expect(exit.id).not.toBe(entry.id);
+    expect(oppositeOf(cond(rsi, 'CROSSED_BELOW', rsiMa), () => 'y')).toMatchObject({ type: 'CONDITION', operator: 'CROSSED_ABOVE' });
+    // Rules that trade, with an exit condition, are what the engines check.
+    const rules = [
+      { group: 'g1', leg: 'A' as const, side: 'BUY' as const, exitWhen: exit },
+      { group: 'g2', leg: null, side: 'BUY' as const, exitWhen: exit },
+      { group: 'g3', leg: 'A' as const, side: 'SELL' as const, exitWhen: { type: 'OR' as const, id: 'e', children: [] } },
+    ];
+    expect(exitConditions(rules)).toEqual([{ key: 'g1|EXIT', group: 'g1', when: exit }]);
+    const plan = defaultPaperPlan(strategy([{ id: 'A', kind: 'FUT' }], cond(rsi, 'CROSSED_ABOVE', rsiMa)), true);
+    expect(paperPlanSchema.safeParse({ ...plan, rules: [{ ...plan.rules[0]!, exitWhen: exit }] }).success).toBe(true);
+  });
+
+  it('stop-loss at the signal candle: the low for a buy, the high for a sell — only beyond the entry', () => {
+    expect(stopOf({ targetPct: 20, stopPct: null, stopUnit: 'CANDLE' })).toEqual({ unit: 'CANDLE' });
+    expect(exitText({ unit: 'CANDLE' }, 'BUY')).toBe('signal candle low');
+    expect(exitText({ unit: 'CANDLE' }, 'SELL')).toBe('signal candle high');
+    const candle = { high: 152, low: 142.5 };
+    expect(candleStop('BUY', 148, candle)).toBe(142.5);
+    expect(candleStop('SELL', 148, candle)).toBe(152);
+    expect(candleStop('BUY', 142, candle)).toBeNull(); // the low is above a buy's entry: no stop
+    expect(candleStop('SELL', 153, candle)).toBeNull();
+    expect(candleStop('BUY', 148, null)).toBeNull();
+    const plan = defaultPaperPlan(strategy([{ id: 'A', kind: 'FUT' }], cond(ind(legSeries('A'), 'RSI', { period: 14 }), 'GT', num(60))), true);
+    expect(paperPlanSchema.safeParse({ ...plan, stopUnit: 'CANDLE', stopPct: null }).success).toBe(true);
+    expect(paperOverrideSchema.safeParse({ stopUnit: 'CANDLE', stopPct: null }).success).toBe(true);
+    expect(paperPlanSchema.safeParse({ ...plan, targetUnit: 'CANDLE' }).success).toBe(false); // a target can't be a candle
+  });
+
   const trade = (p: Partial<PaperTrade>): PaperTrade => ({ status: 'CLOSED', capitalUsed: 10_000, overBudget: false, grossPnl: 0, charges: 0, netPnl: 0, entryAt: '', exitAt: '', lastPrice: null, ...p }) as PaperTrade;
 
   it('win rate, the money needed at once, return on it, and the deepest drawdown', () => {

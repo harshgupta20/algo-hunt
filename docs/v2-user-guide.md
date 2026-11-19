@@ -64,10 +64,35 @@ The first time, run `npm run live -- --check`. It connects to Kite, prints a few
    once a day). Timeframes that don't divide each other (10 min + 15 min) are checked every 10 min, so a 15-min close
    that falls in between is acted on up to 5 min later — the section says so. A strategy saved before this change
    keeps its own clock until you save it again (a note offers the new one).
-3. **Conditions.** Each value picks what it reads and how: **Instrument** (SPOT · FUT · CE · PE, and for options a
-   strike: **ATM**, **ATM+1**, **ATM−2**, …), then its own timeframe and candle type (Normal, Heikin Ashi, Volume).
-   Compare it with another value or a number. No product yet — each instrument becomes the connected product's
-   contract.
+3. **Conditions.** They open in the **Simple** view — one line per **leg**, read left to right:
+   ```
+   Leg 1  [FUT]        [15 min] [RSI] (14)      [Crossed above] [Number]    [60]
+   Leg 2  [CE] [ATM+1] [5 min]  [Close]         [Greater than]  [Indicator] [EMA] (50)
+   [+ Add leg]
+   ```
+   - **Instrument** (SPOT · FUT · CE · PE; CE / PE also get a strike: **ATM**, **ATM+1**, **ATM−2** …) →
+     **timeframe** → **indicator** (Close, Open, High, Low, Volume, OI, OI change, RSI, RSI-based MA, RSI-based EMA,
+     SMA, EMA, Bollinger Bands, Supertrend, ADX, DMI, MACD, N-candle low / high — its settings in the brackets) →
+     **comparison** → **Number** (type it) or **Indicator** (pick it; it reads the same instrument and timeframe).
+   - **AND / OR between legs:** each gap between two legs shows **AND** or **OR** — click it to switch. AND joins
+     first, so *Leg 1 AND Leg 2 OR Leg 3 AND Leg 4* = *(Leg 1 AND Leg 2) OR (Leg 3 AND Leg 4)*: OR is drawn as a line
+     across the list, and the legs of a block are marked at their left. **All legs (AND)** / **Any leg (OR)** at the
+     top set every gap at once; with mixed gaps the line next to them reads how the legs combine.
+   - Each block between two ORs fires on its own and can trade its own instrument — e.g. a bullish block → buy CE,
+     a bearish block → buy PE (Paper trading → What to trade lists *Legs 1–2*, *Legs 3–4*, or *Leg 3* for a block
+     of one leg).
+   - Each leg has **Copy** (adds a copy right below it, in the same block) and **Remove**.
+   - **RSI-based MA / EMA** shows two boxes: **(RSI 14, MA 9)** = an RSI of length 14 and a 9-period average of it
+     (TradingView's *RSI Length* and *MA Length*). *RSI (14) crossed above RSI-based MA (RSI 14, MA 9)* = the RSI
+     crossing its own 9-period average.
+   - Volume / OI compared with an SMA / EMA: the average is of the volume / OI.
+   - **Advanced** (top right of the section) is the full editor: candle patterns, NOT, groups inside groups,
+     Heikin Ashi / volume candles, a multiplier, and comparing with another instrument or timeframe. A strategy that
+     uses any of these opens in Advanced (it says why); remove them to go back to Simple.
+
+   In the **Advanced** view each value picks what it reads and how: **Instrument** (SPOT · FUT · CE · PE, and for
+   options a strike), then its own timeframe and candle type (Normal, Heikin Ashi, Volume). Compare it with another
+   value or a number. No product yet — each instrument becomes the connected product's contract.
    - **SPOT**: index value or stock cash price. **FUT**: the future. **CE / PE**: a call or put at a strike from ATM.
    - Examples: *FUT RSI(14) > CE ATM RSI(14)*, *CE ATM Close crossed above CE ATM SMA(20)*.
    - **Future AND options:** click **+ Condition** once per rule and pick the instrument in each row:
@@ -85,7 +110,7 @@ The first time, run `npm run live -- --check`. It connects to Kite, prints a few
    - **RSI-based MA** (TradingView's): pick **RSI-based MA** in the Indicator list — RSI(14) with an SMA(14) of it —
      or set **MA of it** (SMA / EMA / WMA and its length) under any RSI or ADX. Comparing an RSI with an indicator
      starts from its RSI-based MA, so *RSI(14) crossed above SMA(14) of RSI(14)* takes two clicks.
-   - **Bollinger Bands and moving averages** are price levels, so you never type a number for them. Choosing Bollinger **Upper / Middle / Lower** (or SMA, EMA, the Supertrend line) makes the condition read *Close crossed above Bollinger Upper* automatically.
+   - **Bollinger Bands and moving averages** are price levels, so you never type a number for them. In Advanced, choosing Bollinger **Upper / Middle / Lower** (or SMA, EMA, the Supertrend line) makes the condition read *Close crossed above Bollinger Upper* automatically; in Simple, pick **Close** first and the band as the **Indicator** (a band against a number shows a one-click **Compare Close with it**).
    - **N-candle low / high** is the lowest low (or highest high) of the previous N candles, not counting the current one: *Close crossed below Lowest low (3 candles)* = the 3-candle low is broken; *Close crossed above Highest high (20 candles)* = a 20-candle breakout.
      - **%B** and **Bandwidth %** are readings, so they get a number (%B 1 = on the upper band, Bandwidth 2 = a tight squeeze).
      - Older conditions like "Bollinger Upper crossed above 60" show a one-click **Compare Close with it** fix.
@@ -252,7 +277,7 @@ slippage on. Both backtests trade the same plan.
 **Changing the values**
 
 - **For a whole strategy:** open it (Strategies → ✎) → **3 · Paper trading**. These are the defaults all its
-  connections use, plus **what to trade**: one row per top-level group (a strategy whose top level is OR — e.g.
+  connections use, plus **what to trade** (at the top of the section): one row per top-level group (a strategy whose top level is OR — e.g.
   Bullish / Bearish), or one for the whole strategy — the instrument (SPOT · FUT · CE · PE — by default the group's option, else its future; any instrument, not only those the conditions read)
   and **Buy** or **Sell**, and each group's **trailing rules**. "Don't trade" turns a group into an
   exit signal only. Untick the box to stop paper trading the strategy. Changing only the paper settings doesn't
@@ -269,6 +294,32 @@ slippage on. Both backtests trade the same plan.
   flagged **over budget** when one share costs more) — a ₹ amount keeps stocks of very different prices comparable.
   Money used: the premium / price for bought options and stocks, an estimated margin for futures and sold options
   (≈12 % of the contract value for indices, 20 % stocks, 10 % MCX).
+- **Target and stop-loss in % or points:** next to each, **%** measures from the entry price in percent; **pts** in
+  price points of the traded contract — e.g. buy CE at ₹150: target +20 % → ₹180, +20 pts → ₹170. They're measured
+  from the fill (after slippage). Points are the same on every connected product, so think of their price levels;
+  a level at or below ₹0 is never reached. A connection can use its own unit too (its 📄 chip shows e.g.
+  `+40 pts/−10%`).
+- **Additional exit condition:** in step 3, under the size / exits settings, each leg that trades can have an exit
+  condition **in addition to the target and stop-loss** — closed at the close of the candle where it comes true, from
+  the entry on. A trade has three ways out and **whichever comes first** closes it: ① the target (always a profit),
+  ② the stop-loss (always a loss), ③ this condition (a profit or a loss — wherever the price is then). The block's
+  header shows all three with your values; hover each for what it does. **Opposite of its entry** fills in the mirror of the leg's entry
+  (crossed above ↔ crossed below, > ↔ <); **Opposite of each entry** does it for every leg. It is checked on its own —
+  the alert settings (cooldown, "becomes true") don't hold it back. Shown as **Exit condition** in results.
+  - Recipe — *buy when RSI crosses above its MA, sell when it crosses below; exit at 50 points or the cross back,
+    whichever is earlier*: Leg 1 `FUT · 5 min · RSI (14) · Crossed above · Indicator · RSI-based MA (RSI 14, MA 9)`,
+    **OR**, Leg 2 the same with **Crossed below**; What to trade: Leg 1 → FUT **Buy**, Leg 2 → FUT **Sell**; Target
+    **50 pts**; Additional exit condition → **Opposite of each entry**. The buy closes at +50 pts or on the cross below (and the sell
+    opens on that same close), the sell at −50 pts or on the cross above.
+  - For entries that are single crosses, set the connection's **Alert when** to *While true* and no cooldown, so a
+    cross straight after another (the next candle) still opens the reverse trade — the exit itself never waits on
+    the alert settings.
+- **Stop-loss at the previous candle (prev candle):** the stop-loss can instead sit at the **signal candle** — the
+  traded contract's own candle that fired the alert (on the strategy's timeframe; the trade enters at its close): its
+  **low for a buy, high for a sell**, fixed at entry. Live trades read it from the live stream (else Kite's 1-minute
+  candles), backtests from the contract's 1-minute candles. If that low / high isn't beyond the entry (a fast move
+  after the close) or the candle isn't available, the trade opens without a stop-loss and says so. To move the stop
+  up candle by candle, use a **Trailing rule** ("Previous candle broken").
 - **Stop-loss, target and the Trailing SL switch:**
   - **Trailing SL off** (the default): a normal trade — the stop-loss and the target close it, whichever comes first.
   - **Trailing SL on:** the stop-loss guards the trade until the target. Reaching the target **doesn't close it** —
@@ -324,6 +375,12 @@ slippage on. Both backtests trade the same plan.
   closes one now.
 - **Trade log:** all / winners / losers, **CSV** download. In the Strategies view, ✎ opens a strategy's paper
   settings and 🗑 deletes its paper trades to start over.
+- **Why it entered and exited** (backtest trades) — the top of a backtest trade's story: the candles of the
+  instrument and timeframe its conditions read (a tab for each when they read several), around the trade, with what
+  the conditions compare — RSI and its MA (and ADX, MACD, volume …) in a pane below, averages and bands on the candles,
+  the numbers they're compared with dashed — the **blue candle** where the conditions were met (the trade entered at
+  its close) and a dashed line where it **exited** (and why). The backtest computes it from the same candles it
+  decided on; hover a candle for its prices and values. Below it, the traded contract's own price while held.
 - **A trade's story** — click any trade (open positions, the trade log, both backtests): its price from the entry to
   the exit and a little after (1-minute candles, merged into bars so the whole trade fits), with the entry, the
   target and the stop as it moved; and a timeline in words — the entry and its levels, when the target was reached

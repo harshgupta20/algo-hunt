@@ -10,8 +10,8 @@ import { useState, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Clock, Crosshair, Receipt, RotateCcw, Save, X, type LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
-import type { PaperOverride, PaperOverrideKey, PaperPlan } from '@/shared/v2';
-import { PAPER_DEFAULTS, diffOverride, effectivePlan, planConditions, trailingIssue, watchWindowIssue } from '@/shared/v2';
+import type { ExitLevel, PaperOverride, PaperOverrideKey, PaperPlan, StopSetting, StopUnit } from '@/shared/v2';
+import { PAPER_DEFAULTS, diffOverride, effectivePlan, exitText, planConditions, stopOf, targetOf, trailingIssue, watchWindowIssue } from '@/shared/v2';
 import { Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { InlineSpinner } from '../../components/loaders';
 import { v2Api } from '../api';
@@ -60,15 +60,92 @@ function Field({ label, help, own, onReset, children }: { label: string; help: T
   );
 }
 
-/** A % with an on/off tick (off = none); `required` = it can't be ticked off. */
-function PctField({ label, value, fallback, max, required, onChange }: { label: string; value: number | null; fallback: number; max: number; required?: boolean; onChange: (v: number | null) => void }) {
+/** Points a target / stop-loss starts at when switched to points (or ticked on in points). */
+const POINTS_FALLBACK = { target: 20, stop: 10 } as const;
+
+/** A target / stop-loss as its plan fields: % or points (the other one null) — or, for a stop-loss, the signal candle. */
+type ExitPatch<U extends StopUnit> = { unit: U; pct: number | null; points: number | null };
+
+const UNIT_LABEL: Record<StopUnit, string> = { PCT: '%', POINTS: 'pts', CANDLE: 'prev candle' };
+const UNIT_HELP: Record<StopUnit, TooltipContent> = { PCT: H.paper.unitPct, POINTS: H.paper.unitPoints, CANDLE: H.paper.unitCandle };
+
+/**
+ * A target / stop-loss: an on/off tick (off = none), its size, and % or points (price points of the traded contract)
+ * — a stop-loss also "prev candle": the signal candle's low (buy) / high (sell), no number. `required` = it can't be
+ * ticked off. Switching the unit starts the other one at its default; ticking a candle stop off makes it % (off).
+ */
+function ExitField<U extends StopUnit>({
+  label,
+  units,
+  unit,
+  pct,
+  points,
+  fallback,
+  maxPct,
+  required,
+  onChange,
+}: {
+  label: string;
+  units: readonly U[];
+  unit: U;
+  pct: number | null;
+  points: number | null;
+  fallback: { pct: number; points: number };
+  maxPct: number;
+  required?: boolean;
+  onChange: (e: ExitPatch<U | 'PCT'>) => void;
+}) {
+  const inPoints = unit === 'POINTS';
+  const byCandle = unit === 'CANDLE';
+  const on = byCandle || (inPoints ? points : pct) !== null;
+  const value = inPoints ? points : pct;
+  const set = (v: number | null) => onChange(inPoints ? { unit, pct: null, points: v } : { unit, pct: v, points: null });
+  const setUnit = (u: U) => {
+    if (u === unit) return;
+    onChange(u === 'POINTS' ? { unit: u, pct: null, points: on ? fallback.points : null } : u === 'CANDLE' ? { unit: u, pct: null, points: null } : { unit: u, pct: on ? fallback.pct : null, points: null });
+  };
+  const tick = (checked: boolean) => {
+    if (byCandle) return checked ? undefined : onChange({ unit: 'PCT', pct: null, points: null });
+    set(checked ? (inPoints ? fallback.points : fallback.pct) : null);
+  };
   return (
     <>
-      <Tooltip content={{ ...H.paper.pctOn, title: `${label.replace(' %', '')}: ${value === null ? 'off' : 'on'}`, note: required && value !== null ? 'Needed while Trailing SL is on — trailing starts there.' : undefined }}>
-        <input type="checkbox" aria-label={`${label} on`} className="accent-[rgb(var(--accent))] disabled:opacity-40" checked={value !== null} disabled={required && value !== null} onChange={(e) => onChange(e.target.checked ? fallback : null)} />
+      <Tooltip content={{ ...H.paper.pctOn, title: `${label}: ${on ? 'on' : 'off'}`, note: required && on ? 'Needed while Trailing SL is on — trailing starts there.' : undefined }}>
+        <input type="checkbox" aria-label={`${label} on`} className="accent-[rgb(var(--accent))] disabled:opacity-40" checked={on} disabled={required && on} onChange={(e) => tick(e.target.checked)} />
       </Tooltip>
-      <NumberInput label={label} min={0.1} max={max} step={1} disabled={value === null} className="input py-1 text-xs w-20 tabular-nums disabled:opacity-40" value={value} placeholder="none" onChange={onChange} />
-      <span className="text-xs text-slate-400">%</span>
+      {byCandle ? (
+        <Tooltip content={H.paper.unitCandle}>
+          <span className="cursor-help text-xs text-slate-300">signal candle low / high</span>
+        </Tooltip>
+      ) : (
+        <NumberInput
+          key={unit}
+          label={`${label} ${inPoints ? 'points' : '%'}`}
+          min={inPoints ? 0.05 : 0.1}
+          max={inPoints ? 1_000_000 : maxPct}
+          step={1}
+          disabled={value === null}
+          className="input py-1 text-xs w-20 tabular-nums disabled:opacity-40"
+          value={value}
+          placeholder="none"
+          onChange={set}
+        />
+      )}
+      <div role="radiogroup" aria-label={`${label} in`} className="flex overflow-hidden rounded-md border border-ink-700 text-[11px]">
+        {units.map((u) => (
+          <Tooltip key={u} content={UNIT_HELP[u]}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={unit === u}
+              onClick={() => setUnit(u)}
+              className={clsx('whitespace-nowrap px-2 py-1 font-semibold', unit === u ? 'bg-accent text-white' : 'bg-ink-800 text-slate-400 hover:text-slate-200')}
+            >
+              {UNIT_LABEL[u]}
+            </button>
+          </Tooltip>
+        ))}
+      </div>
     </>
   );
 }
@@ -86,30 +163,31 @@ function TimeRange({ label, from, to, onFrom, onTo }: { label: string; from: str
 
 /**
  * Where a trade closes, drawn: stop-loss (loss side) ◄ entry ► target (profit side) → trailing rules. The two sides
- * are sized by their %, so a −15 % stop with a +40 % target looks like one.
+ * are sized by their size when both are in the same unit, so a −15 % stop with a +40 % target looks like one.
  */
-function TradePath({ stopPct, targetPct, trailing }: { stopPct: number | null; targetPct: number | null; trailing: boolean }) {
-  const w = (pct: number | null) => Math.max(pct ?? 10, 6);
-  const trail = trailing && targetPct !== null;
+function TradePath({ stop, target, trailing }: { stop: StopSetting | null; target: ExitLevel | null; trailing: boolean }) {
+  const same = !stop || !target || stop.unit === target.unit;
+  const w = (e: StopSetting | null) => (same && e?.unit !== 'CANDLE' ? Math.max(e?.value ?? 10, 6) : 10);
+  const trail = trailing && target !== null;
   return (
     <Tooltip content={H.paper.tradePath} className="block">
       <div className="cursor-help rounded-md border border-ink-700/70 bg-ink-850 px-3 pb-2 pt-2.5">
         <div className="flex h-2 items-stretch overflow-hidden rounded-full">
-          <div style={{ flexGrow: w(stopPct) }} className={stopPct === null ? 'bg-ink-700' : 'bg-bear/70'} />
+          <div style={{ flexGrow: w(stop) }} className={stop === null ? 'bg-ink-700' : 'bg-bear/70'} />
           <div className="w-1 bg-fg" />
-          <div style={{ flexGrow: w(targetPct) }} className={targetPct === null ? 'bg-ink-700' : trail ? 'bg-bull/50' : 'bg-bull/70'} />
-          {trail && <div style={{ flexGrow: w(targetPct) * 0.7 }} className="bg-gradient-to-r from-accent/70 to-accent/5" />}
+          <div style={{ flexGrow: w(target) }} className={target === null ? 'bg-ink-700' : trail ? 'bg-bull/50' : 'bg-bull/70'} />
+          {trail && <div style={{ flexGrow: w(target) * 0.7 }} className="bg-gradient-to-r from-accent/70 to-accent/5" />}
         </div>
         <div className="mt-1.5 flex text-[11px] leading-tight">
-          <div style={{ flexGrow: w(stopPct) }} className="flex justify-between gap-2 pr-1">
-            <span className={stopPct === null ? 'text-slate-500' : 'font-semibold text-bear'}>{stopPct === null ? 'No stop-loss' : `−${stopPct}% stop-loss`}</span>
+          <div style={{ flexGrow: w(stop) }} className="flex justify-between gap-2 pr-1">
+            <span className={stop === null ? 'text-slate-500' : 'font-semibold text-bear'}>{stop === null ? 'No stop-loss' : stop.unit === 'CANDLE' ? 'Stop-loss at the signal candle' : `−${exitText(stop)} stop-loss`}</span>
             <span className="font-semibold text-fg">Entry</span>
           </div>
-          <div style={{ flexGrow: w(targetPct) }} className="flex justify-end pl-1">
-            <span className={targetPct === null ? 'text-slate-500' : 'font-semibold text-bull'}>{targetPct === null ? 'No target' : trail ? `+${targetPct}% trailing starts` : `+${targetPct}% target`}</span>
+          <div style={{ flexGrow: w(target) }} className="flex justify-end pl-1">
+            <span className={target === null ? 'text-slate-500' : 'font-semibold text-bull'}>{target === null ? 'No target' : trail ? `+${exitText(target)} trailing starts` : `+${exitText(target)} target`}</span>
           </div>
           {trail && (
-            <div style={{ flexGrow: w(targetPct) * 0.7 }} className="flex justify-end pl-1">
+            <div style={{ flexGrow: w(target) * 0.7 }} className="flex justify-end pl-1">
               <span className="font-semibold text-accent-soft">trailing rules →</span>
             </div>
           )}
@@ -129,6 +207,7 @@ export function PaperTermsFields({
   onChange,
   base,
   hasGroups,
+  groupWord = 'group',
   sizing = { lots: true, cash: true },
   nseOnly = false,
   rulesInStrategy = false,
@@ -137,6 +216,8 @@ export function PaperTermsFields({
   onChange: (p: PaperPlan) => void;
   base?: PaperPlan;
   hasGroups: boolean;
+  /** What the strategy's parts that fire on their own are called: legs (the simple view) or groups. */
+  groupWord?: 'leg' | 'group';
   sizing?: { lots: boolean; cash: boolean };
   nseOnly?: boolean;
   /** A connection's values: its trailing rules come from the strategy's trade plan (not editable here). */
@@ -149,8 +230,11 @@ export function PaperTermsFields({
   // A connection can switch Trailing SL on only when its strategy has trailing rules to trail by.
   const noRules = rulesInStrategy && !planConditions(value.rules).length;
   const trailIssue = noRules && value.trailing ? null : trailingIssue(value);
-  // Switching Trailing SL on fills in a target to start at.
-  const setTrailing = (trailing: boolean) => set({ trailing, ...(trailing && value.targetPct === null ? { targetPct: PAPER_DEFAULTS.targetPct } : {}) });
+  const target = targetOf(value);
+  const stop = stopOf(value);
+  // Switching Trailing SL on fills in a target to start at (in the target's unit).
+  const setTrailing = (trailing: boolean) =>
+    set({ trailing, ...(trailing && !target ? (value.targetUnit === 'POINTS' ? { targetPoints: POINTS_FALLBACK.target } : { targetPct: PAPER_DEFAULTS.targetPct }) : {}) });
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(19rem,1fr))] items-start gap-3">
       <PlanBlock icon={Crosshair} title="Size & exits" help={H.paper.blockSize}>
@@ -166,20 +250,39 @@ export function PaperTermsFields({
             <NumberInput label="₹ per trade" min={100} max={1e9} step={1000} className="input py-1 text-xs w-28 tabular-nums" value={value.cashPerTrade} onChange={(cashPerTrade) => set({ cashPerTrade })} />
           </Field>
         )}
-        <Field label="Target" help={H.paper.target} own={own('targetPct')} onReset={() => reset('targetPct')}>
-          <PctField label="Target %" value={value.targetPct} fallback={PAPER_DEFAULTS.targetPct} max={1000} required={value.trailing} onChange={(targetPct) => set({ targetPct })} />
+        <Field label="Target" help={H.paper.target} own={own('targetPct', 'targetUnit', 'targetPoints')} onReset={() => reset('targetPct', 'targetUnit', 'targetPoints')}>
+          <ExitField
+            label="Target"
+            units={['PCT', 'POINTS'] as const}
+            unit={value.targetUnit}
+            pct={value.targetPct}
+            points={value.targetPoints}
+            fallback={{ pct: PAPER_DEFAULTS.targetPct, points: POINTS_FALLBACK.target }}
+            maxPct={1000}
+            required={value.trailing}
+            onChange={(e) => set({ targetUnit: e.unit, targetPct: e.pct, targetPoints: e.points })}
+          />
         </Field>
-        <Field label="Stop-loss" help={H.paper.stop} own={own('stopPct')} onReset={() => reset('stopPct')}>
-          <PctField label="Stop-loss %" value={value.stopPct} fallback={PAPER_DEFAULTS.stopPct} max={100} onChange={(stopPct) => set({ stopPct })} />
+        <Field label="Stop-loss" help={H.paper.stop} own={own('stopPct', 'stopUnit', 'stopPoints')} onReset={() => reset('stopPct', 'stopUnit', 'stopPoints')}>
+          <ExitField
+            label="Stop-loss"
+            units={['PCT', 'POINTS', 'CANDLE'] as const}
+            unit={value.stopUnit}
+            pct={value.stopPct}
+            points={value.stopPoints}
+            fallback={{ pct: PAPER_DEFAULTS.stopPct, points: POINTS_FALLBACK.stop }}
+            maxPct={100}
+            onChange={(e) => set({ stopUnit: e.unit, stopPct: e.pct, stopPoints: e.points })}
+          />
         </Field>
         <Field label="Trailing SL" help={H.paper.trailing} own={own('trailing')} onReset={() => reset('trailing')}>
           <Toggle checked={value.trailing} onChange={setTrailing} label="Trail from the target" help={noRules ? H.paper.trailingNoRules : H.paper.trailing} disabled={noRules && !value.trailing} />
         </Field>
-        <TradePath stopPct={value.stopPct} targetPct={value.targetPct} trailing={value.trailing} />
-        {value.trailing && value.targetPct !== null && (
+        <TradePath stop={stop} target={target} trailing={value.trailing} />
+        {value.trailing && target !== null && (
           <Tooltip content={H.paper.trailsAtTarget}>
             <p tabIndex={0} className="w-fit text-[11px] leading-relaxed text-slate-500 outline-none">
-              {value.stopPct !== null ? `The −${value.stopPct}% stop-loss guards the trade until +${value.targetPct}%. ` : `Until +${value.targetPct}% nothing but the other exits guards the trade. `}
+              {stop !== null ? `The ${stop.unit === 'CANDLE' ? 'signal candle' : `−${exitText(stop)}`} stop-loss guards the trade until +${exitText(target)}. ` : `Until +${exitText(target)} nothing but the other exits guards the trade. `}
               From there your trailing rules take over; the stop-loss and target no longer apply.
             </p>
           </Tooltip>
@@ -224,8 +327,8 @@ export function PaperTermsFields({
         {hasGroups && (
           <>
             <div className="border-t border-dashed border-ink-700" />
-            <Field label="Other group" help={H.paper.opposite} own={own('exitOnOpposite')} onReset={() => reset('exitOnOpposite')}>
-              <Toggle checked={value.exitOnOpposite} onChange={(exitOnOpposite) => set({ exitOnOpposite })} label="Exit when another group fires" help={H.paper.opposite} />
+            <Field label={`Other ${groupWord}`} help={H.paper.opposite} own={own('exitOnOpposite')} onReset={() => reset('exitOnOpposite')}>
+              <Toggle checked={value.exitOnOpposite} onChange={(exitOnOpposite) => set({ exitOnOpposite })} label={`Exit when another ${groupWord} fires`} help={H.paper.opposite} />
             </Field>
           </>
         )}
@@ -244,10 +347,14 @@ export function PaperTermsFields({
   );
 }
 
-/** "1 lot · +20/−10% · trailing from target" — a connection's paper settings in one line (size as its legs trade: lots and / or ₹). */
-export function paperBrief(p: Pick<PaperPlan, 'lotsPerTrade' | 'cashPerTrade' | 'targetPct' | 'stopPct' | 'trailing'>, sizing = { lots: true, cash: false }): string {
+/** "1 lot · +20/−10% · trailing from target" (points: "+40 pts/−10%") — a connection's paper settings in one line (size as its legs trade: lots and / or ₹). */
+export function paperBrief(p: Pick<PaperPlan, 'lotsPerTrade' | 'cashPerTrade' | 'targetPct' | 'stopPct' | 'trailing'> & Partial<Pick<PaperPlan, 'targetUnit' | 'targetPoints' | 'stopUnit' | 'stopPoints'>>, sizing = { lots: true, cash: false }): string {
   const size = [sizing.lots ? `${p.lotsPerTrade} lot${p.lotsPerTrade === 1 ? '' : 's'}` : null, sizing.cash ? inr(p.cashPerTrade, 0) : null].filter(Boolean).join(' / ');
-  const exits = p.targetPct === null && p.stopPct === null ? '' : `${p.targetPct === null ? '—' : `+${p.targetPct}`}/${p.stopPct === null ? '—' : `−${p.stopPct}`}%`;
+  const t = targetOf(p);
+  const s = stopOf(p);
+  const allPct = t?.unit !== 'POINTS' && (!s || s.unit === 'PCT');
+  const stopBrief = !s ? '—' : s.unit === 'CANDLE' ? 'prev candle' : `−${exitText(s)}`;
+  const exits = !t && !s ? '' : allPct ? `${t ? `+${t.value}` : '—'}/${s && s.unit === 'PCT' ? `−${s.value}` : '—'}%` : `${t ? `+${exitText(t)}` : '—'}/${stopBrief}`;
   return [size, exits, p.trailing ? 'trailing from target' : ''].filter(Boolean).join(' · ');
 }
 
@@ -280,6 +387,7 @@ export function PaperConnectionEditor({
   strategyPlan,
   override,
   hasGroups,
+  groupWord,
   sizing,
   onClose,
 }: {
@@ -288,6 +396,7 @@ export function PaperConnectionEditor({
   strategyPlan: PaperPlan;
   override: PaperOverride | undefined;
   hasGroups: boolean;
+  groupWord?: 'leg' | 'group';
   sizing: { lots: boolean; cash: boolean };
   onClose: () => void;
 }) {
@@ -308,7 +417,7 @@ export function PaperConnectionEditor({
         <Toggle checked={value.enabled} onChange={(enabled) => setValue({ ...value, enabled })} label="Paper trade this connection" help={H.paper.connectionOn} />
         <span className="text-[11px] text-slate-500">{count ? `${count} own value${count === 1 ? '' : 's'} — the rest follow the strategy` : 'Follows the strategy’s paper settings'}</span>
       </div>
-      {value.enabled && <PaperTermsFields value={value} onChange={setValue} base={strategyPlan} hasGroups={hasGroups} sizing={sizing} rulesInStrategy />}
+      {value.enabled && <PaperTermsFields value={value} onChange={setValue} base={strategyPlan} hasGroups={hasGroups} groupWord={groupWord} sizing={sizing} rulesInStrategy />}
       <p className="text-[11px] text-slate-500">
         Which instrument each group trades (Buy / Sell) and its trailing rules are set per strategy (strategy editor, step 3). Changes apply to new trades; the watch window applies to this connection’s alerts too.
       </p>

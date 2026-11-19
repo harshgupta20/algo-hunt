@@ -19,7 +19,7 @@
  * named in the notes. Candles: the history serves past days, so the test ends on the last complete day.
  */
 import type { BacktestDataCheck, BacktestProduct, BacktestRequest, BacktestResult, ConnectionConfig, LegId, SeriesSpec, StrategyDefinition, TriState, UnitState, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
-import { TIMEFRAME, inWatchWindow, legNameById, normalizePlan, resolveRules, trailingRules, watchWindow } from '@/shared/v2';
+import { TIMEFRAME, exitConditions, inWatchWindow, legNameById, normalizePlan, resolveRules, trailingRules, watchWindow } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { decide, initialState } from '../alerts/alertPolicy';
 import { calendars, dateStartMs, lastCompleteDay, type MarketCalendar } from '../calendar/MarketCalendar';
@@ -34,6 +34,7 @@ import type { V2Store } from '../persistence/V2Store';
 import { hasOptionLegs, resolveUnits } from '../universe/resolve';
 import type { BacktestRun } from './backtest';
 import { planNotes, ruleFor, simulate, type SimAlert } from './simulate';
+import { tradeCharts } from './tradeChart';
 import { breakdowns, paperStats, spark } from './summary';
 
 const DAY = 86_400_000;
@@ -171,7 +172,7 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
   const futures = d.legs.some((l) => l.kind === 'FUT');
   const config: Pick<ConnectionConfig, 'expiry' | 'strikeShifts'> = { expiry: req.expiry ?? { mode: 'CURRENT' }, strikeShifts: [req.strikeShift ?? 0] };
   const policy = { channels: { telegram: false, email: false }, trigger: req.trigger ?? 'ON_TRANSITION', cooldownMinutes: req.cooldownMinutes ?? null, oncePerCandle: true } as const;
-  const exitDefs = trailingRules(plan).map((x) => ({ key: x.key, def: exitDefinition(d, x.when) }));
+  const exitDefs = [...trailingRules(plan), ...exitConditions(plan.rules)].map((x) => ({ key: x.key, def: exitDefinition(d, x.when) }));
   const series = seriesOf(d);
   const triggerNative = TIMEFRAME[tf].native;
   const lookbackFrom = (date: string, interval: NativeInterval) => addDays(date, -LOOKBACK_DAYS[interval]);
@@ -288,13 +289,14 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
         if (prevOpen !== null) prev = state.lastEvaluatedCandle === Math.floor(prevOpen / 1000) ? state.lastResult : evaluateUnit({ ...input, triggerOpenMs: prevOpen, at: cal.candleClose(prevOpen, tf) }).result;
         const decision = decide({ policy, state, result: e.result, prevResult: prev, triggerCandle: e.triggerCandle, at, now: at, enabledAt: null, mode: 'COMPLETED_CANDLE', watched: inWatchWindow(window, tf, open, at) });
         states.set(unit.key, { ...decision.next, lastEvaluatedCandle: e.triggerCandle });
-        if (decision.outcome) r.alerts.push({ at, productId: id, unit, prices: e.prices, trace: e.trace });
+        if (decision.outcome) r.alerts.push({ open, at, productId: id, unit, prices: e.prices, trace: e.trace });
       }
       if (r.candles && r.decided < r.candles) r.notes.push(`${r.candles - r.decided} of ${r.candles} candles had too little data to decide`);
 
       // What the alerts' trades read: the traded contract's minutes and the exit rules' series, to their horizon.
       for (const a of r.alerts) {
-        const date = istDate(a.at);
+        // From the signal candle's open (its 1-minute candles are the stop-loss when it sits at that candle).
+        const date = istDate(a.open);
         const leg = ruleFor(d, plan, a.trace).rule?.leg;
         const traded = leg ? a.unit.legs[leg] : null;
         const last = horizon(a.at, traded);
@@ -374,6 +376,10 @@ export async function runOptionsBacktest(deps: OptionsBacktestDeps, strategy: V2
     },
     exitsFor,
     end,
+    charts: (a, t) => {
+      const r = byAlert.get(a);
+      return r?.store ? tradeCharts({ definition: d, unit: a.unit, lookup: r.store.lookup, trade: t }) : undefined;
+    },
   });
 
   const results: BacktestProduct[] = runs.map((r) => {

@@ -40,6 +40,7 @@ import {
   olderThan,
   parseCursor,
   planConditions,
+  exitConditions,
   trailingIssue,
   resolveRules,
   incompatibility,
@@ -581,6 +582,10 @@ export class V2Service {
     for (const x of planConditions(rules)) {
       const issue = validateStrategy({ ...s.definition, expression: x.when }).find((i) => i.severity === 'error');
       if (issue) throw new V2ServiceError(400, `Trailing rules: ${issue.message}`);
+    }
+    for (const x of exitConditions(rules)) {
+      const issue = validateStrategy({ ...s.definition, expression: x.when }).find((i) => i.severity === 'error');
+      if (issue) throw new V2ServiceError(400, `Exit when…: ${issue.message}`);
     }
   }
 

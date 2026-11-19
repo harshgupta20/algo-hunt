@@ -33,7 +33,7 @@ import { calendars, dateStartMs, type MarketCalendar } from '../calendar/MarketC
 import { CandleService } from '../data/CandleService';
 import type { V2DataProvider } from '../data/DataProvider';
 import type { ProductService } from '../data/ProductService';
-import { alignIndex, evaluateUnit, type UnitEvalInput } from '../engine/evaluator';
+import { alignIndex, evaluateUnit, type SeriesLookup, type UnitEvalInput } from '../engine/evaluator';
 import { exitDefinition, legInstrument, seriesOf } from '../engine/series';
 import type { V2Store } from '../persistence/V2Store';
 import { clockFor } from '../scanner/V2Scanner';
@@ -88,7 +88,7 @@ export interface CompareRun {
   /** Before each product; throws to stop the run. */
   checkpoint?: (index: number, productId: string) => void;
   /** When a product is finished, before the next one starts. */
-  onProduct?: (r: CompareProductResult) => Promise<void>;
+  onProduct?: (r: CompareProductResult, data?: { lookup: SeriesLookup }) => Promise<void>;
 }
 
 export const COMPARE_MAX_PRODUCTS = 20;
@@ -274,10 +274,13 @@ export class V2Tools {
         r.errors.push('Not in the product catalogue — sync products');
         continue;
       }
+      // The product's candles, for the backtest's trade charts (what each alert was decided on).
+      let lookup: SeriesLookup | null = null;
       try {
         const cal = cals[product.market];
         const window = req.watch ? watchWindow(req.watch, product.market) : null;
         const candles = new CandleService(provider, cals, until, Infinity, { from: req.from, to: req.to });
+        lookup = candles.lookup;
         const all = await this.deps.products.instruments(id, now);
         const opens = triggerOpens(cal, req.from, req.to, tf, until);
         r.candles = opens.length;
@@ -359,7 +362,7 @@ export class V2Tools {
       } catch (err) {
         r.errors.push(msg(err));
       } finally {
-        await run.onProduct?.(r);
+        await run.onProduct?.(r, lookup ? { lookup } : undefined);
       }
     }
 

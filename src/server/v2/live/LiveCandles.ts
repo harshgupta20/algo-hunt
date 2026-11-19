@@ -275,6 +275,24 @@ export class LiveCandles {
     return this.series.get(token)?.official.get(interval)?.find((c) => c.time * 1000 === openMs);
   }
 
+  /**
+   * High / low of a contract over [from, to) from the live-built minutes — only when the stream watched all of it
+   * (no gap) and it has minutes there; undefined otherwise (the caller asks Kite).
+   */
+  range(token: number, from: number, to: number): { high: number; low: number } | undefined {
+    const s = this.series.get(token);
+    if (!s || s.overlapsGap(from, to)) return undefined;
+    let high = -Infinity;
+    let low = Infinity;
+    for (const m of s.minutes) {
+      const t = m.time * 1000;
+      if (t < from || t >= to) continue;
+      high = Math.max(high, m.high);
+      low = Math.min(low, m.low);
+    }
+    return Number.isFinite(high) && Number.isFinite(low) ? { high, low } : undefined;
+  }
+
   /** Price at `at`: close of the last minute that ended by then, else the last tick. */
   priceAt(token: number, at: number): number | undefined {
     const s = this.series.get(token);

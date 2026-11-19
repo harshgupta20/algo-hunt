@@ -14,7 +14,7 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClie
 import { ArrowDown, ArrowUp, ChevronRight, CloudOff, CloudUpload, Download, HardDrive, Pencil, RefreshCw, Trash2, Wallet, X } from 'lucide-react';
 import clsx from 'clsx';
 import type { LegKind, PaperBookStatus, PaperExitReason, PaperStats, PaperSummary, PaperTrade } from '@/shared/v2';
-import { pageCursor, paperGroups, planSizing, resolveRules, stopNow, trailing, trailsPastTarget } from '@/shared/v2';
+import { pageCursor, paperGroupWord, paperGroups, planSizing, resolveRules, stopNow, trailing, trailsPastTarget } from '@/shared/v2';
 import { InfoTip, Tooltip, type TooltipContent } from '../../components/Tooltip';
 import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column, type Table } from '../../components/table/ColumnFilters';
 import { Badge, EmptyState, IconButton, StatCard } from '../../components/ui';
@@ -355,7 +355,7 @@ function rangeNote(t: PaperTrade): string {
   const stop = stopNow(t);
   const stopText = stop === null ? 'Stop —' : stop.reason === 'TRAIL' ? `Trailing stop ${inr(stop.price)} (${t.terms.trailPct}% from the best ${inr(t.peakPrice ?? t.entryPrice)})` : `Stop ${inr(stop.price)}`;
   const target = t.targetPrice === null ? 'target —' : !trailsPastTarget(t) ? `target ${inr(t.targetPrice)}` : trailing(t) ? `target ${inr(t.targetPrice)} reached — trailing` : `target ${inr(t.targetPrice)} starts trailing`;
-  return `${stopText} · entry ${inr(t.entryPrice)} · ${target}${t.conditions?.stopWhen ? ' · plus trailing rules' : ''}`;
+  return `${stopText} · entry ${inr(t.entryPrice)} · ${target}${t.conditions?.stopWhen ? ' · plus trailing rules' : ''}${t.conditions?.exitWhen ? ' · or its exit condition' : ''}`;
 }
 
 const REASON_ORDER = ['TARGET', 'TARGET_RULE', 'STOP', 'TRAIL', 'STOP_RULE', 'SQUARE_OFF', 'OPPOSITE', 'EXPIRY', 'MANUAL', 'END'] as const;
@@ -596,6 +596,7 @@ function Ranking({ sum, onEditStrategy, onReset, resetting }: { sum: PaperSummar
                               strategyPlan={plan}
                               override={settings.data?.overrides[c.connectionId]}
                               hasGroups={paperGroups(def).length > 0}
+                              groupWord={paperGroupWord(def)}
                               sizing={planSizing(def, resolveRules(def, plan.rules))}
                               onClose={() => setEditing(null)}
                             />

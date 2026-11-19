@@ -11,12 +11,13 @@ import { useState } from 'react';
 import { ArrowRight, ArrowRightLeft, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
 import type { LegId, PaperPlan, PaperRule, PaperSide, StrategyDefinition } from '@/shared/v2';
-import { PAPER_DEFAULTS, legName, legsReadBy, naturalLeg, paperGroups, planSizing, resolveRules } from '@/shared/v2';
+import { PAPER_DEFAULTS, legName, legsReadBy, naturalLeg, paperGroupWord, paperGroups, planSizing, resolveRules, stopOf, targetOf } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { Segmented, Toggle } from '../components';
 import { LEG_KIND_TEXT } from '../format';
 import { H } from '../help';
 import { ConditionsEditor } from '../paper/ConditionsEditor';
+import { ExitConditionsEditor } from '../paper/ExitConditionsEditor';
 import { PaperTermsFields, PlanBlock } from '../paper/PaperFields';
 import { FULL_NOTE, InstrumentPicker, type PickInstrument } from './InstrumentPicker';
 
@@ -124,9 +125,12 @@ export function PaperRulesEditor({ def, rules, onChange, onPickInstrument }: { d
   );
 }
 
-/** Default legs / sides with each group's trailing rules kept (built by hand — "Defaults" never wipes them). */
+/** Default legs / sides with each group's trailing rules and exit condition kept (built by hand — "Defaults" never wipes them). */
 const keepConditions = (fresh: PaperRule[], cur: PaperRule[]): PaperRule[] =>
-  fresh.map((r) => ({ ...r, stopWhen: cur.find((x) => x.group === r.group)?.stopWhen ?? null }));
+  fresh.map((r) => {
+    const was = cur.find((x) => x.group === r.group);
+    return { ...r, stopWhen: was?.stopWhen ?? null, exitWhen: was?.exitWhen ?? null };
+  });
 
 export function PaperPlanEditor({ def, plan, onChange, onPickInstrument }: { def: StrategyDefinition; plan: PaperPlan; onChange: (p: PaperPlan) => void; onPickInstrument?: PickInstrument }) {
   const groups = paperGroups(def);
@@ -150,10 +154,11 @@ export function PaperPlanEditor({ def, plan, onChange, onPickInstrument }: { def
         <p className="text-xs text-warn">Off for every connection of this strategy — its alerts won’t open paper trades. Tick the box to simulate them again.</p>
       ) : (
         <>
-          <PaperTermsFields value={plan} onChange={(p) => onChange({ ...p, rules })} hasGroups={groups.length > 0} sizing={planSizing(def, rules)} />
-
+          {/* What to trade first (the trader's ask, 2026-11-19), then size / exits / costs, then the trailing rules. */}
           <PaperRulesEditor def={def} rules={rules} onChange={(r) => set({ rules: r })} onPickInstrument={onPickInstrument} />
-          {plan.trailing && <ConditionsEditor def={def} rules={rules} targetPct={plan.targetPct} onChange={(r) => set({ rules: r })} />}
+          <PaperTermsFields value={plan} onChange={(p) => onChange({ ...p, rules })} hasGroups={groups.length > 0} groupWord={paperGroupWord(def)} sizing={planSizing(def, rules)} />
+          <ExitConditionsEditor def={def} rules={rules} onChange={(r) => set({ rules: r })} onPickInstrument={onPickInstrument} target={targetOf(plan)} stop={stopOf(plan)} />
+          {plan.trailing && <ConditionsEditor def={def} rules={rules} target={targetOf(plan)} onChange={(r) => set({ rules: r })} />}
           <Tooltip content={H.paper.savedWith}>
             <p className="text-[11px] text-slate-500">Defaults for every connection of this strategy — a connection can change its own values in Connections or on the Paper tab. Saved with the strategy; open trades keep their settings.</p>
           </Tooltip>

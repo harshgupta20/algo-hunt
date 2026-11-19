@@ -189,7 +189,13 @@ export class LiveWorker {
     this.now = deps.clock ?? Date.now;
     this.sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.candles = new LiveCandles(calendars([]));
-    this.paper = new PaperTrader({ store: deps.store, now: this.now, prices: (list) => this.pricesFor(list), provider: deps.provider });
+    this.paper = new PaperTrader({
+      store: deps.store,
+      now: this.now,
+      prices: (list) => this.pricesFor(list),
+      provider: deps.provider,
+      liveRange: (inst, from, to) => this.candles.range(inst.token, from, to),
+    });
   }
 
   // ---- lifecycle ---------------------------------------------------------------------------

@@ -17,12 +17,13 @@
  * scanner (once a minute, while the worker is off) drive exits; closing is conditional on the trade
  * still being open, so the two can never close a trade twice.
  */
-import type { LegId, Market, PaperConditions, PaperExitReason, PaperPlan, PaperRule, PaperSide, PaperTrade, ProductKind, StrategyDefinition, UnitEvaluation, V2Connection, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
-import { atTarget, defaultPaperPlan, effectivePlan, hasCondition, legNameById, marketOfExchange, paperGroups, resolveRules, stopNow, trailLevel, trailsPastTarget } from '@/shared/v2';
+import type { ExitLevel, ExprNode, LegId, Market, PaperConditions, PaperExitReason, PaperPlan, PaperRule, PaperSide, PaperTrade, ProductKind, StrategyDefinition, UnitEvaluation, V2Connection, V2Instrument, V2Product, V2Strategy, V2Unit } from '@/shared/v2';
+import { atTarget, candleStop, defaultPaperPlan, effectivePlan, exitLevelPrice, stopOf, targetOf, hasCondition, legNameById, nodeText, marketOfExchange, paperGroups, resolveRules, stopNow, trailLevel, trailsPastTarget } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
 import type { V2DataProvider } from '../data/DataProvider';
 import type { V2Store } from '../persistence/V2Store';
+import type { RawCandle } from '../engine/candles';
 import { moneyPerUnit, roundTripCharges } from './charges';
 import { ConditionWatch } from './exitConditions';
 
@@ -46,8 +47,23 @@ export interface PaperDeps {
   store: V2Store;
   now: () => number;
   prices: PriceSource;
-  /** Kite's candles for trades' trailing rules (absent = the rules aren't checked). */
+  /** Kite's candles for trades' trailing rules (absent = the rules aren't checked) and signal candles. */
   provider?: V2DataProvider;
+  /** The live worker's own 1-minute candles: a contract's high / low over [from, to) when it watched all of it (else undefined → Kite's). */
+  liveRange?: (inst: V2Instrument, from: number, to: number) => { high: number; low: number } | undefined;
+}
+
+/** High / low of 1-minute candles over [from, to) (null when there are none). */
+export function rangeOf(minutes: RawCandle[], from: number, to: number): { high: number; low: number } | null {
+  let high = -Infinity;
+  let low = Infinity;
+  for (const m of minutes) {
+    const t = m.time * 1000;
+    if (t < from || t >= to) continue;
+    high = Math.max(high, m.high);
+    low = Math.min(low, m.low);
+  }
+  return Number.isFinite(high) && Number.isFinite(low) ? { high, low } : null;
 }
 
 export interface PaperAlert {
@@ -137,7 +153,7 @@ const REASON_TEXT: Record<PaperExitReason, string> = {
   STOP: 'stop-loss hit',
   TRAIL: 'trailing stop hit',
   STOP_RULE: 'trailing rule',
-  TARGET_RULE: 'target condition',
+  TARGET_RULE: 'exit condition',
   SQUARE_OFF: 'square-off',
   OPPOSITE: 'the other group fired',
   EXPIRY: 'expiry',
@@ -145,9 +161,33 @@ const REASON_TEXT: Record<PaperExitReason, string> = {
   END: 'end of the backtest',
 };
 
-/** The trailing rules a rule's trades carry (with the unit's contracts to check them on), or undefined. */
+/** Conditions as their logic only: no ids or names, a group of one = that item. */
+function logicOf(n: ExprNode): string {
+  const bare = (x: ExprNode): unknown => {
+    if ((x.type === 'AND' || x.type === 'OR') && x.children.length === 1) return bare(x.children[0]!);
+    if (x.type === 'AND' || x.type === 'OR') return { type: x.type, children: x.children.map(bare) };
+    if (x.type === 'NOT') return { type: 'NOT', child: bare(x.child) };
+    const { id: _id, ...rest } = x;
+    return rest;
+  };
+  return JSON.stringify(bare(n));
+}
+
+/**
+ * The open trade's exit condition is exactly the conditions of the group that just fired (e.g. its "opposite of the
+ * entry" — the sell leg's own entry): so it is true on this candle, and the trade exits on it (then the new one opens).
+ */
+export function exitFired(t: PaperTrade, d: StrategyDefinition, fired: { id: string } | null): boolean {
+  const exit = t.conditions?.exitWhen;
+  const node = fired ? paperGroups(d).find((g) => g.id === fired.id)?.node : undefined;
+  return !!exit && !!node && logicOf(exit) === logicOf(node);
+}
+
+/** The trailing rules and exit condition a rule's trades carry (with the unit's contracts to check them on), or undefined. */
 export function tradeConditions(rule: PaperRule, d: Pick<StrategyDefinition, 'legs'>, unit: V2Unit): PaperConditions | undefined {
-  return hasCondition(rule.stopWhen) ? { stopWhen: rule.stopWhen, legDefs: d.legs, legs: unit.legs } : undefined;
+  const stop = hasCondition(rule.stopWhen) ? rule.stopWhen : undefined;
+  const exit = hasCondition(rule.exitWhen) ? rule.exitWhen : undefined;
+  return stop || exit ? { ...(stop ? { stopWhen: stop } : {}), ...(exit ? { exitWhen: exit } : {}), legDefs: d.legs, legs: unit.legs } : undefined;
 }
 
 /**
@@ -165,6 +205,8 @@ export function buildTrade(x: {
   group: { id: string; label: string } | null;
   leg: LegId;
   conditions?: PaperConditions;
+  /** The traded contract's signal candle (the one that fired the alert): its low / high is the stop-loss when the plan says so. */
+  signal?: { high: number; low: number } | null;
 }): Omit<PaperTrade, 'id'> {
   const { plan, instrument: inst, side, ref } = x;
   const slip = plan.slippagePct / 100;
@@ -175,10 +217,23 @@ export function buildTrade(x: {
   // Futures / options trade in lots; a stock (Spot leg) gets the shares its ₹ per trade covers.
   const stock = inst.kind === 'SPOT';
   const lots = stock ? Math.max(1, Math.floor(plan.cashPerTrade / perLot)) : Math.max(1, Math.floor(plan.lotsPerTrade));
-  const pct = (n: number | null, up: boolean) => (n === null ? null : toTick(entryPrice * (1 + (up ? n : -n) / 100), inst.tickSize));
+  // Target / stop-loss in % of the entry or in price points of the contract (a level at or below 0 is never reached: none).
+  const target = targetOf(plan);
+  const stop = stopOf(plan);
+  const level = (e: ExitLevel | null, up: boolean) => {
+    const p = exitLevelPrice(entryPrice, e, up);
+    return p === null ? null : toTick(p, inst.tickSize);
+  };
+  // The signal candle's low (buy) / high (sell), when it lies beyond the entry on the loss side (else no stop-loss).
+  const byCandle = stop?.unit === 'CANDLE';
+  const candle = byCandle ? candleStop(side, entryPrice, x.signal) : null;
+  const stopPrice = byCandle ? (candle === null ? null : toTick(candle, inst.tickSize)) : level(stop as ExitLevel | null, side !== 'BUY');
   const at = new Date(x.at).toISOString();
   // Trailing SL needs a target to start at and this group's trailing rules; otherwise a normal trade (the rules stay in the plan).
-  const trails = !!plan.trailing && plan.targetPct !== null && !!x.conditions;
+  const trails = !!plan.trailing && target !== null && !!x.conditions?.stopWhen;
+  // The trade keeps its trailing rules only when it trails; its exit condition always (from the entry).
+  const { stopWhen, exitWhen, ...where } = x.conditions ?? { legDefs: [], legs: {} };
+  const conditions = trails || exitWhen ? { ...where, ...(trails && stopWhen ? { stopWhen } : {}), ...(exitWhen ? { exitWhen } : {}) } : undefined;
   return {
     ...x.ids,
     group: x.group?.id ?? null,
@@ -196,13 +251,16 @@ export function buildTrade(x: {
     entryAt: at,
     entryRef: ref,
     entryPrice,
-    targetPrice: pct(plan.targetPct, side === 'BUY'),
-    stopPrice: pct(plan.stopPct, side !== 'BUY'),
+    targetPrice: level(target, side === 'BUY'),
+    stopPrice,
     peakPrice: entryPrice,
-    ...(x.conditions && trails ? { conditions: x.conditions } : {}),
+    ...(conditions ? { conditions } : {}),
     terms: {
-      targetPct: plan.targetPct,
-      stopPct: plan.stopPct,
+      targetPct: target?.unit === 'PCT' ? target.value : null,
+      stopPct: stop?.unit === 'PCT' ? stop.value : null,
+      ...(target?.unit === 'POINTS' ? { targetPoints: target.value } : {}),
+      ...(stop?.unit === 'POINTS' ? { stopPoints: stop.value } : {}),
+      ...(byCandle ? { stopCandle: true } : {}),
       squareOff: plan.squareOff,
       squareOffNse: plan.squareOffNse,
       squareOffMcx: plan.squareOffMcx,
@@ -259,9 +317,11 @@ export class PaperTrader {
     const open = await store.paper.openFor(a.connection.id, slot);
     const lines: string[] = [];
 
+    // The open trade's exit condition is what just fired (its "opposite of the entry"): it is true on this candle.
+    const exitNow = !!open && exitFired(open, a.strategy.definition, fired);
     if (open) {
       if (open.group === (fired?.id ?? null)) return `📄 Paper: already in ${describe(open)} — kept open`;
-      if (!open.terms.exitOnOpposite) return `📄 Paper: ${describe(open)} is still open — no new trade`;
+      if (!open.terms.exitOnOpposite && !exitNow) return `📄 Paper: ${describe(open)} is still open — no new trade`;
     }
 
     // What this alert would trade (checked before closing anything, so both use one price request).
@@ -280,8 +340,9 @@ export class PaperTrader {
 
     if (open) {
       const px = prices.get(open.instrument.token) ?? open.lastPrice ?? open.entryRef;
-      const closed = await this.close(open, px, 'OPPOSITE');
-      if (closed) lines.push(`📄 Paper: closed ${describe(closed)} @ ${rupees(closed.exitPrice!)} (${REASON_TEXT.OPPOSITE}) · P&L ${signed(closed.netPnl!)}`);
+      const reason = exitNow ? 'TARGET_RULE' : 'OPPOSITE';
+      const closed = await this.close(open, px, reason);
+      if (closed) lines.push(`📄 Paper: closed ${describe(closed)} @ ${rupees(closed.exitPrice!)} (${REASON_TEXT[reason]}) · P&L ${signed(closed.netPnl!)}`);
     }
 
     if (skip || !inst || !rule?.leg) {
@@ -295,6 +356,7 @@ export class PaperTrader {
       return lines.join('\n');
     }
 
+    const signal = stopOf(plan)?.unit === 'CANDLE' ? await this.signalCandle(inst, a) : undefined;
     const draft = buildTrade({
       plan,
       instrument: inst,
@@ -306,6 +368,7 @@ export class PaperTrader {
       group: fired,
       leg: rule.leg,
       conditions: tradeConditions(rule, a.strategy.definition, a.unit),
+      signal,
     });
     const trade = await store.paper.insertTrade(draft);
     if (!trade) {
@@ -314,14 +377,35 @@ export class PaperTrader {
     }
     const perLot = trade.capitalUsed / trade.lots;
     const trails = !!trade.conditions?.stopWhen;
+    const candleSide = trade.side === 'BUY' ? 'low' : 'high';
     const exits = [
       trade.targetPrice !== null ? `target ${rupees(trade.targetPrice)}${trails ? ' starts trailing rules' : ''}` : null,
-      trade.stopPrice !== null ? `stop ${rupees(trade.stopPrice)}` : null,
+      trade.stopPrice !== null ? `stop ${rupees(trade.stopPrice)}${trade.terms.stopCandle ? ` (signal candle ${candleSide})` : ''}` : null,
+      trade.stopPrice === null && trade.terms.stopCandle ? `no stop-loss (${signal ? `the signal candle's ${candleSide} isn't beyond the entry` : 'signal candle not available'})` : null,
       trade.targetPrice === null && trails ? 'trailing rules' : null,
+      trade.conditions?.exitWhen ? `or when ${nodeText(trade.conditions.exitWhen, trade.conditions.legDefs)}` : null,
     ].filter(Boolean);
     const budget = trade.overBudget ? ` · 1 share costs ${rupees(perLot)}, over the ${rupees(plan.cashPerTrade)} per trade` : '';
     lines.push(`📄 Paper: ${describe(trade)} @ ${rupees(trade.entryPrice)}${exits.length ? ` · ${exits.join(' · ')}` : ''}${budget}`);
     return lines.join('\n');
+  }
+
+  /**
+   * The traded contract's signal candle (the trigger candle the alert fired on): the live worker's own minutes when it
+   * watched the whole candle, else Kite's 1-minute candles. Null when neither has it.
+   */
+  private async signalCandle(inst: V2Instrument, a: PaperAlert): Promise<{ high: number; low: number } | null> {
+    const open = a.evaluation.triggerCandle * 1000;
+    const close = a.cal.candleClose(open, a.evaluation.triggerTimeframe);
+    const live = this.deps.liveRange?.(inst, open, close);
+    if (live) return live;
+    if (!this.deps.provider) return null;
+    try {
+      const rows = await this.deps.provider.getHistoricalCandles({ instrument: inst, interval: '1m', from: istDate(open), to: istDate(close - 1) });
+      return rangeOf(rows, open, close);
+    } catch {
+      return null;
+    }
   }
 
   /** Close an open trade at a market price (null when something else closed it first). */

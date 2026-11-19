@@ -10,6 +10,31 @@ import { stopNow, trailsPastTarget } from './paper';
 /** [open time (epoch s), open, high, low, close] */
 export type PathBar = [number, number, number, number, number];
 
+/** A line of a trade chart: one value per candle (null while the indicator warms up). */
+export interface ChartLine {
+  label: string;
+  values: Array<number | null>;
+}
+
+/**
+ * A backtest trade's conditions chart — one per instrument / timeframe the conditions that fired it read: the candles
+ * around the trade with the condition's indicators (as the backtest computed them), where the conditions were met
+ * (the signal candle: the trade entered at its close) and where it exited.
+ */
+export interface TradeChart {
+  /** "FUT · NIFTY25NOVFUT · 5 min" */
+  title: string;
+  candles: PathBar[];
+  /** Index of the signal candle in `candles`, and of the candle the trade exited in (null: after this chart). */
+  entry: number;
+  exit: number | null;
+  /** Lines on the candles (averages, bands, trailing lines — prices), and prices the conditions compare with. */
+  overlays: ChartLine[];
+  levels: number[];
+  /** Panes under the candles, one per kind of value (RSI with its MA, ADX, MACD, volume …) and the numbers they're compared with. */
+  panes: Array<{ title: string; lines: ChartLine[]; levels: number[] }>;
+}
+
 export interface TradePath {
   /** Minutes of trading per bar (1-minute candles merged; the gaps between sessions are left out). */
   step: number;

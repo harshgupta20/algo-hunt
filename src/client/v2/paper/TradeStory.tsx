@@ -18,6 +18,7 @@ import { v2Api } from '../api';
 import { istClock, istStampMs } from '../format';
 import { H } from '../help';
 import { useWidth } from './charts';
+import { ConditionsCharts } from './ConditionsChart';
 import { niceTicks } from './EquityChart';
 import { inr, signedInr } from './money';
 
@@ -221,6 +222,8 @@ function exitText(t: PaperTrade, story: Story | null): string {
     }
     case 'STOP_RULE':
       return t.conditions?.stopWhen ? `A trailing rule came true at the candle close: ${nodeText(t.conditions.stopWhen, t.conditions.legDefs)}.` : 'A trailing rule came true at the candle close.';
+    case 'TARGET_RULE':
+      return t.conditions?.exitWhen ? `The exit condition came true at the candle close — before the target: ${nodeText(t.conditions.exitWhen, t.conditions.legDefs)}.` : H.paper.reasons.TARGET_RULE.body;
     default:
       return t.exitReason ? H.paper.reasons[t.exitReason].body : '';
   }
@@ -231,10 +234,15 @@ function timeline(t: PaperTrade, story: Story | null): Item[] {
   const qty = t.lotSize > 1 ? `${t.lots} × ${t.lotSize}` : `${t.quantity}`;
   const trails = trailsPastTarget(t);
   const levels = [
-    t.stopPrice !== null ? `stop-loss ${inr(t.stopPrice)} (${t.terms.stopPct}%)` : 'no stop-loss',
-    t.targetPrice !== null ? `target ${inr(t.targetPrice)} (${t.terms.targetPct}%)${trails ? ' — starts trailing' : ''}` : 'no target',
+    t.stopPrice !== null
+      ? `stop-loss ${inr(t.stopPrice)} (${t.terms.stopCandle ? `signal candle ${t.side === 'BUY' ? 'low' : 'high'}` : t.terms.stopPoints != null ? `${t.terms.stopPoints} pts` : `${t.terms.stopPct}%`})`
+      : t.terms.stopCandle
+        ? `no stop-loss (the signal candle’s ${t.side === 'BUY' ? 'low' : 'high'} wasn’t available or not beyond the entry)`
+        : 'no stop-loss',
+    t.targetPrice !== null ? `target ${inr(t.targetPrice)} (${t.terms.targetPoints != null ? `${t.terms.targetPoints} pts` : `${t.terms.targetPct}%`})${trails ? ' — starts trailing' : ''}` : 'no target',
     t.terms.trailPct != null ? `trailing ${t.terms.trailPct}%${t.targetPrice !== null ? ' from the target' : ''}` : null,
     t.conditions?.stopWhen ? `trailing rules: ${nodeText(t.conditions.stopWhen, t.conditions.legDefs)}` : null,
+    t.conditions?.exitWhen ? `exit when ${nodeText(t.conditions.exitWhen, t.conditions.legDefs)}` : null,
   ].filter(Boolean);
   const items: Item[] = [
     {
@@ -376,8 +384,15 @@ export function TradeStoryPanel({ t }: { t: PaperTrade }) {
           <Fact label="Each bar" value={minutes(path!.step)} help={H.paper.storyBars} />
         </div>
       )}
+      {/* Backtest trades: the candles and values the conditions were decided on — where they were met and where it exited. */}
+      {t.charts?.length ? <ConditionsCharts charts={t.charts} side={t.side} reason={t.exitReason ?? null} /> : null}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0">
+          {t.charts?.length && story ? (
+            <Tooltip content={H.paper.storyPath}>
+              <h5 className="mb-1 w-fit cursor-help text-xs font-semibold text-slate-200">{t.instrument.symbol} while held</h5>
+            </Tooltip>
+          ) : null}
           {story ? (
             <PathChart t={t} story={story} />
           ) : kite.isLoading ? (

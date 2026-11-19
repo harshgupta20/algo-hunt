@@ -6,7 +6,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { PaperPlan, PaperRule, StrategyDefinition } from '../../src/shared/v2';
-import { UNSAVED_STRATEGY_ID, backtestRequestSchema, defaultPaperPlan, normalizePlan, tradeStory } from '../../src/shared/v2';
+import { UNSAVED_STRATEGY_ID, backtestRequestSchema, defaultPaperPlan, normalizePlan, oppositeOf, tradeStory } from '../../src/shared/v2';
 import { ProductService } from '../../src/server/v2/data/ProductService';
 import { RuntimeV2Store, createRuntimeState } from '../../src/server/v2/persistence/RuntimeV2Store';
 import type { RawCandle } from '../../src/server/v2/engine/candles';
@@ -71,6 +71,149 @@ describe('backtest', () => {
     expect(r.summary.overall.returnPct).toBeCloseTo(((18_840 - charges) / 226_080) * 100, 1);
     expect(r).not.toHaveProperty('capital');
     expect(r.summary.reasons).toEqual([{ reason: 'TARGET', trades: 1, pnl: t!.netPnl }]);
+  });
+
+  /** The signal candle (09:45–10:00) in 1-minute candles: one minute dips to `low`, one spikes to `high`. */
+  const signalMinutes = (low: number, high: number): RawCandle[] =>
+    Array.from({ length: 15 }, (_, j) => ({ time: Math.floor((ist(D, '09:45') + j * 60_000) / 1000), open: 25_100, high: j === 3 ? high : 25_112, low: j === 7 ? low : 25_095, close: 25_110, volume: 10 }));
+
+  it('stop-loss at the signal candle: its low for a buy (the contract’s own 1-minute candles), fixed at entry', async () => {
+    // Falling after the entry: 25,120 → 25,110 → … the 10:05 minute's low (25,058) breaks the signal candle's low (25,060).
+    provider.set(niftyFut, '1m', [...signalMinutes(25_060, 25_125), ...risingMinutes(20, 25_120, -10)]);
+    const [t] = (await run({ stopUnit: 'CANDLE', stopPct: null })).trades;
+    expect(t).toMatchObject({ entryPrice: 25_120, stopPrice: 25_060, exitReason: 'STOP', exitPrice: 25_060, exitAt: new Date(ist(D, '10:06')).toISOString() });
+    expect(t!.terms).toMatchObject({ stopCandle: true, stopPct: null });
+    // A sell: the signal candle's high.
+    const sell = plan({ stopUnit: 'CANDLE', stopPct: null, rules: [{ group: null, leg: 'A', side: 'SELL' }] });
+    const [s2] = (await svc.backtest({ strategyId, products: ['NSE:NIFTY'], from: D, to: D, plan: sell })).trades;
+    expect(s2).toMatchObject({ side: 'SELL', entryPrice: 25_120, stopPrice: 25_125 });
+  });
+
+  it('stop-loss at the signal candle: none when its low isn’t below the entry (said on the trade)', async () => {
+    provider.set(niftyFut, '1m', [...signalMinutes(25_095, 25_112).map((m) => ({ ...m, low: 25_121 })), ...risingMinutes(40)]);
+    const [t] = (await run({ stopUnit: 'CANDLE', stopPct: null })).trades;
+    expect(t).toMatchObject({ stopPrice: null, exitReason: 'TARGET' });
+    expect(t!.terms.stopCandle).toBe(true);
+    // No 1-minute candles for the signal candle at all: no stop either.
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    expect((await run({ stopUnit: 'CANDLE', stopPct: null })).trades[0]).toMatchObject({ stopPrice: null });
+  });
+
+  it('exit condition ("Exit when…") from the entry: closes at the first candle close it is true, or the target first — whichever is earlier', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(60));
+    // The 15-minute close is 25,121 at 10:15 (the candle after the entry): "close > 25,120" — before the target (10:25).
+    const early = cond(field(legSeries('A')), 'GT', num(25_120));
+    const r = await run({ targetUnit: 'POINTS', targetPct: null, targetPoints: 250, rules: [{ group: null, leg: 'A', side: 'BUY', exitWhen: early }] });
+    expect(r.trades[0]).toMatchObject({ exitReason: 'TARGET_RULE', exitAt: new Date(ist(D, '10:15')).toISOString(), targetPrice: 25_370 });
+    expect(r.trades[0]!.exitPrice).toBe(25_270); // the 10:14 minute's close — the price at that candle's close
+    expect(r.notes.some((x) => /^Exit when: .* checked from the entry/.test(x))).toBe(true);
+    // True only from 11:15 on: the 250-point target (25,370, reached in the 10:24 minute) comes first.
+    const late = cond(field(legSeries('A')), 'GT', num(25_125));
+    const [t] = (await run({ targetUnit: 'POINTS', targetPct: null, targetPoints: 250, rules: [{ group: null, leg: 'A', side: 'BUY', exitWhen: late }] })).trades;
+    expect(t).toMatchObject({ exitReason: 'TARGET', exitPrice: 25_370 });
+    // Trailing SL off and no exit condition: as before.
+    expect((await run({})).trades[0]).toMatchObject({ exitReason: 'TARGET' });
+  });
+
+  it('the trader’s RSI strategy: buy on RSI crossing above its MA, sell on crossing below — exit at 50 points or the opposite cross, whichever is earlier', async () => {
+    const times = timesEndingAt(ist(D, '15:25'), 5, 300, NSE_SESSION);
+    const closes = times.map((_, i) => 25_000 + 60 * Math.sin(i / 9) + 25 * Math.sin(i / 2.3) + i * 0.4);
+    provider.set(niftyFut, '5m', candlesAt(times, closes, { spread: 6 }));
+    provider.set(
+      niftyFut,
+      '1m',
+      times.flatMap((t, i) =>
+        Array.from({ length: 5 }, (_, j) => {
+          const a = closes[i - 1] ?? closes[0]!;
+          const o = a + ((closes[i]! - a) * j) / 5;
+          const c = a + ((closes[i]! - a) * (j + 1)) / 5;
+          return { time: Math.floor((t + j * 60_000) / 1000), open: o, high: Math.max(o, c) + 2, low: Math.min(o, c) - 2, close: c, volume: 10 };
+        }),
+      ),
+    );
+    const A = legSeries('A', '5m');
+    const rsi = ind(A, 'RSI', { period: 14 });
+    const rsiMa = { ...rsi, ma: { type: 'SMA' as const, period: 9 } } as typeof rsi;
+    const up = cond(rsi, 'CROSSED_ABOVE', rsiMa);
+    const down = cond(rsi, 'CROSSED_BELOW', rsiMa);
+    const def: StrategyDefinition = { ...strategy([{ id: 'A', kind: 'FUT' }], { type: 'OR', id: 'root', children: [up, down] }), name: 'RSI over its MA', evaluation: { mode: 'COMPLETED_CANDLE', triggerTimeframe: '5m' } };
+    const id = (await svc.createStrategy(def)).id;
+    let n = 0;
+    const p: PaperPlan = {
+      ...defaultPaperPlan(def),
+      slippagePct: 0,
+      targetUnit: 'POINTS',
+      targetPct: null,
+      targetPoints: 50,
+      stopPct: null,
+      squareOff: false,
+      rules: [
+        { group: up.id, leg: 'A', side: 'BUY', exitWhen: oppositeOf(up, () => `u${n++}`) },
+        { group: down.id, leg: 'A', side: 'SELL', exitWhen: oppositeOf(down, () => `d${n++}`) },
+      ],
+    };
+    const r = await svc.backtest({ strategyId: id, products: ['NSE:NIFTY'], from: D, to: D, plan: p, trigger: 'WHILE_TRUE' });
+    const sides = new Set(r.trades.map((t) => t.side));
+    expect(r.trades.length).toBeGreaterThan(4);
+    expect(sides).toEqual(new Set(['BUY', 'SELL']));
+    const reasons = new Set(r.trades.map((t) => t.exitReason));
+    // Every reversal closed the open trade by its exit condition before the new one opened — never "the other leg fired".
+    expect(reasons.has('TARGET_RULE')).toBe(true);
+    expect(reasons.has('OPPOSITE')).toBe(false);
+    for (const t of r.trades) {
+      const buy = t.side === 'BUY';
+      expect(['TARGET', 'TARGET_RULE', 'END']).toContain(t.exitReason);
+      if (t.exitReason === 'TARGET') expect(buy ? t.exitPrice! - t.entryPrice : t.entryPrice - t.exitPrice!).toBeCloseTo(50, 1);
+      if (t.exitReason !== 'TARGET_RULE') continue;
+      // Closed on the opposite cross: RSI crossed back over its MA on the exit candle …
+      const c = t.charts![0]!;
+      const [line, ma] = c.panes[0]!.lines;
+      const k = c.exit!;
+      if (buy) expect(line!.values[k]! < ma!.values[k]! && line!.values[k - 1]! >= ma!.values[k - 1]!).toBe(true);
+      else expect(line!.values[k]! > ma!.values[k]! && line!.values[k - 1]! <= ma!.values[k - 1]!).toBe(true);
+      // … before the 50-point target was reached (whichever is earlier).
+      const held = t.path!.bars.slice(0, t.path!.held);
+      if (buy) expect(Math.max(...held.map((b) => b[2]))).toBeLessThan(t.targetPrice!);
+      else expect(Math.min(...held.map((b) => b[3]))).toBeGreaterThan(t.targetPrice!);
+    }
+  });
+
+  it('every trade carries the chart of its conditions: the candles around it, where they were met and where it exited', async () => {
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    const [t] = (await run({})).trades;
+    expect(t!.charts).toHaveLength(1);
+    const c = t!.charts![0]!;
+    expect(c.title).toBe(`FUT · ${niftyFut.symbol} · 15 min`);
+    expect(c.candles[c.entry]![0]).toBe(ist(D, '09:45') / 1000); // the signal candle: the trade entered at its 10:00 close
+    expect(c.candles[c.exit!]![0]).toBe(ist(D, '10:15') / 1000); // exited at 10:25 — inside the 10:15–10:30 candle
+    expect(c.levels).toEqual([25_100]); // what the close is compared with
+    expect(c.overlays).toEqual([]); // the close is the candles themselves
+    expect(c.panes).toEqual([]);
+    expect(c.entry).toBeLessThanOrEqual(40);
+    expect(c.candles.length - 1 - c.exit!).toBeLessThanOrEqual(8);
+  });
+
+  it('the chart’s RSI and its moving average are the engine’s own values', async () => {
+    const A = legSeries('A');
+    const rsi = ind(A, 'RSI', { period: 14 });
+    const rsiMa = { ...rsi, ma: { type: 'SMA' as const, period: 9 } };
+    const S2: StrategyDefinition = { ...strategy([{ id: 'A', kind: 'FUT' }], and(cond(field(A), 'CROSSED_ABOVE', num(25_100)), cond(rsi, 'GTE', rsiMa), cond(ind(A, 'EMA', { period: 5 }), 'GT', num(0)))), name: 'Break with RSI' };
+    const id2 = (await svc.createStrategy(S2)).id;
+    provider.set(niftyFut, '1m', risingMinutes(40));
+    const r = await svc.backtest({ strategyId: id2, products: ['NSE:NIFTY'], from: D, to: D, plan: { ...defaultPaperPlan(S2), slippagePct: 0, targetPct: 1, stopPct: 0.5 } });
+    const c = r.trades[0]!.charts![0]!;
+    // RSI and its MA share a pane (both oscillators); the EMA, a price, is drawn on the candles with its level (0).
+    expect(c.panes).toHaveLength(1);
+    expect(c.panes[0]!.lines.map((l) => l.label)).toEqual(['RSI(14)', 'SMA(9) of RSI(14)']);
+    expect(c.overlays.map((l) => l.label)).toEqual(['EMA(5)']);
+    expect(c.levels).toEqual([25_100, 0]);
+    // Value for value against the engine's indicator on the same 15-minute candles.
+    const fifteen = await provider.getHistoricalCandles({ instrument: niftyFut, interval: '15m', from: '2026-09-01', to: D });
+    const at = fifteen.findIndex((k) => k.time === c.candles[c.entry]![0]);
+    const want = indicatorValues(fifteen as never, rsi as never)[at]!;
+    const wantMa = indicatorValues(fifteen as never, rsiMa as never)[at]!;
+    expect(c.panes[0]!.lines[0]!.values[c.entry]).toBeCloseTo(want, 2);
+    expect(c.panes[0]!.lines[1]!.values[c.entry]).toBeCloseTo(wantMa, 2);
   });
 
   it('a stop-loss in the same minute as the target wins; a gap through the stop fills at the open', async () => {

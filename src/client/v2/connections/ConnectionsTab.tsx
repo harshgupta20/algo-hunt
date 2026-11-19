@@ -9,7 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Link2, Pencil, PlayCircle, Plus, Power, PowerOff, RefreshCw, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
 import type { AlertStateName, ConnectionConfig, PaperOverride, PaperPlan, StrategyDefinition, TriState, UnitState, V2Strategy } from '@/shared/v2';
-import { TIMEFRAME, candleRequestsPerProduct, defaultPaperPlan, effectivePlan, expiryText, legName, paperGroups, planSizing, policyText, resolveRules } from '@/shared/v2';
+import { TIMEFRAME, candleRequestsPerProduct, defaultPaperPlan, effectivePlan, expiryText, legName, paperGroupWord, paperGroups, planSizing, policyText, resolveRules } from '@/shared/v2';
 import { Tooltip } from '../../components/Tooltip';
 import { ColumnHead, FilterSummary, NoMatchRow, useTable, type Column } from '../../components/table/ColumnFilters';
 import { Badge, Card, EmptyState, IconButton, Spinner } from '../../components/ui';
@@ -321,6 +321,7 @@ function ConnectionRowView({ c, definition, paper }: { c: ConnectionRow; definit
             strategyPlan={strategyPlan}
             override={override}
             hasGroups={paperGroups(definition).length > 0}
+            groupWord={paperGroupWord(definition)}
             sizing={planSizing(definition, resolveRules(definition, strategyPlan.rules))}
             onClose={() => setPanel(null)}
           />

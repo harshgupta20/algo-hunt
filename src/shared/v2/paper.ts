@@ -9,13 +9,13 @@
 import { z } from 'zod';
 import { exprNode } from './schema';
 import type { AlertSide, ExprNode, ExprTrace, LegDef, LegId, Market, StrategyDefinition, Timeframe, V2Instrument } from './types';
-import type { TradePath } from './story';
+import type { TradeChart, TradePath } from './story';
 
 export type PaperSide = 'BUY' | 'SELL';
 /**
- * TRAIL: the trailing stop-loss. STOP_RULE: one of the group's trailing rules came true. TARGET_RULE: a target
- * condition (a setting since removed — older trades only). END: a backtest ended with the trade still open (closed
- * at the last price).
+ * TRAIL: the trailing stop-loss. STOP_RULE: one of the group's trailing rules came true. TARGET_RULE: the rule's exit
+ * condition came true ("Exit when…", from the entry — since 2026-11-19; before 2026-11-04 the old target conditions).
+ * END: a backtest ended with the trade still open (closed at the last price).
  */
 export type PaperExitReason = 'TARGET' | 'STOP' | 'TRAIL' | 'STOP_RULE' | 'TARGET_RULE' | 'SQUARE_OFF' | 'OPPOSITE' | 'EXPIRY' | 'MANUAL' | 'END';
 
@@ -32,6 +32,13 @@ export interface PaperRule {
    * close. Absent / null = none.
    */
   stopWhen?: ExprNode | null;
+  /**
+   * Exit when… (the trader's ask, 2026-11-19: "target = 50 points or RSI crossing back below its MA, whichever is
+   * earlier"): close the trade when this comes true — checked from the entry on, at every close of the smallest
+   * timeframe it uses, whatever the alert rules (cooldown, "becomes true") do; the trade exits at that close. The
+   * target, stop-loss and other exits still apply — whichever comes first. Absent / null = none.
+   */
+  exitWhen?: ExprNode | null;
 }
 
 export interface PaperPlan {
@@ -42,11 +49,18 @@ export interface PaperPlan {
   cashPerTrade: number;
   rules: PaperRule[];
   /**
-   * % move from entry for the target / the stop-loss; null = none. Without trailing they close the trade; with
-   * `trailing` the target is where trailing starts (required then), and from there neither applies.
+   * The target / the stop-loss from the entry: `targetPct` % (unit PCT) or `targetPoints` price points (unit POINTS,
+   * since 2026-11-19) — the other one is null; null = none. Without trailing they close the trade; with `trailing` the
+   * target is where trailing starts (required then), and from there neither applies. See `targetOf` / `stopOf`.
+   * The stop-loss can also sit at the signal candle (unit CANDLE, 2026-11-19): the low (buy) / high (sell) of the traded
+   * contract's candle that fired the alert — its % and points are null then.
    */
   targetPct: number | null;
   stopPct: number | null;
+  targetUnit: ExitUnit;
+  targetPoints: number | null;
+  stopUnit: StopUnit;
+  stopPoints: number | null;
   /** Trailing SL on: the target starts the trailing rules (the rules' `stopWhen`, at least one) instead of closing the trade. */
   trailing: boolean;
   /**
@@ -70,11 +84,20 @@ export interface PaperPlan {
   slippagePct: number;
 }
 
+/** How a target / stop-loss is measured from the entry price: in % of it, or in price points of the traded contract. */
+export type ExitUnit = 'PCT' | 'POINTS';
+/** A stop-loss can also be the signal candle's low (buy) / high (sell): the traded contract's candle that fired the alert. */
+export type StopUnit = ExitUnit | 'CANDLE';
+
 export const PAPER_DEFAULTS = {
   lotsPerTrade: 1,
   cashPerTrade: 10_000,
   targetPct: 20,
   stopPct: 10,
+  targetUnit: 'PCT' as ExitUnit,
+  targetPoints: null as number | null,
+  stopUnit: 'PCT' as StopUnit,
+  stopPoints: null as number | null,
   trailing: false,
   watch: false,
   watchNseFrom: '09:15',
@@ -100,7 +123,58 @@ export const PAPER_DEFAULTS = {
 export type PaperTerms = Pick<PaperPlan, 'targetPct' | 'stopPct' | 'squareOff' | 'squareOffNse' | 'squareOffMcx' | 'exitOnOpposite' | 'charges' | 'slippagePct'> & {
   trailFromTarget?: boolean;
   trailPct?: number | null;
+  /** A target / stop-loss in price points (then its % is null) — trades opened since 2026-11-19. */
+  targetPoints?: number | null;
+  stopPoints?: number | null;
+  /** The stop-loss is the signal candle's low (buy) / high (sell) — `stopPrice` (null when the candle wasn't available or not beyond the entry). */
+  stopCandle?: boolean;
 };
+
+/** A target or stop-loss: how far from the entry, in % or in price points. */
+export interface ExitLevel {
+  value: number;
+  unit: ExitUnit;
+}
+
+/** A stop-loss: a size from the entry, or the signal candle's low / high. */
+export type StopSetting = ExitLevel | { unit: 'CANDLE' };
+
+type ExitFields = Pick<PaperPlan, 'targetPct' | 'stopPct'> & Partial<Pick<PaperPlan, 'targetUnit' | 'targetPoints' | 'stopUnit' | 'stopPoints'>>;
+
+/** The plan's target (null = none), in its unit — plans saved before points have none set and are in %. */
+export function targetOf(p: ExitFields): ExitLevel | null {
+  const unit = p.targetUnit ?? 'PCT';
+  const value = unit === 'POINTS' ? p.targetPoints : p.targetPct;
+  return value === null || value === undefined ? null : { value, unit };
+}
+
+/** The plan's stop-loss (null = none), in its unit — or the signal candle. */
+export function stopOf(p: ExitFields): StopSetting | null {
+  const unit = p.stopUnit ?? 'PCT';
+  if (unit === 'CANDLE') return { unit };
+  const value = unit === 'POINTS' ? p.stopPoints : p.stopPct;
+  return value === null || value === undefined ? null : { value, unit };
+}
+
+/** "20%", "20 pts" or "signal candle low / high" (with the side: "signal candle low" for a buy, "… high" for a sell). */
+export function exitText(e: StopSetting, side?: PaperSide): string {
+  if (e.unit === 'CANDLE') return `signal candle ${side === 'SELL' ? 'high' : side === 'BUY' ? 'low' : 'low / high'}`;
+  return e.unit === 'POINTS' ? `${e.value} pts` : `${e.value}%`;
+}
+
+/** The signal candle's stop for a side: its low for a buy, its high for a sell — only when beyond the entry on the loss side. */
+export function candleStop(side: PaperSide, entry: number, candle: { high: number; low: number } | null | undefined): number | null {
+  if (!candle) return null;
+  const p = side === 'BUY' ? candle.low : candle.high;
+  return (side === 'BUY' ? p < entry : p > entry) && p > 0 ? p : null;
+}
+
+/** The price `e` away from `entry` (up or down), before rounding to the tick — null when there is none or it would be ≤ 0 (never reached). */
+export function exitLevelPrice(entry: number, e: ExitLevel | null, up: boolean): number | null {
+  if (!e) return null;
+  const p = e.unit === 'POINTS' ? entry + (up ? e.value : -e.value) : entry * (1 + (up ? e.value : -e.value) / 100);
+  return p > 0 ? p : null;
+}
 
 /** Settings a connection can change from its strategy's plan (absent = the strategy's value; null target / stop = none). */
 export const PAPER_OVERRIDE_KEYS = [
@@ -109,6 +183,10 @@ export const PAPER_OVERRIDE_KEYS = [
   'cashPerTrade',
   'targetPct',
   'stopPct',
+  'targetUnit',
+  'targetPoints',
+  'stopUnit',
+  'stopPoints',
   'trailing',
   'watch',
   'watchNseFrom',
@@ -131,7 +209,7 @@ export function normalizePlan(plan: PaperPlan): PaperPlan {
   // Target conditions were removed (2026-11-04): the target is where trailing starts instead.
   if (out.rules.some((r) => 'targetWhen' in r)) out.rules = out.rules.map(({ targetWhen: _t, ...r }: PaperRule & { targetWhen?: unknown }) => r);
   // Before the Trailing SL switch (2026-11-04) trailing rules switched trailing on (it needs a target now); the trailing % was removed.
-  if (!('trailing' in plan) || plan.trailing === undefined) out.trailing = planConditions(out.rules).length > 0 && out.targetPct !== null;
+  if (!('trailing' in plan) || plan.trailing === undefined) out.trailing = planConditions(out.rules).length > 0 && targetOf(out) !== null;
   if ('trailPct' in out) delete (out as { trailPct?: unknown }).trailPct;
   return out;
 }
@@ -205,10 +283,14 @@ export interface PaperTrade {
   openPnl?: number;
   /** Backtest trades: the price path the trade was walked on — what its story shows (paper trades read it from Kite when asked). */
   path?: TradePath;
+  /** Backtest trades: the candles and indicators of the conditions that fired it, around the trade (story.ts TradeChart). */
+  charts?: TradeChart[];
 }
 
 export interface PaperConditions {
   stopWhen?: ExprNode;
+  /** The rule's exit condition (from the entry). */
+  exitWhen?: ExprNode;
   /** The strategy's legs and the contracts of the unit the trade opened on. */
   legDefs: LegDef[];
   legs: Partial<Record<LegId, V2Instrument | null>>;
@@ -275,6 +357,10 @@ const BRIEF_DEFAULTS: PaperSettingsBrief = {
   cashPerTrade: PAPER_DEFAULTS.cashPerTrade,
   targetPct: PAPER_DEFAULTS.targetPct,
   stopPct: PAPER_DEFAULTS.stopPct,
+  targetUnit: PAPER_DEFAULTS.targetUnit,
+  targetPoints: PAPER_DEFAULTS.targetPoints,
+  stopUnit: PAPER_DEFAULTS.stopUnit,
+  stopPoints: PAPER_DEFAULTS.stopPoints,
   trailing: PAPER_DEFAULTS.trailing,
   squareOff: true,
   custom: false,
@@ -309,6 +395,10 @@ export interface PaperSettingsBrief {
   cashPerTrade: number;
   targetPct: number | null;
   stopPct: number | null;
+  targetUnit: ExitUnit;
+  targetPoints: number | null;
+  stopUnit: StopUnit;
+  stopPoints: number | null;
   trailing: boolean;
   squareOff: boolean;
   /** The connection has its own values (not only the strategy's). */
@@ -358,6 +448,7 @@ export function planLegs(rules: PaperRule[] = []): Set<LegId> {
   for (const r of rules) {
     if (r.leg) out.add(r.leg);
     if (r.stopWhen) legsIn(r.stopWhen, out);
+    if (r.exitWhen) legsIn(r.exitWhen, out);
   }
   return out;
 }
@@ -369,11 +460,29 @@ export function naturalLeg(legs: LegDef[], node: ExprNode): LegId | null {
   return pick?.id ?? null;
 }
 
-/** Top-level groups that can fire on their own (children of a root OR), or none. */
+/** A branch of a root OR the editor's simple view shows as legs: one condition, or an AND of conditions. */
+const legBranch = (c: ExprNode) => c.type === 'CONDITION' || (c.type === 'AND' && c.children.length > 0 && c.children.every((x) => x.type === 'CONDITION'));
+
+/**
+ * Top-level groups that can fire on their own (children of a root OR), or none. Unnamed ones are called as the simple
+ * view numbers its legs — one condition "Leg 3", an AND of conditions "Legs 1–2" — other groups "Group n".
+ */
 export function paperGroups(d: StrategyDefinition): Array<{ id: string; label: string; node: ExprNode }> {
   const root = d.expression;
   if (root.type !== 'OR' || root.children.length < 2) return [];
-  return root.children.map((c, i) => ({ id: c.id, label: ('label' in c && c.label) || `Group ${i + 1}`, node: c }));
+  let legs = 0;
+  return root.children.map((c, i) => {
+    const first = legs + 1;
+    legs += c.type === 'AND' ? c.children.length : 1;
+    const auto = !legBranch(c) ? `Group ${i + 1}` : first === legs ? `Leg ${first}` : `Legs ${first}–${legs}`;
+    return { id: c.id, label: ('label' in c && c.label) || auto, node: c };
+  });
+}
+
+/** What the strategy's parts that fire on their own are called: "leg" when they are all legs of the simple view, else "group". */
+export function paperGroupWord(d: StrategyDefinition): 'leg' | 'group' {
+  const root = d.expression;
+  return root.type === 'OR' && root.children.every(legBranch) ? 'leg' : 'group';
 }
 
 /** Call or put of an evaluation: the option leg the fired group trades (CE → CALL, PE → PUT), else FUT. */
@@ -470,15 +579,42 @@ export function planConditions(rules: PaperRule[]): Array<{ key: string; group: 
   return rules.flatMap((r) => (r.leg && hasCondition(r.stopWhen) ? [{ key: conditionKey(r.group), group: r.group, when: r.stopWhen }] : []));
 }
 
+/** Key of a rule's exit condition: `<group or *>|EXIT`. */
+export const exitConditionKey = (group: string | null) => `${group ?? '*'}|EXIT`;
+
+/** The exit conditions of the rules that trade (active from the entry, Trailing SL or not). */
+export function exitConditions(rules: PaperRule[]): Array<{ key: string; group: string | null; when: ExprNode }> {
+  return rules.flatMap((r) => (r.leg && hasCondition(r.exitWhen) ? [{ key: exitConditionKey(r.group), group: r.group, when: r.exitWhen }] : []));
+}
+
+/**
+ * The opposite of an entry's conditions — the usual exit: crossed above ↔ crossed below, > ↔ <, ≥ ↔ ≤ (= stays), AND /
+ * OR / NOT kept, fresh ids. "RSI crossed above its MA" → "RSI crossed below its MA".
+ */
+export function oppositeOf(n: ExprNode, id: () => string): ExprNode {
+  const OPP = { CROSSED_ABOVE: 'CROSSED_BELOW', CROSSED_BELOW: 'CROSSED_ABOVE', GT: 'LT', LT: 'GT', GTE: 'LTE', LTE: 'GTE', EQ: 'EQ' } as const;
+  switch (n.type) {
+    case 'AND':
+    case 'OR':
+      return { ...n, id: id(), children: n.children.map((c) => oppositeOf(c, id)) };
+    case 'NOT':
+      return { ...n, id: id(), child: oppositeOf(n.child, id) };
+    case 'PATTERN':
+      return { ...n, id: id() };
+    case 'CONDITION':
+      return { ...n, id: id(), operator: OPP[n.operator] };
+  }
+}
+
 /** The trailing rules a plan trades with: none while Trailing SL is off. */
 export function trailingRules(plan: Pick<PaperPlan, 'trailing' | 'rules'>) {
   return plan.trailing ? planConditions(plan.rules) : [];
 }
 
 /** Trailing SL on without a target to start it, or without a trailing rule to trail by. */
-export function trailingIssue(p: Pick<PaperPlan, 'trailing' | 'targetPct' | 'rules'>): string | null {
+export function trailingIssue(p: Pick<PaperPlan, 'trailing' | 'rules'> & ExitFields): string | null {
   if (!p.trailing) return null;
-  if (p.targetPct === null) return 'Trailing SL starts at the target — set a target (or switch Trailing SL off).';
+  if (!targetOf(p)) return 'Trailing SL starts at the target — set a target (or switch Trailing SL off).';
   if (!planConditions(p.rules).length) return 'Trailing SL needs at least one trailing rule (Trailing rules, in the strategy’s trade plan).';
   return null;
 }
@@ -516,6 +652,9 @@ const lots = z.number().int().min(1).max(1_000);
 const cash = z.number().min(100).max(1e9);
 const target = z.number().gt(0).max(1000).nullable();
 const stop = z.number().gt(0).max(100).nullable();
+const points = z.number().gt(0).max(1_000_000).nullable();
+const unit = z.enum(['PCT', 'POINTS']);
+const stopUnit = z.enum(['PCT', 'POINTS', 'CANDLE']);
 
 const overrideShape = {
   enabled: z.boolean().optional(),
@@ -523,6 +662,10 @@ const overrideShape = {
   cashPerTrade: cash.optional(),
   targetPct: target.optional(),
   stopPct: stop.optional(),
+  targetUnit: unit.optional(),
+  targetPoints: points.optional(),
+  stopUnit: stopUnit.optional(),
+  stopPoints: points.optional(),
   trailing: z.boolean().optional(),
   watch: z.boolean().optional(),
   watchNseFrom: clock.optional(),
@@ -560,11 +703,16 @@ export const paperPlanSchema = z
           leg: z.enum(['A', 'B', 'C', 'D']).nullable(),
           side: z.enum(['BUY', 'SELL']),
           stopWhen: exprNode.nullable().optional(),
+          exitWhen: exprNode.nullable().optional(),
         }),
       )
       .max(8),
     targetPct: target,
     stopPct: stop,
+    targetUnit: unit.default('PCT'),
+    targetPoints: points.default(null),
+    stopUnit: stopUnit.default('PCT'),
+    stopPoints: points.default(null),
     // Absent (an older client): `normalizePlan` infers it, as for a saved plan.
     trailing: z.boolean().optional(),
     watch: z.boolean().default(D.watch),

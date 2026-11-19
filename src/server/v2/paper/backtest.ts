@@ -11,7 +11,7 @@
  * listed come from Upstox in the re-picking backtest (optionsBacktest.ts).
  */
 import type { BacktestJob, BacktestProduct, BacktestRequest, BacktestResult, CompareProductResult, LegId, StrategyDefinition, V2Instrument, V2Strategy } from '@/shared/v2';
-import { legNameById, normalizePlan, resolveRules, trailingRules } from '@/shared/v2';
+import { exitConditions, legNameById, normalizePlan, resolveRules, trailingRules } from '@/shared/v2';
 import { istDate } from '../../utils/marketTime';
 import { calendars, dateStartMs, type MarketCalendar } from '../calendar/MarketCalendar';
 import { CandleCache, type CandleStats } from '../data/CandleCache';
@@ -20,6 +20,8 @@ import type { V2Tools } from '../debug/tools';
 import type { RawCandle } from '../engine/candles';
 import type { V2Store } from '../persistence/V2Store';
 import { planNotes, ruleFor as ruleOf, simulate, type SimAlert } from './simulate';
+import { tradeCharts } from './tradeChart';
+import type { SeriesLookup } from '../engine/evaluator';
 import { breakdowns, paperStats, spark } from './summary';
 
 const DAY = 86_400_000;
@@ -51,7 +53,8 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
   const cals = calendars(await deps.store.calendar.list());
   const products = new Map((await deps.store.products.list({ ids })).map((p) => [p.id, p]));
   const plan = { ...normalizePlan(req.plan), enabled: true, rules: resolveRules(d, req.plan.rules) };
-  const exitRules = trailingRules(plan).map((x) => ({ key: x.key, when: x.when }));
+  // Trailing rules (from the target) and exit conditions (from the entry): the closes where each is true.
+  const exitRules = [...trailingRules(plan), ...exitConditions(plan.rules)].map((x) => ({ key: x.key, when: x.when }));
   const end = Math.min(now, dateStartMs(addDays(req.to, 1)));
   const calOf = (productId: string): MarketCalendar => cals[products.get(productId)?.market ?? 'NSE'];
   const symbolOf = (productId: string) => products.get(productId)?.symbol ?? productId.split(':')[1] ?? productId;
@@ -64,7 +67,10 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
   const errors = new Map<string, string[]>();
   const pushError = (productId: string, e: string) => errors.set(productId, [...(errors.get(productId) ?? []), e]);
   const minutes = new Map<number, RawCandle[]>();
-  const fetchMinutes = async (r: CompareProductResult) => {
+  // Each product's candles as the alerts were decided on them — the trades' conditions charts.
+  const lookups = new Map<string, SeriesLookup>();
+  const fetchMinutes = async (r: CompareProductResult, data?: { lookup: SeriesLookup }) => {
+    if (data && r.alerts.length) lookups.set(r.productId, data.lookup);
     if (!r.unit) return;
     const traded = new Map<number, { inst: V2Instrument; from: string }>();
     for (const a of r.alerts) {
@@ -103,7 +109,7 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
   const alerts: SimAlert[] = [];
   for (const r of cmp.products) {
     if (!r.unit) continue;
-    for (const a of r.alerts) alerts.push({ at: calOf(r.productId).candleClose(a.candleTime * 1000, tf), productId: r.productId, unit: r.unit, prices: a.prices, trace: a.trace });
+    for (const a of r.alerts) alerts.push({ open: a.candleTime * 1000, at: calOf(r.productId).candleClose(a.candleTime * 1000, tf), productId: r.productId, unit: r.unit, prices: a.prices, trace: a.trace });
   }
   alerts.sort((a, b) => a.at - b.at);
 
@@ -116,6 +122,10 @@ export async function runBacktest(deps: BacktestDeps, strategy: V2Strategy, req:
     minutes: (inst) => minutes.get(inst.token) ?? [],
     exitsFor: (e, key) => exitTimes.get(e.productId)?.[key] ?? [],
     end,
+    charts: (a, t) => {
+      const lookup = lookups.get(a.productId);
+      return lookup ? tradeCharts({ definition: d, unit: a.unit, lookup, trade: t }) : undefined;
+    },
   });
 
   const byProduct = (id: string) => closed.filter((t) => t.productId === id);
